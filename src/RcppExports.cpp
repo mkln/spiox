@@ -13,7 +13,7 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 
 // dl_update_variances
 arma::vec dl_update_variances(const arma::vec& theta, double a, double b);
-RcppExport SEXP _spassso_dl_update_variances(SEXP thetaSEXP, SEXP aSEXP, SEXP bSEXP) {
+RcppExport SEXP _inocs_dl_update_variances(SEXP thetaSEXP, SEXP aSEXP, SEXP bSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -26,7 +26,7 @@ END_RCPP
 }
 // inocs
 Rcpp::List inocs(const arma::mat& Y, const arma::mat& X, const arma::mat& coords, double radgp_rho, const arma::mat& theta_options, int spf_k, double spf_a_delta, double spf_b_delta, double spf_a_dl, const arma::mat& spf_Lambda_start, const arma::vec& spf_Delta_start, const arma::mat& mvreg_B_start, int mcmc, int print_every, int sample_precision, bool sample_mvr, bool sample_gp);
-RcppExport SEXP _spassso_inocs(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP radgp_rhoSEXP, SEXP theta_optionsSEXP, SEXP spf_kSEXP, SEXP spf_a_deltaSEXP, SEXP spf_b_deltaSEXP, SEXP spf_a_dlSEXP, SEXP spf_Lambda_startSEXP, SEXP spf_Delta_startSEXP, SEXP mvreg_B_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP sample_precisionSEXP, SEXP sample_mvrSEXP, SEXP sample_gpSEXP) {
+RcppExport SEXP _inocs_inocs(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP radgp_rhoSEXP, SEXP theta_optionsSEXP, SEXP spf_kSEXP, SEXP spf_a_deltaSEXP, SEXP spf_b_deltaSEXP, SEXP spf_a_dlSEXP, SEXP spf_Lambda_startSEXP, SEXP spf_Delta_startSEXP, SEXP mvreg_B_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP sample_precisionSEXP, SEXP sample_mvrSEXP, SEXP sample_gpSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -53,7 +53,7 @@ END_RCPP
 }
 // inocs_predict
 Rcpp::List inocs_predict(const arma::mat& coords_new, const arma::mat& X_new, const arma::mat& Y, const arma::mat& X, const arma::mat& Xstar, const arma::mat& coords, double radgp_rho, const arma::mat& theta_options, const arma::cube& B, const arma::cube& S, const arma::umat& theta_which);
-RcppExport SEXP _spassso_inocs_predict(SEXP coords_newSEXP, SEXP X_newSEXP, SEXP YSEXP, SEXP XSEXP, SEXP XstarSEXP, SEXP coordsSEXP, SEXP radgp_rhoSEXP, SEXP theta_optionsSEXP, SEXP BSEXP, SEXP SSEXP, SEXP theta_whichSEXP) {
+RcppExport SEXP _inocs_inocs_predict(SEXP coords_newSEXP, SEXP X_newSEXP, SEXP YSEXP, SEXP XSEXP, SEXP XstarSEXP, SEXP coordsSEXP, SEXP radgp_rhoSEXP, SEXP theta_optionsSEXP, SEXP BSEXP, SEXP SSEXP, SEXP theta_whichSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -74,7 +74,7 @@ END_RCPP
 }
 // make_candidates
 arma::umat make_candidates(const arma::mat& w, const arma::uvec& indsort, unsigned int col, double rho);
-RcppExport SEXP _spassso_make_candidates(SEXP wSEXP, SEXP indsortSEXP, SEXP colSEXP, SEXP rhoSEXP) {
+RcppExport SEXP _inocs_make_candidates(SEXP wSEXP, SEXP indsortSEXP, SEXP colSEXP, SEXP rhoSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -88,7 +88,7 @@ END_RCPP
 }
 // neighbor_search_testset
 arma::field<arma::uvec> neighbor_search_testset(const arma::mat& wtrain, const arma::mat& wtest, double rho);
-RcppExport SEXP _spassso_neighbor_search_testset(SEXP wtrainSEXP, SEXP wtestSEXP, SEXP rhoSEXP) {
+RcppExport SEXP _inocs_neighbor_search_testset(SEXP wtrainSEXP, SEXP wtestSEXP, SEXP rhoSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -101,7 +101,7 @@ END_RCPP
 }
 // radgp_build
 Rcpp::List radgp_build(const arma::mat& coords, double rho, double phi, double sigmasq, double nu, double tausq, bool matern);
-RcppExport SEXP _spassso_radgp_build(SEXP coordsSEXP, SEXP rhoSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP) {
+RcppExport SEXP _inocs_radgp_build(SEXP coordsSEXP, SEXP rhoSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -118,7 +118,7 @@ END_RCPP
 }
 // radgp_logdens
 Rcpp::List radgp_logdens(const arma::vec& x, const arma::mat& coords, double rho, double phi, double sigmasq, double nu, double tausq, bool matern);
-RcppExport SEXP _spassso_radgp_logdens(SEXP xSEXP, SEXP coordsSEXP, SEXP rhoSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP) {
+RcppExport SEXP _inocs_radgp_logdens(SEXP xSEXP, SEXP coordsSEXP, SEXP rhoSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -136,7 +136,7 @@ END_RCPP
 }
 // run_spf_model
 Rcpp::List run_spf_model(arma::mat& Y, unsigned int n_factors, double delta_gamma_shape, double delta_gamma_rate, double dl_dirichlet_a, const arma::mat& Lambda_start, const arma::vec& Delta_start, unsigned int mcmc, int print_every, bool seq_lambda);
-RcppExport SEXP _spassso_run_spf_model(SEXP YSEXP, SEXP n_factorsSEXP, SEXP delta_gamma_shapeSEXP, SEXP delta_gamma_rateSEXP, SEXP dl_dirichlet_aSEXP, SEXP Lambda_startSEXP, SEXP Delta_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP seq_lambdaSEXP) {
+RcppExport SEXP _inocs_run_spf_model(SEXP YSEXP, SEXP n_factorsSEXP, SEXP delta_gamma_shapeSEXP, SEXP delta_gamma_rateSEXP, SEXP dl_dirichlet_aSEXP, SEXP Lambda_startSEXP, SEXP Delta_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP seq_lambdaSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -156,18 +156,18 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_spassso_dl_update_variances", (DL_FUNC) &_spassso_dl_update_variances, 3},
-    {"_spassso_inocs", (DL_FUNC) &_spassso_inocs, 17},
-    {"_spassso_inocs_predict", (DL_FUNC) &_spassso_inocs_predict, 11},
-    {"_spassso_make_candidates", (DL_FUNC) &_spassso_make_candidates, 4},
-    {"_spassso_neighbor_search_testset", (DL_FUNC) &_spassso_neighbor_search_testset, 3},
-    {"_spassso_radgp_build", (DL_FUNC) &_spassso_radgp_build, 7},
-    {"_spassso_radgp_logdens", (DL_FUNC) &_spassso_radgp_logdens, 8},
-    {"_spassso_run_spf_model", (DL_FUNC) &_spassso_run_spf_model, 10},
+    {"_inocs_dl_update_variances", (DL_FUNC) &_inocs_dl_update_variances, 3},
+    {"_inocs_inocs", (DL_FUNC) &_inocs_inocs, 17},
+    {"_inocs_inocs_predict", (DL_FUNC) &_inocs_inocs_predict, 11},
+    {"_inocs_make_candidates", (DL_FUNC) &_inocs_make_candidates, 4},
+    {"_inocs_neighbor_search_testset", (DL_FUNC) &_inocs_neighbor_search_testset, 3},
+    {"_inocs_radgp_build", (DL_FUNC) &_inocs_radgp_build, 7},
+    {"_inocs_radgp_logdens", (DL_FUNC) &_inocs_radgp_logdens, 8},
+    {"_inocs_run_spf_model", (DL_FUNC) &_inocs_run_spf_model, 10},
     {NULL, NULL, 0}
 };
 
-RcppExport void R_init_spassso(DllInfo *dll) {
+RcppExport void R_init_inocs(DllInfo *dll) {
     R_registerRoutines(dll, NULL, CallEntries, NULL, NULL);
     R_useDynamicSymbols(dll, FALSE);
 }
