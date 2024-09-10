@@ -21,18 +21,7 @@ Llist <- Clist %>% lapply(\(C) t(chol(C)))
 Lilist <- Llist %>% lapply(\(L) solve(L))
 
 # multivariate
-q <- 50
-
-save_which <- rep(0, q)
-
-# make q spatial outcomes
-which_process <- rep(0, q)
-speta <- matrix(0, nrow=nr, ncol=q)
-for(i in 1:q){
-  which_process[i] <- 1:length(philist) %>% sample(1)
-  speta[,i] <- Llist[[which_process[i]]] %*% rnorm(nr)
-}
-
+q <- 25
 k <- round(q/2)
 
 Lambda <- matrix(runif(q*k), ncol=k)
@@ -44,7 +33,7 @@ Lambda[!threshold] <- 5*rnorm(sum(!threshold))
 Delta <- diag(runif(q, 0.1, .4))
 
 Q <- rWishart(1, q+2, diag(q))[,,1] #
-  #tcrossprod(Lambda) + Delta
+#tcrossprod(Lambda) + Delta
 
 # percentage of off-diagonal nonzeros 
 (sum(Q!=0) - q)/(prod(dim(Q)) - q)
@@ -54,32 +43,34 @@ Sigma <- solve(Q)
 St <- chol(Sigma)
 S <- t(St)
 
-# regression
-p <- 1
-X <- matrix(1, ncol=1, nrow=nr)# %>% cbind(matrix(rnorm(nr*(p-1)), ncol=p-1))
+V <- matrix(rnorm(nr * q), ncol=q) %*% St
 
-if(0){
-  X <- matrix(rnorm(nr*2), ncol=2)
-  LX <- 1:q %>% lapply(\(j) Lilist[[j]] %*% X)
-  mLX <- Matrix::bdiag(LX)
-  
-  (Sigma %x% diag(nr)) %*% mLX
-  Sigma[1,2] * LX[[2]]
+Y_sp <- V
+
+save_which <- rep(0, q)
+
+# make q spatial outcomes
+which_process <- rep(0, q)
+for(i in 1:q){
+  which_process[i] <- 1:length(philist) %>% sample(1)
+  Y_sp[,i] <- Llist[[which_process[i]]] %*% V[,i]
 }
+theta_true <- philist[which_process]
 
+# regression
+p <- 2
+X <- matrix(1, ncol=1, nrow=nr) %>% cbind(matrix(rnorm(nr*(p-1)), ncol=p-1))
 
+Beta <- matrix(rnorm(q * p), ncol=q)
 
-Beta <- 0*matrix(rnorm(q * p), ncol=q)
-
-Y_spatial <- speta %*% St
 Y_regression <- X %*% Beta
 Error <- matrix(rnorm(nr * q),ncol=q) %*% diag(D <- runif(q, 0, 0.1))
-Y <- as.matrix(Y_spatial + Y_regression) + Error
+Y <- as.matrix(Y_sp + Y_regression) + Error
 
 cov_Y_cols <- cov(Y) %>% as("dgCMatrix")
 cov_Y_rows <- cov(t(Y)) %>% as("dgCMatrix")
 
-df <- data.frame(coords, y=Y_spatial) %>% 
+df <- data.frame(coords, y=Y_sp) %>% 
   pivot_longer(cols=-c(Var1, Var2))
 
 if(F){
@@ -96,12 +87,12 @@ kfit <- k
 set.seed(1)
 
 radgp_rho <- 0.1
-test_radgp <- inocs::radgp_build(cx, radgp_rho, 2)
+test_radgp <- inocs::radgp_build(cx, radgp_rho, phi=1, sigmasq=1, nu=1, tausq=0, matern=F)
 test_radgp$dag %>% sapply(\(x) nrow(x)) %>% summary()
 
-phi_opts <- c(0.1, 1, 10, 100, 1000)
+phi_opts <- seq(0.5, 10, length.out=3)
 
-theta_opts <- phi_opts %>% sapply(\(phi) matrix( c(phi, 10, 1, 1e-10), ncol=1))
+theta_opts <- phi_opts %>% sapply(\(phi) matrix( c(phi, 1, 1, 1e-10), ncol=1))
 
 testset <- sample(1:nrow(Y), 10, replace=F)
 
@@ -114,7 +105,7 @@ set.seed(1)
   inocs_out <- inocs::inocs(Y[-testset,,drop=F], 
                             X[-testset,,drop=F],
                             cx[-testset,], 
-                            radgp_rho = radgp_rho, theta=matrix(rep(5, q),ncol=1),
+                            radgp_rho = radgp_rho, theta=theta_opts,
                             
                             spf_k = kfit, spf_a_delta = .1, spf_b_delta = .1, spf_a_dl = 0.5,
                             
@@ -122,20 +113,22 @@ set.seed(1)
                             spf_Delta_start = matrix(runif(q),ncol=1),#diag(Delta),
                             mvreg_B_start = Beta,# %>% perturb(),
                             
-                            mcmc = mcmc <- 1000,
-                            print_every=20,
+                            mcmc = mcmc <- 100,
+                            print_every=10,
                             
                             sample_precision=1,
                             sample_mvr=T,
                             sample_gp=T)
 }))
+inocs_out$theta_which %>% apply(1, \(th) phi_opts[th]) %>% apply(2, mean)
+
 
 set.seed(1)
 (total_time2 <- system.time({
   spassso_out <- spassso::spassso(Y[-testset,], 
                             X[-testset,,drop=F],
                             cx[-testset,], 
-                            radgp_rho = radgp_rho, theta=theta_init,
+                            radgp_rho = radgp_rho, theta=theta_opts,
                             
                             spf_k = kfit, spf_a_delta = .1, spf_b_delta = .1, spf_a_dl = 0.5,
                             
@@ -143,15 +136,15 @@ set.seed(1)
                             spf_Delta_start = runif(q),#diag(Delta),
                             mvreg_B_start = Beta,# %>% perturb(),
                             
-                            mcmc = mcmc <- 10000,
-                            print_every=200,
+                            mcmc = mcmc <- 1000,
+                            print_every=100,
                             
                             sample_precision=1,
                             sample_mvr=T,
-                            sample_gp=F)
+                            sample_gp=T)
 }))
 
-obj_out <- inocs_out
+obj_out <- spassso_out
 
 #sparse test
 sLambda <- obj_out$Lambda
@@ -169,6 +162,7 @@ Qa_post_sjns <- Qa_samples %>% apply(1:2, mean)
 
 
 mean((Qa_post_sjns-cov2cor(Q))^2)
+
 
 image(1*(Qa_post_sjns!=0))
 mean(Q_true_pattern == (Qa_post_sjns!=0))

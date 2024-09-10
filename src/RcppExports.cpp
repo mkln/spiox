@@ -25,8 +25,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // inocs
-Rcpp::List inocs(const arma::mat& Y, const arma::mat& X, const arma::mat& coords, double radgp_rho, const arma::vec& theta_start, int spf_k, double spf_a_delta, double spf_b_delta, double spf_a_dl, const arma::mat& spf_Lambda_start, const arma::vec& spf_Delta_start, const arma::mat& mvreg_B_start, int mcmc, int print_every, int sample_precision, bool sample_mvr, bool sample_gp);
-RcppExport SEXP _inocs_inocs(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP radgp_rhoSEXP, SEXP theta_startSEXP, SEXP spf_kSEXP, SEXP spf_a_deltaSEXP, SEXP spf_b_deltaSEXP, SEXP spf_a_dlSEXP, SEXP spf_Lambda_startSEXP, SEXP spf_Delta_startSEXP, SEXP mvreg_B_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP sample_precisionSEXP, SEXP sample_mvrSEXP, SEXP sample_gpSEXP) {
+Rcpp::List inocs(const arma::mat& Y, const arma::mat& X, const arma::mat& coords, double radgp_rho, const arma::mat& theta_opts, int spf_k, double spf_a_delta, double spf_b_delta, double spf_a_dl, const arma::mat& spf_Lambda_start, const arma::vec& spf_Delta_start, const arma::mat& mvreg_B_start, int mcmc, int print_every, int sample_precision, bool sample_mvr, bool sample_gp);
+RcppExport SEXP _inocs_inocs(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP radgp_rhoSEXP, SEXP theta_optsSEXP, SEXP spf_kSEXP, SEXP spf_a_deltaSEXP, SEXP spf_b_deltaSEXP, SEXP spf_a_dlSEXP, SEXP spf_Lambda_startSEXP, SEXP spf_Delta_startSEXP, SEXP mvreg_B_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP sample_precisionSEXP, SEXP sample_mvrSEXP, SEXP sample_gpSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -34,7 +34,7 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
     Rcpp::traits::input_parameter< double >::type radgp_rho(radgp_rhoSEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type theta_start(theta_startSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type theta_opts(theta_optsSEXP);
     Rcpp::traits::input_parameter< int >::type spf_k(spf_kSEXP);
     Rcpp::traits::input_parameter< double >::type spf_a_delta(spf_a_deltaSEXP);
     Rcpp::traits::input_parameter< double >::type spf_b_delta(spf_b_deltaSEXP);
@@ -47,7 +47,7 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type sample_precision(sample_precisionSEXP);
     Rcpp::traits::input_parameter< bool >::type sample_mvr(sample_mvrSEXP);
     Rcpp::traits::input_parameter< bool >::type sample_gp(sample_gpSEXP);
-    rcpp_result_gen = Rcpp::wrap(inocs(Y, X, coords, radgp_rho, theta_start, spf_k, spf_a_delta, spf_b_delta, spf_a_dl, spf_Lambda_start, spf_Delta_start, mvreg_B_start, mcmc, print_every, sample_precision, sample_mvr, sample_gp));
+    rcpp_result_gen = Rcpp::wrap(inocs(Y, X, coords, radgp_rho, theta_opts, spf_k, spf_a_delta, spf_b_delta, spf_a_dl, spf_Lambda_start, spf_Delta_start, mvreg_B_start, mcmc, print_every, sample_precision, sample_mvr, sample_gp));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -100,21 +100,25 @@ BEGIN_RCPP
 END_RCPP
 }
 // radgp_build
-Rcpp::List radgp_build(const arma::mat& coords, double rho, double phi);
-RcppExport SEXP _inocs_radgp_build(SEXP coordsSEXP, SEXP rhoSEXP, SEXP phiSEXP) {
+Rcpp::List radgp_build(const arma::mat& coords, double rho, double phi, double sigmasq, double nu, double tausq, bool matern);
+RcppExport SEXP _inocs_radgp_build(SEXP coordsSEXP, SEXP rhoSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
     Rcpp::traits::input_parameter< double >::type rho(rhoSEXP);
     Rcpp::traits::input_parameter< double >::type phi(phiSEXP);
-    rcpp_result_gen = Rcpp::wrap(radgp_build(coords, rho, phi));
+    Rcpp::traits::input_parameter< double >::type sigmasq(sigmasqSEXP);
+    Rcpp::traits::input_parameter< double >::type nu(nuSEXP);
+    Rcpp::traits::input_parameter< double >::type tausq(tausqSEXP);
+    Rcpp::traits::input_parameter< bool >::type matern(maternSEXP);
+    rcpp_result_gen = Rcpp::wrap(radgp_build(coords, rho, phi, sigmasq, nu, tausq, matern));
     return rcpp_result_gen;
 END_RCPP
 }
 // radgp_logdens
-Rcpp::List radgp_logdens(const arma::vec& x, const arma::mat& coords, double rho, double phi);
-RcppExport SEXP _inocs_radgp_logdens(SEXP xSEXP, SEXP coordsSEXP, SEXP rhoSEXP, SEXP phiSEXP) {
+Rcpp::List radgp_logdens(const arma::vec& x, const arma::mat& coords, double rho, double phi, double sigmasq, double nu, double tausq, bool matern);
+RcppExport SEXP _inocs_radgp_logdens(SEXP xSEXP, SEXP coordsSEXP, SEXP rhoSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -122,7 +126,11 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
     Rcpp::traits::input_parameter< double >::type rho(rhoSEXP);
     Rcpp::traits::input_parameter< double >::type phi(phiSEXP);
-    rcpp_result_gen = Rcpp::wrap(radgp_logdens(x, coords, rho, phi));
+    Rcpp::traits::input_parameter< double >::type sigmasq(sigmasqSEXP);
+    Rcpp::traits::input_parameter< double >::type nu(nuSEXP);
+    Rcpp::traits::input_parameter< double >::type tausq(tausqSEXP);
+    Rcpp::traits::input_parameter< bool >::type matern(maternSEXP);
+    rcpp_result_gen = Rcpp::wrap(radgp_logdens(x, coords, rho, phi, sigmasq, nu, tausq, matern));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -153,8 +161,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_inocs_inocs_predict", (DL_FUNC) &_inocs_inocs_predict, 11},
     {"_inocs_make_candidates", (DL_FUNC) &_inocs_make_candidates, 4},
     {"_inocs_neighbor_search_testset", (DL_FUNC) &_inocs_neighbor_search_testset, 3},
-    {"_inocs_radgp_build", (DL_FUNC) &_inocs_radgp_build, 3},
-    {"_inocs_radgp_logdens", (DL_FUNC) &_inocs_radgp_logdens, 4},
+    {"_inocs_radgp_build", (DL_FUNC) &_inocs_radgp_build, 7},
+    {"_inocs_radgp_logdens", (DL_FUNC) &_inocs_radgp_logdens, 8},
     {"_inocs_run_spf_model", (DL_FUNC) &_inocs_run_spf_model, 10},
     {NULL, NULL, 0}
 };

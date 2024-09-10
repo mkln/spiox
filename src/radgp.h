@@ -14,7 +14,7 @@ public:
   int nr;
   arma::mat coords;
   arma::uvec layers;
-  double theta; // decay parameter of exponential
+  arma::vec theta;
   
   int type; // 1=radgp, 2=nn maxmin order
   int M;
@@ -23,10 +23,8 @@ public:
   double precision_logdeterminant;
   double logdens(const arma::vec& x);
   
-  arma::sp_mat H, Ci;
-  void initialize_H(bool do_Ci);
-  
-  void update_theta(double theta_new);
+  arma::sp_mat H;
+  void initialize_H();
   
   arma::field<arma::uvec> dag;
   
@@ -40,7 +38,7 @@ public:
   DagGP(){};
   
   DagGP(const arma::mat& coords, 
-        double theta_in,
+        const arma::vec& theta_in,
         double rho, 
     int covariance_model=0,
     int nthread=0);

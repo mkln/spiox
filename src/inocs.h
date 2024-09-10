@@ -38,33 +38,18 @@ public:
   arma::mat S, Si; // S^T * S = Sigma = Q^-1 = (Lambda*Lambda^T + Delta)^-1 = (Si * Si^T)^-1
   
   // RadGP for spatial dependence
-  std::vector<DagGP> radgp_q, radgp_q_alt;
-  arma::mat theta; // one column per each outcome
+  std::vector<DagGP> radgp_options;
+  arma::mat theta_options; // each column is one alternative value for theta
+  unsigned int n_options;
+  arma::uvec spmap; // qx1 vector spmap(i) = which element of radgp_options for factor i
   
   arma::mat V; 
   
   // -------------- utilities
-  void compute_tildes();
-  
   void sample_B(); // 
   void compute_V(); // whitened
   void compute_S();
-  
-  arma::mat Xtilde, Ytilde;
-  arma::vec ytilde, radgp_logdets;
-  
-  arma::mat Ytilde_alt, Xtilde_alt;
-  arma::vec radgp_alt_logdets;
-  
-  double current_logdens;
-  void metrop_theta();
-  
-  // adaptive metropolis for theta
-  int theta_mcmc_counter;
-  arma::mat theta_unif_bounds;
-  arma::mat theta_metrop_sd;
-  RAMAdapt theta_adapt;
-  bool theta_adapt_active;
+  void sample_theta(); // gibbs for each outcome choosing from options
   
   // -------------- run 1 gibbs iteration based on current values
   void gibbs_response(int sample_precision, bool sample_mvr, bool sample_gp);
@@ -78,7 +63,7 @@ public:
         const arma::mat& _X, 
         const arma::mat& _coords,
         
-        double radgp_rho, const arma::vec& radgp_theta, 
+        double radgp_rho, const arma::mat& radgp_theta, 
         
         int spf_k, double spf_a_delta, double spf_b_delta, double spf_a_dl,
         
@@ -97,28 +82,13 @@ public:
     B = mvreg_B_start;
     B_Var = arma::ones(arma::size(B));
     
-    theta = radgp_theta;
-    theta_mcmc_counter = 0;
-    theta_unif_bounds = arma::zeros(q, 2) + 0.1;
-    theta_unif_bounds.col(1).fill(100);
-    theta_metrop_sd = 0.05 * arma::eye(q,q);
-    theta_adapt = RAMAdapt(theta.n_elem, theta_metrop_sd, 0.24);
-    theta_adapt_active = true;
-    
-    Ytilde = Y;
-    Xtilde = arma::zeros(n*q, p*q); // nq * pq
-    radgp_logdets = arma::zeros(q);
-    Ytilde_alt = Y;
-    Xtilde_alt = Xtilde;
-    radgp_alt_logdets = arma::zeros(q);
-    
-    radgp_q = std::vector<DagGP>(q);//.reserve(n_options);
-    for(unsigned int i=0; i<q; i++){
-      radgp_q[i] = DagGP(_coords, theta(i), radgp_rho, 0, 1);
-      //radgp_q.push_back( DagGP(_coords, theta_options.col(i), radgp_rho, 0, 1) ); // 0=powerexp, 1 thread
+    theta_options = radgp_theta;
+    n_options = theta_options.n_cols;
+    radgp_options = std::vector<DagGP>(n_options);//.reserve(n_options);
+    for(unsigned int i=0; i<n_options; i++){
+      radgp_options[i] = DagGP(_coords, theta_options.col(i), radgp_rho, 0, 1);
     }
-    radgp_q_alt = radgp_q;
-    //spatial_sparsity = radgp_q.at(0).Ci.n_nonzero / (0.0 + n*n);
+    spmap = arma::zeros<arma::uvec>(q);
     
     spf = SparsePrecisionFactor(&Y, spf_k, spf_a_delta, spf_b_delta, spf_a_dl);
     spf.Lambda_start(spf_Lambda_start);
@@ -134,7 +104,7 @@ public:
           const arma::mat& _X, 
           const arma::mat& _coords,
           
-          double radgp_rho, const arma::vec& radgp_theta) 
+          double radgp_rho, const arma::mat& radgp_theta) 
   {
     model_response = true;
     
@@ -145,12 +115,11 @@ public:
     q = Y.n_cols;
     p = X.n_cols;
     
-    theta = radgp_theta;
-    
-    radgp_q = std::vector<DagGP>(q);//.reserve(n_options);
-    for(unsigned int i=0; i<q; i++){
-      radgp_q[i] = DagGP(_coords, theta(i), radgp_rho, 0, 1);
-      //radgp_q.push_back( DagGP(_coords, theta_options.col(i), radgp_rho, 0, 1) ); // 0=powerexp, 1 thread
+    theta_options = radgp_theta;
+    n_options = theta_options.n_cols;
+    radgp_options = std::vector<DagGP>(n_options);//.reserve(n_options);
+    for(unsigned int i=0; i<n_options; i++){
+      radgp_options[i] = DagGP(_coords, theta_options.col(i), radgp_rho, 0, 1);
     }
   }  
   
@@ -160,7 +129,7 @@ inline void Inocs::compute_V(){
   // whiten the residuals from spatial dependence
   V = ( Y - X * B );
   for(unsigned int i=0; i<q; i++){
-    V.col(i) = radgp_q.at(i).H * V.col(i);  
+    V.col(i) = radgp_options.at(spmap(i)).H * V.col(i);  
   }
   // V = Li * (y-XB)
 }
@@ -179,23 +148,6 @@ inline void Inocs::compute_S(){
   // Sigma = S^T * S = (Si * Si^T)^-1
 }
 
-inline void Inocs::compute_tildes(){
-  radgp_logdets = arma::zeros(q);
-#ifdef _OPENMP
-#pragma omp parallel for 
-#endif
-  for(unsigned int j=0; j<q; j++){
-    Ytilde.col(j) = radgp_q.at(j).H * Y.col(j);
-    arma::mat HX = radgp_q.at(j).H * X;
-    radgp_logdets(j) = radgp_q.at(j).precision_logdeterminant;
-    for(unsigned int i=0; i<q; i++){
-      Xtilde.submat(i * n,       j * p,
-                    (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX; 
-    }
-  }
-  ytilde = arma::vectorise(Ytilde * Si);
-}
-
 inline void Inocs::sample_B(){
   //Rcpp::Rcout << "+++++++++++++++++ ORIG +++++++++++++++++++" << endl;
   //S^T * S = Sigma
@@ -204,7 +156,24 @@ inline void Inocs::sample_B(){
   int timed = 0;
   //Rcpp::Rcout << "------- builds0 ----" << endl;
   tstart = std::chrono::steady_clock::now();
+  arma::mat Ytilde = Y;
+  arma::mat Xtilde = arma::zeros(n*q, p*q);
+  arma::vec radgp_logdets = arma::zeros(q);
   
+#ifdef _OPENMP
+#pragma omp parallel for 
+#endif
+  for(unsigned int j=0; j<q; j++){
+    Ytilde.col(j) = radgp_options.at(spmap(j)).H * Y.col(j);
+    arma::mat HX = radgp_options.at(spmap(j)).H * X;
+    radgp_logdets(j) = radgp_options.at(spmap(j)).precision_logdeterminant;
+    for(unsigned int i=0; i<q; i++){
+      Xtilde.submat(i * n,       j * p,
+                    (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX; 
+    }
+  }
+  
+  arma::vec ytilde = arma::vectorise(Ytilde * Si);
   tend = std::chrono::steady_clock::now();
   timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
   //Rcpp::Rcout << timed << endl;
@@ -228,85 +197,90 @@ inline void Inocs::sample_B(){
   timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
   //Rcpp::Rcout << timed << endl;
   
-  double current_ldet = +0.5*arma::accu(radgp_logdets);
-  current_logdens = current_ldet - 0.5*arma::accu(pow(ytilde - Xtilde * arma::vectorise(B), 2.0));
-  
 }
 
-inline void Inocs::metrop_theta(){
+inline void Inocs::sample_theta(){
   std::chrono::steady_clock::time_point tstart;
   std::chrono::steady_clock::time_point tend;
   int timed = 0;
   
-  arma::mat Sit = Si.t();
+  arma::vec zz = arma::zeros(1);
   
-  theta_adapt.count_proposal();
-  
-  arma::vec theta_alt = theta;
-  Rcpp::RNGScope scope;
-  arma::vec U_update = arma::randn(theta_alt.n_elem);
-  theta_alt = 
-    par_huvtransf_back(
-        par_huvtransf_fwd(theta, theta_unif_bounds) + 
-      theta_adapt.paramsd * U_update, theta_unif_bounds);
-  
-  Rcpp::Rcout << "------- builds1 ----" << endl;
-  tstart = std::chrono::steady_clock::now();
-  // create proposal radgp
-  for(unsigned int i=0; i<q; i++){
-    radgp_q_alt[i].update_theta(theta_alt(i));
+  // initialize current setup -- should be able to start from values from B step
+  arma::mat Ytilde = Y;
+  arma::mat Xtilde = arma::zeros(n*q, p*q);
+  for(unsigned int j=0; j<q; j++){
+    Ytilde.col(j) = radgp_options.at(spmap(j)).H * Y.col(j);
+    
+    arma::mat HX = radgp_options.at(spmap(j)).H * X;
+    //radgp_logdets(j) = radgp_options_alt.at(spmap(j)).precision_logdeterminant;
+    for(unsigned int i=0; i<q; i++){
+      Xtilde.submat(i * n,       j * p,
+                    (i+1) * n-1, (j+1) * p - 1) = Si(j, i) * HX; 
+    }
   }
-  tend = std::chrono::steady_clock::now();
-  timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
-  Rcpp::Rcout << timed << endl;
   
-  // proposal density
-  Rcpp::Rcout << "------- builds2 ----" << endl;
-  tstart = std::chrono::steady_clock::now();
+  //Rcpp::Rcout << "theta opts " << endl << theta_options << endl;
+  
+  // loop over outcomes -- this is gibbs so cannot parallelize
+  for(unsigned int j=0; j<q; j++){
+    arma::vec opt_logdens = arma::zeros(n_options);
+    // -- loop over options // parallel ok if we create a copy of ytilde and Xtilde
 #ifdef _OPENMP
 #pragma omp parallel for 
 #endif
-  for(unsigned int j=0; j<q; j++){
-    Ytilde_alt.col(j) = radgp_q_alt.at(j).H * Y.col(j);
-    arma::mat HX = radgp_q_alt.at(j).H * X;
-    radgp_alt_logdets(j) = radgp_q_alt.at(j).precision_logdeterminant;
-    for(unsigned int i=0; i<q; i++){
-      Xtilde_alt.submat(i * n,       j * p,
-                    (i+1) * n-1, (j+1) * p - 1) = Sit(i, j) * HX; 
+    for(unsigned int r=0; r<n_options; r++){
+      // compute unnorm logdens 
+      // change option for this outcome: spmap(i) is the new theta option
+      
+      //Rcpp::Rcout << "r: " << r << " spmap(r) " << spmap(r) << endl;
+      //Rcpp::Rcout << "outer " << j*n << " " << (j+1) * n-1 << endl;
+      
+      //Rcpp::Rcout << "theta for this option " << radgp_options.at(r).theta.t() << endl;
+      arma::mat Xtilde_loc = Xtilde;
+      arma::mat Ytilde_loc = Ytilde;
+      Ytilde_loc.col(j) = radgp_options.at(r).H * Y.col(j);
+      arma::mat HX = radgp_options.at(r).H * X;
+      double opt_prec_logdet = radgp_options.at(r).precision_logdeterminant;
+      for(unsigned int i=0; i<q; i++){
+        //Rcpp::Rcout << "inner " << j*p << " " << (j+1) * p-1 << endl;
+        Xtilde_loc.submat(i * n,       j * p,
+                      (i+1) * n-1, (j+1) * p - 1) = Si(j, i) * HX; 
+      }
+      arma::vec ytilde_loc = arma::vectorise(Ytilde_loc * Si);
+      // at each i, we ytilde and Xtilde remain the same except for outcome j
+      opt_logdens(r) = 0.5 * opt_prec_logdet 
+                - 0.5*arma::accu(pow(ytilde_loc - Xtilde_loc * arma::vectorise(B), 2.0));
+      
+      //Rcpp::Rcout << "option accu: " << arma::accu(pow(ytilde - Xtilde * arma::vectorise(B), 2.0)) << endl;
     }
+    
+    // these probabilities are unnormalized
+    //Rcpp::Rcout << "options probs unnorm: " << opt_logdens.t() << endl;
+    
+    double c = arma::max(opt_logdens);
+    double log_norm_const = c + log(arma::accu(exp(opt_logdens - c)));
+    // now normalize
+    opt_logdens = exp(opt_logdens - log_norm_const);
+    
+    //Rcpp::Rcout << "options probs unnorm: " << opt_logdens.t() << endl;
+    
+    // finally sample
+    double u = arma::randu();
+    arma::vec cprobs = arma::join_vert(zz, arma::cumsum(opt_logdens));
+    // reassign process hyperparameters based on gp density
+    spmap(j) = arma::max(arma::find(cprobs < u));
+    
+    // update ytilde and Xtilde accordingly so we can move on to the next
+    Ytilde.col(j) = radgp_options.at(spmap(j)).H * Y.col(j);
+    arma::mat HX = radgp_options.at(spmap(j)).H * X;
+    for(unsigned int i=0; i<q; i++){
+      Xtilde.submat(i * n,       j * p,
+                    (i+1) * n-1, (j+1) * p - 1) = Si(j, i) * HX; 
+    }
+    
+    //Rcpp::Rcout << "done" << endl;
   }
-  arma::vec ytilde_alt = arma::vectorise(Ytilde_alt * Si);
-  tend = std::chrono::steady_clock::now();
-  timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
-  Rcpp::Rcout << timed << endl;
-  
-  Rcpp::Rcout << "------- builds3 ----" << endl;
-  tstart = std::chrono::steady_clock::now();
-  double prop_ldet = +0.5*arma::accu(radgp_alt_logdets);
-  double prop_logdens = prop_ldet 
-    - 0.5*arma::accu(pow(ytilde_alt - Xtilde_alt * arma::vectorise(B), 2.0));
-  tend = std::chrono::steady_clock::now();
-  timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
-  Rcpp::Rcout << timed << endl;
-  
-  double jacobian  = calc_jacobian(theta_alt, theta, theta_unif_bounds);
-  
-  double logaccept = prop_logdens - current_logdens + jacobian;
-  bool accepted = do_I_accept(logaccept);
-  
-  
-  if(accepted){
-    theta = theta_alt;
-    std::swap(radgp_q, radgp_q_alt);
-  } 
-  
-  theta_adapt.update_ratios();
-  
-  if(theta_adapt_active){
-    theta_adapt.adapt(U_update, exp(logaccept), theta_mcmc_counter); 
-  }
-  
-  theta_mcmc_counter++;
 }
 
 
@@ -351,15 +325,6 @@ inline void Inocs::gibbs_response(int sample_precision, bool sample_mvr, bool sa
     }
   }
   
-  if(sample_mvr | sample_gp){
-    //Rcpp::Rcout << "B " << endl;
-    // sample B 
-    tstart = std::chrono::steady_clock::now();
-    compute_tildes();
-    timings(5) += time_count(tstart);  
-  }
-  
-  
   if(sample_mvr){
     //Rcpp::Rcout << "B " << endl;
     // sample B 
@@ -372,7 +337,7 @@ inline void Inocs::gibbs_response(int sample_precision, bool sample_mvr, bool sa
     //Rcpp::Rcout << "T " << endl;
     // update theta | Y, S based on discrete prior
     tstart = std::chrono::steady_clock::now();
-    metrop_theta();
+    sample_theta();
     timings(4) += time_count(tstart);
   }
   
