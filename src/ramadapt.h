@@ -69,37 +69,6 @@ inline arma::vec par_huvtransf_back(arma::vec par, const arma::mat& set_unif_bou
   return par;
 }
 
-inline arma::vec par_huvtransf_fwd1(arma::vec par, const arma::rowvec& set_unif_bounds){
-  for(unsigned int j=0; j<par.n_elem; j++){
-    
-    if( (set_unif_bounds(0) > -arma::datum::inf) || (set_unif_bounds(1) < arma::datum::inf) ){
-      if(set_unif_bounds(1) == arma::datum::inf){
-        // lognormal proposal
-        par(j) = log(par(j));
-      } else {
-        // logit normal proposal
-        par(j) = logit(par(j), set_unif_bounds(0), set_unif_bounds(1));
-      }
-    }
-  }
-  return par;
-}
-
-inline arma::vec par_huvtransf_back1(arma::vec par, const arma::rowvec& set_unif_bounds){
-  for(unsigned int j=0; j<par.n_elem; j++){
-    if( (set_unif_bounds(0) > -arma::datum::inf) || (set_unif_bounds(1) < arma::datum::inf) ){
-      if(set_unif_bounds(1) == arma::datum::inf){
-        // lognormal proposal
-        par(j) = exp(par(j));
-      } else {
-        // logit normal proposal
-        par(j) = logistic(par(j), set_unif_bounds(0), set_unif_bounds(1));
-      }
-    }
-  }
-  return par;
-}
-
 inline bool unif_bounds(arma::vec& par, const arma::mat& bounds){
   bool out_of_bounds = false;
   for(unsigned int i=0; i<par.n_elem; i++){
@@ -124,7 +93,7 @@ inline double lognormal_proposal_logscale(const double& xnew, const double& xold
 
 inline double normal_proposal_logitscale(const double& x, double l=0, double u=1){
   return //log(xnew * (l-xnew)) - log(xold * (l-xold)); 
-  -log(u-x) - log(x-l);
+    -log(u-x) - log(x-l);
 }
 
 inline double lognormal_logdens(const double& x, const double& m, const double& ssq){
@@ -161,29 +130,10 @@ inline double calc_jacobian(const arma::vec& new_param, const arma::vec& param,
   
   return jac;
 }
-inline double calc_jacobian1(const arma::vec& new_param, const arma::vec& param, 
-                             const arma::rowvec& set_unif_bounds){
-  
-  double jac = 0;
-  for(unsigned int j=0; j<param.n_elem; j++){
-    if( (set_unif_bounds(0) > -arma::datum::inf) || (set_unif_bounds(1) < arma::datum::inf) ){
-      if(set_unif_bounds(1) == arma::datum::inf){
-        // lognormal proposal
-        jac += lognormal_proposal_logscale(new_param(j), param(j));
-      } else {
-        // logit normal proposal
-        jac += normal_proposal_logitscale(param(j), set_unif_bounds(0), set_unif_bounds(1)) -
-          normal_proposal_logitscale(new_param(j), set_unif_bounds(0), set_unif_bounds(1));
-      }
-    }
-  }
-  
-  return jac;
-}
 
 
 inline double calc_prior_logratio(const arma::vec& new_param, 
-                                  const arma::vec& param, double a=2.01, double b=1){
+                            const arma::vec& param, double a=2.01, double b=1){
   
   double plr=0;
   for(unsigned int j=0; j<param.n_elem; j++){
@@ -303,32 +253,32 @@ inline void RAMAdapt::adapt(const arma::vec& U, double alpha, int mc){
   //if((c < g0) & false){
   //  prodparam += U * U.t() / (mc + 1.0);
   //} else {
-  if(!started & (c < 2*g0)){
-    // if mc > 2*g0 this is being called from a restarted mcmc
-    // (and if not, it would make no difference since g0 is small)
-    //paramsd = prodparam;
-    started = true;
-  }
-  i = c-g0;
-  eta = std::min(1.0, (p+.0) * pow(i+1.0, -gamma));
-  alpha = std::min(1.0, alpha);
+    if(!started & (c < 2*g0)){
+      // if mc > 2*g0 this is being called from a restarted mcmc
+      // (and if not, it would make no difference since g0 is small)
+      //paramsd = prodparam;
+      started = true;
+    }
+    i = c-g0;
+    eta = std::min(1.0, (p+.0) * pow(i+1.0, -gamma));
+    alpha = std::min(1.0, alpha);
+    
+    if(started){
+      Sigma = Ip + eta * (alpha - alpha_star) * U * U.t() / arma::accu(U % U);
+      //Rcpp::Rcout << "Sigma: " << endl << Sigma;
+      S = paramsd * Sigma * paramsd.t();
+      //Rcpp::Rcout << "S: " << endl << S;
+      paramsd = arma::chol(S, "lower");
+    }
   
-  if(started){
-    Sigma = Ip + eta * (alpha - alpha_star) * U * U.t() / arma::accu(U % U);
-    //Rcpp::Rcout << "Sigma: " << endl << Sigma;
-    S = paramsd * Sigma * paramsd.t();
-    //Rcpp::Rcout << "S: " << endl << S;
-    paramsd = arma::chol(S, "lower");
-  }
-  
-  //Rcpp::Rcout << "mc: " << mc << " paramsd: " << endl;
-  //Rcpp::Rcout << paramsd << endl;
+    //Rcpp::Rcout << "mc: " << mc << " paramsd: " << endl;
+    //Rcpp::Rcout << paramsd << endl;
   //}
 }
 
 inline void RAMAdapt::print(int itertime, int mc){
   Rprintf("%5d-th iteration [ %dms ] ~ (Metropolis acceptance for theta: %.2f%%, average %.2f%%) \n", 
-          mc+1, itertime, arma::mean(acceptreject_history)*100, accept_ratio*100);
+         mc+1, itertime, arma::mean(acceptreject_history)*100, accept_ratio*100);
 }
 
 inline void RAMAdapt::print_summary(int time_tick, int time_mcmc, int m, int mcmc){
@@ -341,10 +291,10 @@ inline void RAMAdapt::print_summary(int time_tick, int time_mcmc, int m, int mcm
   
   //Rcpp::Rcout << m+1 << " " << mcmc << " " << time_iter << " " << mcmc-m-1 << " " << (mcmc-m-1) * time_iter << "\n";
   Rprintf("%.1f%% elapsed: %5dms (+%5dms). ETR: %.2f%s. \n",
-          100.0*(m+1.0)/mcmc,
-          time_mcmc,
-          time_tick,
-          etr, unit);
+         100.0*(m+1.0)/mcmc,
+         time_mcmc,
+         time_tick,
+         etr, unit);
 }
 
 inline void RAMAdapt::print_acceptance(){

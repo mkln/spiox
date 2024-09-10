@@ -5,8 +5,8 @@ dl_update_variances <- function(theta, a, b) {
     .Call(`_inocs_dl_update_variances`, theta, a, b)
 }
 
-inocs <- function(Y, X, coords, radgp_rho, theta_options, spf_k, spf_a_delta, spf_b_delta, spf_a_dl, spf_Lambda_start, spf_Delta_start, mvreg_B_start, mcmc = 1000L, print_every = 100L, sample_precision = 1L, sample_mvr = TRUE, sample_gp = TRUE) {
-    .Call(`_inocs_inocs`, Y, X, coords, radgp_rho, theta_options, spf_k, spf_a_delta, spf_b_delta, spf_a_dl, spf_Lambda_start, spf_Delta_start, mvreg_B_start, mcmc, print_every, sample_precision, sample_mvr, sample_gp)
+inocs <- function(Y, X, coords, radgp_rho, theta_start, spf_k, spf_a_delta, spf_b_delta, spf_a_dl, spf_Lambda_start, spf_Delta_start, mvreg_B_start, mcmc = 1000L, print_every = 100L, sample_precision = 1L, sample_mvr = TRUE, sample_gp = TRUE) {
+    .Call(`_inocs_inocs`, Y, X, coords, radgp_rho, theta_start, spf_k, spf_a_delta, spf_b_delta, spf_a_dl, spf_Lambda_start, spf_Delta_start, mvreg_B_start, mcmc, print_every, sample_precision, sample_mvr, sample_gp)
 }
 
 inocs_predict <- function(coords_new, X_new, Y, X, Xstar, coords, radgp_rho, theta_options, B, S, theta_which) {
@@ -21,12 +21,12 @@ neighbor_search_testset <- function(wtrain, wtest, rho) {
     .Call(`_inocs_neighbor_search_testset`, wtrain, wtest, rho)
 }
 
-radgp_build <- function(coords, rho, phi, sigmasq, nu, tausq, matern = FALSE) {
-    .Call(`_inocs_radgp_build`, coords, rho, phi, sigmasq, nu, tausq, matern)
+radgp_build <- function(coords, rho, phi) {
+    .Call(`_inocs_radgp_build`, coords, rho, phi)
 }
 
-radgp_logdens <- function(x, coords, rho, phi, sigmasq, nu, tausq, matern = FALSE) {
-    .Call(`_inocs_radgp_logdens`, x, coords, rho, phi, sigmasq, nu, tausq, matern)
+radgp_logdens <- function(x, coords, rho, phi) {
+    .Call(`_inocs_radgp_logdens`, x, coords, rho, phi)
 }
 
 run_spf_model <- function(Y, n_factors, delta_gamma_shape, delta_gamma_rate, dl_dirichlet_a, Lambda_start, Delta_start, mcmc = 1000L, print_every = 1000L, seq_lambda = FALSE) {

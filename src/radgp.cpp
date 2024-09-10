@@ -3,7 +3,7 @@
 
 DagGP::DagGP(
     const arma::mat& coords_in, 
-    const arma::vec& theta_in,
+    double theta_in,
     double rho_in,
     int covariance_model,
     int nthread){
@@ -31,7 +31,7 @@ DagGP::DagGP(
   int bessel_ws_inc = 5;//see bessel_k.c for working space needs
   bessel_ws = (double *) R_alloc(n_threads*bessel_ws_inc, sizeof(double));
   
-  initialize_Ci();
+  initialize_H(false);
 }
 
 double DagGP::logdens(const arma::vec& x){
@@ -39,7 +39,8 @@ double DagGP::logdens(const arma::vec& x){
   return 0.5 * ( precision_logdeterminant - loggausscore );
 }
 
-void DagGP::initialize_Ci(){
+
+void DagGP::initialize_H(bool do_Ci){
   arma::field<arma::vec> ht(nr);
   arma::vec sqrtR(nr);
   arma::vec logdetvec(nr);
@@ -87,9 +88,15 @@ void DagGP::initialize_Ci(){
 
   precision_logdeterminant = 2 * arma::accu(logdetvec);
   H = arma::sp_mat(H_locs, H_values);
-  Ci = H.t() * H;
+  if(do_Ci){
+    Ci = H.t() * H; 
+  }
 }
 
+void DagGP::update_theta(double theta_new){
+  theta = theta_new;
+  initialize_H(false);
+}
 
 arma::mat DagGP::Corr_export(const arma::mat& these_coords, const arma::uvec& ix, const arma::uvec& jx, bool same){
   return Correlationf(these_coords, ix, jx, theta, bessel_ws, covar, same);
@@ -98,22 +105,16 @@ arma::mat DagGP::Corr_export(const arma::mat& these_coords, const arma::uvec& ix
 
 //[[Rcpp::export]]
 Rcpp::List radgp_build(const arma::mat& coords, double rho, 
-                       double phi, double sigmasq, double nu, double tausq,
-                       bool matern=false){
+                       double phi){
   
-  arma::vec theta(4);
-  theta(0) = phi;
-  theta(1) = sigmasq;
-  theta(2) = nu;
-  theta(3) = tausq;
+  int covar = false;
+  DagGP adag(coords, phi, rho, covar, 1);
   
-  int covar = matern;
-  DagGP adag(coords, theta, rho, covar, 1);
-  
+  arma::sp_mat Ci = adag.H.t() * adag.H;
   return Rcpp::List::create(
     Rcpp::Named("dag") = adag.dag,
     Rcpp::Named("H") = adag.H,
-    Rcpp::Named("Cinv") = adag.Ci,
+    Rcpp::Named("Cinv") = Ci,
     Rcpp::Named("Cinv_logdet") = adag.precision_logdeterminant,
     Rcpp::Named("layers") = adag.layers
   );
@@ -121,18 +122,9 @@ Rcpp::List radgp_build(const arma::mat& coords, double rho,
 
 //[[Rcpp::export]]
 Rcpp::List radgp_logdens(const arma::vec& x, 
-                       const arma::mat& coords, double rho, 
-                       double phi, double sigmasq, double nu, double tausq,
-                       bool matern=false){
+                       const arma::mat& coords, double rho, double phi){
   
-  arma::vec theta(4);
-  theta(0) = phi;
-  theta(1) = sigmasq;
-  theta(2) = nu;
-  theta(3) = tausq;
-  
-  int covar = matern;
-  DagGP adag(coords, theta, rho, covar, 1);
+  DagGP adag(coords, phi, rho, false, 1);
   
   double logdens = adag.logdens(x);
   

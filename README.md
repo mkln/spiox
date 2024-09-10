@@ -1,1 +1,1 @@
-# INOCS
+# INOCS: INside-Out Coregionalization for Spatial multivariate data

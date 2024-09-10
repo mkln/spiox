@@ -5,7 +5,7 @@ Rcpp::List inocs(const arma::mat& Y,
                     const arma::mat& X, 
                     const arma::mat& coords,
                     
-                    double radgp_rho, const arma::mat& theta_options, 
+                    double radgp_rho, const arma::vec& theta_start, 
                     
                     int spf_k, double spf_a_delta, double spf_b_delta, double spf_a_dl,
                            
@@ -34,7 +34,7 @@ Rcpp::List inocs(const arma::mat& Y,
     Rcpp::Rcout << "Preparing..." << endl;
   }
   
-  Inocs inocs_model(Y, X, coords, radgp_rho, theta_options, 
+  Inocs inocs_model(Y, X, coords, radgp_rho, theta_start, 
                      spf_k, spf_a_delta, spf_b_delta, spf_a_dl,
                      spf_Lambda_start, spf_Delta_start,
                      mvreg_B_start);
@@ -45,7 +45,7 @@ Rcpp::List inocs(const arma::mat& Y,
   arma::mat Delta = arma::zeros(q, mcmc);
   arma::cube S = arma::zeros(q, q, mcmc);
   arma::cube Si = arma::zeros(q, q, mcmc);
-  arma::umat theta_which = arma::zeros<arma::umat>(q, mcmc);
+  arma::mat theta = arma::zeros(q, mcmc);
   arma::cube V = arma::zeros(n, q, mcmc);
   
   if(print_every > 0){
@@ -61,8 +61,8 @@ Rcpp::List inocs(const arma::mat& Y,
     Delta.col(m) = inocs_model.spf.Delta;
     S.slice(m) = inocs_model.S;
     Si.slice(m) = inocs_model.Si;
-    theta_which.col(m) = inocs_model.spmap+1; // return in R indexing, starts from 1
     V.slice(m) = inocs_model.spf.V;
+    theta.col(m) = inocs_model.theta;
     
     bool print_condition = (print_every>0);
     if(print_condition){
@@ -80,8 +80,7 @@ Rcpp::List inocs(const arma::mat& Y,
     Rcpp::Named("S") = S,
     Rcpp::Named("Si") = Si,
     Rcpp::Named("V") = V,
-    Rcpp::Named("theta_which") = theta_which,
-    Rcpp::Named("spatial_sparsity") = inocs_model.spatial_sparsity,
+    Rcpp::Named("theta") = theta,
     Rcpp::Named("timings") = inocs_model.timings
   );
   
