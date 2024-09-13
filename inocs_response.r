@@ -3,7 +3,7 @@ library(tidyverse)
 library(magrittr)
 library(Matrix)
 
-set.seed(4)
+set.seed(2)
 
 image.matrix <- \(x) {
   image(as(x, "dgCMatrix"))
@@ -15,14 +15,14 @@ coords <- expand.grid(xx, xx)
 cx <- as.matrix(coords)
 nr <- nrow(cx)
 
-philist <- c(1,5,10)
-Clist <- philist %>% lapply(\(phi)  (exp(-phi * as.matrix(dist(cx))^1) ) )
+philist <- c(1,2.5,5.0)
+Clist <- philist %>% lapply(\(phi)  (exp(-phi * as.matrix(dist(cx))^1) + 1e-15*diag(nr)) )
 Llist <- Clist %>% lapply(\(C) t(chol(C)))
 Lilist <- Llist %>% lapply(\(L) solve(L))
 
 # multivariate
-q <- 25
-k <- round(q/2)
+q <- 6
+k <- 2#round(q/2)
 
 Lambda <- matrix(runif(q*k), ncol=k)
 threshold_val <- .9
@@ -64,8 +64,8 @@ X <- matrix(1, ncol=1, nrow=nr) %>% cbind(matrix(rnorm(nr*(p-1)), ncol=p-1))
 Beta <- matrix(rnorm(q * p), ncol=q)
 
 Y_regression <- X %*% Beta
-Error <- matrix(rnorm(nr * q),ncol=q) %*% diag(D <- runif(q, 0, 0.1))
-Y <- as.matrix(Y_sp + Y_regression) + Error
+Error <- matrix(rnorm(nr * q),ncol=q) # %*% diag(D <- runif(q, 0, 0.1))
+Y <- as.matrix(Y_sp + Y_regression) #+ Error
 
 cov_Y_cols <- cov(Y) %>% as("dgCMatrix")
 cov_Y_rows <- cov(t(Y)) %>% as("dgCMatrix")
@@ -90,9 +90,9 @@ radgp_rho <- 0.1
 test_radgp <- inocs::radgp_build(cx, radgp_rho, phi=1, sigmasq=1, nu=1, tausq=0, matern=F)
 test_radgp$dag %>% sapply(\(x) nrow(x)) %>% summary()
 
-phi_opts <- seq(0.5, 10, length.out=3)
+  phi_opts <- seq(0.5, 10, length.out=3)
 
-theta_opts <- phi_opts %>% sapply(\(phi) matrix( c(phi, 1, 1, 1e-10), ncol=1))
+theta_opts <- phi_opts %>% sapply(\(phi) matrix( c(phi, 1, 1, 1e-9), ncol=1))
 
 testset <- sample(1:nrow(Y), 10, replace=F)
 
@@ -113,38 +113,16 @@ set.seed(1)
                             spf_Delta_start = matrix(runif(q),ncol=1),#diag(Delta),
                             mvreg_B_start = Beta,# %>% perturb(),
                             
-                            mcmc = mcmc <- 100,
-                            print_every=10,
-                            
-                            sample_precision=1,
-                            sample_mvr=T,
-                            sample_gp=T)
-}))
-inocs_out$theta_which %>% apply(1, \(th) phi_opts[th]) %>% apply(2, mean)
-
-
-set.seed(1)
-(total_time2 <- system.time({
-  spassso_out <- spassso::spassso(Y[-testset,], 
-                            X[-testset,,drop=F],
-                            cx[-testset,], 
-                            radgp_rho = radgp_rho, theta=theta_opts,
-                            
-                            spf_k = kfit, spf_a_delta = .1, spf_b_delta = .1, spf_a_dl = 0.5,
-                            
-                            spf_Lambda_start = Lambda[,1:kfit] %>% perturb(),
-                            spf_Delta_start = runif(q),#diag(Delta),
-                            mvreg_B_start = Beta,# %>% perturb(),
-                            
                             mcmc = mcmc <- 1000,
-                            print_every=100,
+                            print_every=200,
                             
                             sample_precision=1,
                             sample_mvr=T,
                             sample_gp=T)
 }))
+cbind(inocs_out$theta %>% apply(1, mean), theta_true)
 
-obj_out <- spassso_out
+obj_out <- inocs_out
 
 #sparse test
 sLambda <- obj_out$Lambda
@@ -153,6 +131,13 @@ sLambda <- obj_out$Lambda
 Sig_samples <- 1:mcmc %>% 
   sapply(\(i) with(obj_out, solve(tcrossprod( sLambda[,,i] ) + diag(Delta[,i]) ))) %>% 
   array(dim=c(q, q, mcmc))
+
+# microergodics
+diag(Sigma) * theta_true
+j <- 6
+plot(inocs_out$theta[1,j,] * 
+       Sig_samples[j,j,], type='l')
+
 
 Qa_samples <- 1:mcmc %>% 
   sapply(\(i) with(obj_out, cov2cor(tcrossprod( sLambda[,,i] ) + diag(Delta[,i]) ))) %>% 
@@ -207,6 +192,34 @@ mean(Q_true_pattern == Q_est_pattern)
 
 #(sum(check_pattern) - q)/(prod(dim(Q)) - q)
 image(Q_est_pattern)
+
+
+
+
+# alternative models
+
+
+
+set.seed(1)
+(total_time2 <- system.time({
+  spassso_out <- spassso::spassso(Y[-testset,], 
+                                  X[-testset,,drop=F],
+                                  cx[-testset,], 
+                                  radgp_rho = radgp_rho, theta=theta_opts,
+                                  
+                                  spf_k = kfit, spf_a_delta = .1, spf_b_delta = .1, spf_a_dl = 0.5,
+                                  
+                                  spf_Lambda_start = Lambda[,1:kfit] %>% perturb(),
+                                  spf_Delta_start = runif(q),#diag(Delta),
+                                  mvreg_B_start = Beta,# %>% perturb(),
+                                  
+                                  mcmc = mcmc <- 1000,
+                                  print_every=100,
+                                  
+                                  sample_precision=1,
+                                  sample_mvr=T,
+                                  sample_gp=T)
+}))
 
 
 

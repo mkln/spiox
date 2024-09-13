@@ -13,6 +13,10 @@ inocs_predict <- function(coords_new, X_new, Y, X, Xstar, coords, radgp_rho, the
     .Call(`_inocs_inocs_predict`, coords_new, X_new, Y, X, Xstar, coords, radgp_rho, theta_options, B, S, theta_which)
 }
 
+ioc_xcor <- function(x, y, i, j, S, philist) {
+    .Call(`_inocs_ioc_xcor`, x, y, i, j, S, philist)
+}
+
 make_candidates <- function(w, indsort, col, rho) {
     .Call(`_inocs_make_candidates`, w, indsort, col, rho)
 }

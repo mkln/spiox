@@ -39,6 +39,11 @@ double DagGP::logdens(const arma::vec& x){
   return 0.5 * ( precision_logdeterminant - loggausscore );
 }
 
+void DagGP::update_theta(const arma::vec& newtheta){
+  theta = newtheta;
+  initialize_H();
+}
+
 void DagGP::initialize_H(){
   arma::field<arma::vec> ht(nr);
   arma::vec sqrtR(nr);

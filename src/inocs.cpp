@@ -45,6 +45,7 @@ Rcpp::List inocs(const arma::mat& Y,
   arma::mat Delta = arma::zeros(q, mcmc);
   arma::cube S = arma::zeros(q, q, mcmc);
   arma::cube Si = arma::zeros(q, q, mcmc);
+  arma::cube theta = arma::zeros(2, q, mcmc);
   arma::umat theta_which = arma::zeros<arma::umat>(q, mcmc);
   arma::cube V = arma::zeros(n, q, mcmc);
   
@@ -62,7 +63,14 @@ Rcpp::List inocs(const arma::mat& Y,
     S.slice(m) = inocs_model.S;
     Si.slice(m) = inocs_model.Si;
     V.slice(m) = inocs_model.spf.V;
-    theta_which.col(m) = 1+inocs_model.spmap;
+    
+    arma::mat theta_choice = arma::zeros(2, q);
+    for(unsigned int j=0; j<q; j++){
+      theta_choice.col(j) = inocs_model.theta_options.submat(0, inocs_model.spmap(j), 1, inocs_model.spmap(j));
+    }
+    
+    theta.slice(m) = theta_choice;
+    theta_which.col(m) = inocs_model.spmap;
     
     bool print_condition = (print_every>0);
     if(print_condition){
@@ -80,6 +88,7 @@ Rcpp::List inocs(const arma::mat& Y,
     Rcpp::Named("S") = S,
     Rcpp::Named("Si") = Si,
     Rcpp::Named("V") = V,
+    Rcpp::Named("theta") = theta,
     Rcpp::Named("theta_which") = theta_which,
     Rcpp::Named("timings") = inocs_model.timings
   );

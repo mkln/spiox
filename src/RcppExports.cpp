@@ -72,6 +72,22 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// ioc_xcor
+arma::mat ioc_xcor(const arma::mat& x, const arma::mat& y, int i, int j, const arma::mat& S, const arma::vec& philist);
+RcppExport SEXP _inocs_ioc_xcor(SEXP xSEXP, SEXP ySEXP, SEXP iSEXP, SEXP jSEXP, SEXP SSEXP, SEXP philistSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type x(xSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< int >::type i(iSEXP);
+    Rcpp::traits::input_parameter< int >::type j(jSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type S(SSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type philist(philistSEXP);
+    rcpp_result_gen = Rcpp::wrap(ioc_xcor(x, y, i, j, S, philist));
+    return rcpp_result_gen;
+END_RCPP
+}
 // make_candidates
 arma::umat make_candidates(const arma::mat& w, const arma::uvec& indsort, unsigned int col, double rho);
 RcppExport SEXP _inocs_make_candidates(SEXP wSEXP, SEXP indsortSEXP, SEXP colSEXP, SEXP rhoSEXP) {
@@ -159,6 +175,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_inocs_dl_update_variances", (DL_FUNC) &_inocs_dl_update_variances, 3},
     {"_inocs_inocs", (DL_FUNC) &_inocs_inocs, 17},
     {"_inocs_inocs_predict", (DL_FUNC) &_inocs_inocs_predict, 11},
+    {"_inocs_ioc_xcor", (DL_FUNC) &_inocs_ioc_xcor, 6},
     {"_inocs_make_candidates", (DL_FUNC) &_inocs_make_candidates, 4},
     {"_inocs_neighbor_search_testset", (DL_FUNC) &_inocs_neighbor_search_testset, 3},
     {"_inocs_radgp_build", (DL_FUNC) &_inocs_radgp_build, 7},

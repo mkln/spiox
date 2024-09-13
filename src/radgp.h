@@ -22,7 +22,7 @@ public:
   
   double precision_logdeterminant;
   double logdens(const arma::vec& x);
-  
+  void update_theta(const arma::vec& newtheta);
   arma::sp_mat H;
   void initialize_H();
   

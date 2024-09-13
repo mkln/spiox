@@ -12,6 +12,6 @@ arma::mat Correlationf(const arma::mat& coords, const arma::uvec& ix, const arma
                        const arma::vec& theta, double * bessel_ws, int covar, bool same);
 
 arma::mat Correlationc(const arma::mat& coordsx, const arma::mat& coordsy, 
-                       const arma::vec& theta, double * bessel_ws, int covar, bool same);
+                       const arma::vec& theta, int covar, bool same);
 
 #endif
