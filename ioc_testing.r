@@ -10,114 +10,133 @@ image.matrix <- \(x) {
 }
 
 # spatial
-xx <- seq(0.05, .91, length.out=3)
-coords <- expand.grid(xx, xx)
+xx <- seq(0, 1, length.out=3)
+coords <- #cbind(runif(100), runif(100))#
+  expand.grid(xx, xx)
 cx <- as.matrix(coords)
 nr <- nrow(cx)
 
 
 # multivariate
-q <- 2
+q <- 3
 Q <- rWishart(1, q+2, diag(q))[,,1] #
 #tcrossprod(Lambda) + Delta
 
 Sigma <- solve(Q) 
 
+philist <- c(5, 1.1,1.5)[1:q]
 
-philist <- c(1,10,1.5)[1:q]
-Clist <- philist %>% lapply(\(phi)  (exp(-phi * as.matrix(dist(cx))^1) ) )
+Clist <- philist %>% lapply(\(phi)  (exp(-phi * as.matrix(dist(cx))^1.9) ) )
 Llist <- Clist %>% lapply(\(C) t(chol(C)))
 Lilist <- Llist %>% lapply(\(L) solve(L))
 
-
-C <- Matrix::bdiag(Llist) %*% (Sigma %x% diag(nr)) %*% t(Matrix::bdiag(Llist))
-
-
-
-
-new1 <- matrix(c(0.1, 0.1), ncol=2)
-new2 <- matrix(c(10.35, 0.1), ncol=2)
-colnames(new1) <- colnames(new2) <- c("Var1", "Var2")
-
-cnew1 <- rbind(coords, new1)
-cnew2 <- rbind(coords, new2)
-
-
-C1_l <- philist %>% lapply(\(phi)  (exp(-phi * as.matrix(dist(cnew1))^1) ) )
-L1_l <- C1_l %>% lapply(\(C) t(chol(C)))
-
-C2_l <- philist %>% lapply(\(phi)  (exp(-phi * as.matrix(dist(cnew2))^1) ) )
-L2_l <- C2_l %>% lapply(\(C) t(chol(C)))
-
-Lbig <- list()
-for(j in 1:q){
-  Lbig[[j]] <- matrix(0, nr+2, nr+2)
-  
-  Lbig[[j]][1:nr, 1:nr] <- Llist[[j]]
-  Lbig[[j]][nr+1, 1:(nr+1)] <- L1_l[[j]][nr+1,]
-  Lbig[[j]][nr+2, c(1:nr, nr+2)] <- L2_l[[j]][nr+1,]
+# subset of S and some new
+xcov_h <- function(h, var_i, var_j, test_coords, n_rand=10, cexp=1){
+  xcov <- rep(0, nrow(test_coords))
+  for(i in 1:nrow(test_coords)){
+    new1 <- test_coords[i,,drop=F]
+    rand_angles <- runif(n_rand, 0, 2*pi)
+    for(a in rand_angles){
+      new2 <- matrix(c(new1[1,1] + h*cos(a), new1[1,2] + h*sin(a)), nrow=1)
+      xcov[i] <- xcov[i] + iox_precomp(new1, new2, var_i, var_j, Lilist, cx, philist, cexp)/n_rand
+        iox(new1, new2, var_i, var_j, cx, philist, cexp)/n_rand
+    }
+  }
+  return(xcov)
 }
 
-A <- matrix(rnorm(q*q), ncol=q)
-A[upper.tri(A)] <- 0 
-diag(A) <- abs(diag(A))
 
-A[2,] <- c(0.1, 0.2)
+hvec <- seq(0, .5, length.out=25)
+xg <- seq(-.2, 1.1, length.out=10)
+test_coords <- expand.grid(xg,xg) %>% as.matrix()
+
+system.time({
+  xcov_mat <- hvec %>% 
+  sapply(\(h) xcov_h(h, 1, 2, test_coords, 50, 1.9))
+})
+
+xcov_mat %>% apply(2, mean) %>% plot(type='l')
+
+xg <- seq(-.2, 1.1, length.out=10)
+test_coords <- expand.grid(xg,xg) %>% as.matrix()
+
+testh <- iox_cross_avg(hvec, 1, 2, 
+              test_coords, cx, philist, 50, 1.9)
 
 
 
 
-xx <- seq(0.05, 2, length.out=15)
+new1 <- matrix(x1 <- c(.1,.23),nrow=1)
+h <-  runif(2)
+new2 <- new1+h
+iox_mat(new2, new1, cx, philist)
+
+# C(Ts, Tu) should be dimension 5*q x 2*q
+
+Csu <- rbind(
+  cbind(iox(Ts, Tu, 1, 1, cx, philist), iox(Ts, Tu, 1, 2, cx, philist)), 
+  cbind(iox(Ts, Tu, 2, 1, cx, philist), iox(Ts, Tu, 2, 2, cx, philist)) 
+  )
+
+
+# PP compare
+lags <- seq(1e-4, 0.1, length.out=100)
+
+# spatial
+xx <- seq(0, 1, length.out=15)
 coords <- expand.grid(xx, xx)
 cx <- as.matrix(coords)
 
-
-Sigma <- tcrossprod(A)
-
-philist <- c(1,3)
-
-Cmat <- \(l1, l2){
-  matrix(c(
-    Sigma[1,1] * ioc_xcor(l1, l2, 1, 1, cx, philist),
-    Sigma[2,1] * ioc_xcor(l1, l2, 2, 1, cx, philist),
-    Sigma[1,2] * ioc_xcor(l1, l2, 1, 2, cx, philist),
-    Sigma[2,2] * ioc_xcor(l1, l2, 2, 2, cx, philist)
-  ), ncol=2)
-}
-
-Cmat(cx[1,,drop=F], cx[nr,,drop=F])
-
-Sigma[1,2] * ioc_xcor(new1, new2, 2, 1, cx, philist)/
-  sqrt( Sigma[1,1] * ioc_xcor(new1, new2, 1, 1, cx, philist) *
-          Sigma[2,2] * ioc_xcor(new1, new2, 2, 2, cx, philist))
+plot(lags %>% sapply(\(h) {
+  x <- matrix(c(.5001), ncol=2)
+  lagh <- matrix(c(h, h), ncol=2)
+  cx <- rbind(cx, x, x+lagh)
+  
+  return(iox(x, x + lagh, 1, 2, cx, c(1,10), 1.9))
+}), type='l')
 
 
-Sigma[1,2] * ioc_xcor(cx[1,,drop=F], cx[nr,,drop=F], 1, 2, cx, philist)/
-    sqrt( Sigma[1,1] * ioc_xcor(cx[1,,drop=F], cx[nr,,drop=F], 1, 1, cx, philist) *
-            Sigma[2,2] * ioc_xcor(cx[1,,drop=F], cx[nr,,drop=F], 2, 2, cx, philist))
+exp(-prod(philist) * as.matrix(dist(rbind(x,x-lagh))))
+
+Llist[[1]][4,,drop=F] %*% t(Llist[[2]][4,,drop=F])
+
+exp(-philist[1] * as.matrix( dist( rbind(x, x + lagh) ) )^1.5) *
+  exp(-philist[2] * as.matrix( dist( rbind(x, x + lagh) ) )^1.5)
+
+iox(cx[2,,drop=F], cx[5,,drop=F], 1, , cx, philist)
+exp(-philist[1] * as.matrix( dist( cx[c(2,5),] ) )^1.5)
 
 
-# LMC
-
-a <- 0.1
-b <- 0.5
-A <- matrix(c(1, a, 0, b), ncol=2)
-philist <- c(1, 2)
-rho <- 1:q %>% lapply(\(j) \(h) exp(-philist[j] * sqrt(sum(h^2)))   )
-
-Drho <- \(h) { 1:2 %>% sapply(\(i) rho[[i]](h)) }
-
-cov2cor(A %*% diag(Drho(.51)) %*% t(A))
 
 
-G <- function(h, a, b, phi1, phi2){
-  a * exp(-phi1*h) / sqrt(
-    exp(-phi1*h) * (a^2 * exp(-phi1*h) + b^2 * exp(-phi2*h))
-  )
-}
 
-G(.51, A[2,1], A[2,2], philist[1], philist[2])
 
+
+
+
+# cross-covar
+
+r <- 3
+s <- 5
+t(Lilist[[1]][,r,drop=F]) %*% Lilist[[2]][,s,drop=F] 
+
+rhoi <- Clist[[1]][r,,drop=F]
+rhoj <- Clist[[2]][,s,drop=F]
+rhoi %*% t(Lilist[[1]]) %*% Lilist[[2]] %*% rhoj
+
+iox(cx[r,,drop=F], cx[s,,drop=F], 1, 2, cx, philist, 2)
+Llist[[1]][r,,drop=F] %*% t(Llist[[2]][s,,drop=F])
+
+
+L <- Llist[[1]]
+Li <- Lilist[[1]]
+
+c(-Li[r,1:(r-1),drop=F] %*% solve(Li[1:(r-1),1:(r-1)]), 1) / Li[r,r]
+
+Clist[[1]][r,] %*% solve(Clist[[1]]) %*% L %*% t(Li)  %*% t(Li)
+L[r,]
+
+crossprod(Lilist[[1]], Lilist[[2]])[r,s]
 
 
 

@@ -13,8 +13,24 @@ inocs_predict <- function(coords_new, X_new, Y, X, Xstar, coords, radgp_rho, the
     .Call(`_inocs_inocs_predict`, coords_new, X_new, Y, X, Xstar, coords, radgp_rho, theta_options, B, S, theta_which)
 }
 
-ioc_xcor <- function(x, y, i, j, S, philist) {
-    .Call(`_inocs_ioc_xcor`, x, y, i, j, S, philist)
+expcov <- function(x, y, phi) {
+    .Call(`_inocs_expcov`, x, y, phi)
+}
+
+iox <- function(x, y, i, j, S, philist, cexp = 1) {
+    .Call(`_inocs_iox`, x, y, i, j, S, philist, cexp)
+}
+
+iox_precomp <- function(x, y, i, j, Li_invs, S, philist, cexp = 1) {
+    .Call(`_inocs_iox_precomp`, x, y, i, j, Li_invs, S, philist, cexp)
+}
+
+iox_mat <- function(x, y, S, philist, cexp = 1) {
+    .Call(`_inocs_iox_mat`, x, y, S, philist, cexp)
+}
+
+iox_cross_avg <- function(hlist, var_i, var_j, test_coords, S, philist, num_angles = 10L, cexp = 1) {
+    .Call(`_inocs_iox_cross_avg`, hlist, var_i, var_j, test_coords, S, philist, num_angles, cexp)
 }
 
 make_candidates <- function(w, indsort, col, rho) {
