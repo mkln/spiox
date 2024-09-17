@@ -95,7 +95,7 @@ void powerexp_inplace(arma::mat& res,
 arma::mat Correlationf(
     const arma::mat& coords,
     const arma::uvec& ix, const arma::uvec& iy,
-    double theta,
+    const arma::vec& theta,
     double * bessel_ws,
     int covar,
     bool same){
@@ -103,10 +103,10 @@ arma::mat Correlationf(
   // C(0) = 1/reparam
   arma::mat res = arma::zeros(ix.n_rows, iy.n_rows);
   
-  double phi = theta;
-  double sigmasq = 1;//theta(1);
-  double nu = 1;//theta(2);
-  double nugg = 0;//theta(3);
+  double phi = theta(0);
+  double sigmasq = theta(1);
+  double nu = theta(2);
+  double nugg = theta(3);
   
   if(covar==0){
     powerexp_inplace(res, coords, ix, iy, phi, nu, sigmasq, nugg, same); 
@@ -119,10 +119,11 @@ arma::mat Correlationf(
 
 }
 
+//[[Rcpp::export]]
 arma::mat Correlationc(
     const arma::mat& coordsx,
     const arma::mat& coordsy,
-    double theta,
+    const arma::vec& theta,
     int covar,
     bool same){
 
@@ -130,7 +131,7 @@ arma::mat Correlationc(
 #ifdef _OPENMP
   nthreads = omp_get_num_threads();
 #endif
-  int bessel_ws_inc = 5;//see bessel_k.c for working space needs
+  int bessel_ws_inc = 3;//see bessel_k.c for working space needs
   double *bessel_ws = (double *) R_alloc(nthreads*bessel_ws_inc, sizeof(double));
   
   

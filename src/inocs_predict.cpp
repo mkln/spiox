@@ -68,9 +68,9 @@ Rcpp::List inocs_predict(const arma::mat& coords_new,
         arma::uvec ix = oneuv * (itarget);
         arma::uvec px = predict_dag(idagtarget);
         
-        arma::mat CC = inocs_model.radgp_q.at(spmap(j)).Corr_export(cxall, ix, ix, true);
-        arma::mat CPt = inocs_model.radgp_q.at(spmap(j)).Corr_export(cxall, px, ix, false);
-        arma::mat PPi = arma::inv_sympd( inocs_model.radgp_q.at(spmap(j)).Corr_export(cxall, px, px, true) );
+        arma::mat CC = inocs_model.radgp_options.at(spmap(j)).Corr_export(cxall, ix, ix, true);
+        arma::mat CPt = inocs_model.radgp_options.at(spmap(j)).Corr_export(cxall, px, ix, false);
+        arma::mat PPi = arma::inv_sympd( inocs_model.radgp_options.at(spmap(j)).Corr_export(cxall, px, px, true) );
           
         arma::vec ht = PPi * CPt;
         double sqrtR = sqrt( arma::conv_to<double>::from(
