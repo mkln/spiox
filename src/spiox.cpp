@@ -1,7 +1,7 @@
 #include "spiox.h"
 
 //[[Rcpp::export]]
-Rcpp::List iox_wishart(const arma::mat& Y, 
+Rcpp::List spiox_wishart(const arma::mat& Y, 
                     const arma::mat& X, 
                     const arma::mat& coords,
                     
@@ -80,7 +80,7 @@ Rcpp::List iox_wishart(const arma::mat& Y,
 }
 
 
-Rcpp::List iox_spf(const arma::mat& Y, 
+Rcpp::List spiox_spf(const arma::mat& Y, 
                          const arma::mat& X, 
                          const arma::mat& coords,
                          

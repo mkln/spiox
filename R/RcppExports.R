@@ -2,66 +2,70 @@
 # Generator token: 10BE3573-1514-4C36-9D1C-5A225CD40393
 
 Correlationc <- function(coordsx, coordsy, theta, covar, same) {
-    .Call(`_inocs_Correlationc`, coordsx, coordsy, theta, covar, same)
+    .Call(`_spiox_Correlationc`, coordsx, coordsy, theta, covar, same)
 }
 
 dl_update_variances <- function(theta, a, b) {
-    .Call(`_inocs_dl_update_variances`, theta, a, b)
+    .Call(`_spiox_dl_update_variances`, theta, a, b)
 }
 
-inocs_wishart <- function(Y, X, coords, radgp_rho, theta_opts, Sigma_start, mvreg_B_start, mcmc = 1000L, print_every = 100L, sample_iwish = TRUE, sample_mvr = TRUE, sample_gp = TRUE) {
-    .Call(`_inocs_inocs_wishart`, Y, X, coords, radgp_rho, theta_opts, Sigma_start, mvreg_B_start, mcmc, print_every, sample_iwish, sample_mvr, sample_gp)
-}
-
-inocs_predict <- function(coords_new, X_new, Y, X, Xstar, coords, radgp_rho, theta_options, B, S, theta_which) {
-    .Call(`_inocs_inocs_predict`, coords_new, X_new, Y, X, Xstar, coords, radgp_rho, theta_options, B, S, theta_which)
+iox_wishart <- function(Y, X, coords, radgp_rho, theta_opts, Sigma_start, mvreg_B_start, mcmc = 1000L, print_every = 100L, sample_iwish = TRUE, sample_mvr = TRUE, sample_gp = TRUE) {
+    .Call(`_spiox_iox_wishart`, Y, X, coords, radgp_rho, theta_opts, Sigma_start, mvreg_B_start, mcmc, print_every, sample_iwish, sample_mvr, sample_gp)
 }
 
 expcov <- function(x, y, phi) {
-    .Call(`_inocs_expcov`, x, y, phi)
+    .Call(`_spiox_expcov`, x, y, phi)
 }
 
 iox_svd <- function(x, y, i, j, S, philist, cexp = 1) {
-    .Call(`_inocs_iox_svd`, x, y, i, j, S, philist, cexp)
+    .Call(`_spiox_iox_svd`, x, y, i, j, S, philist, cexp)
 }
 
 iox <- function(x, y, i, j, S, philist, cexp = 1) {
-    .Call(`_inocs_iox`, x, y, i, j, S, philist, cexp)
+    .Call(`_spiox_iox`, x, y, i, j, S, philist, cexp)
 }
 
 iox_precomp <- function(x, y, i, j, Li_invs, S, philist, cexp = 1) {
-    .Call(`_inocs_iox_precomp`, x, y, i, j, Li_invs, S, philist, cexp)
+    .Call(`_spiox_iox_precomp`, x, y, i, j, Li_invs, S, philist, cexp)
 }
 
 iox_mat <- function(x, y, S, philist, cexp = 1) {
-    .Call(`_inocs_iox_mat`, x, y, S, philist, cexp)
+    .Call(`_spiox_iox_mat`, x, y, S, philist, cexp)
 }
 
 iox_mat_svd <- function(x, y, S, philist, cexp = 1) {
-    .Call(`_inocs_iox_mat_svd`, x, y, S, philist, cexp)
+    .Call(`_spiox_iox_mat_svd`, x, y, S, philist, cexp)
 }
 
 iox_cross_avg <- function(hlist, var_i, var_j, test_coords, S, philist, num_angles = 10L, cexp = 1) {
-    .Call(`_inocs_iox_cross_avg`, hlist, var_i, var_j, test_coords, S, philist, num_angles, cexp)
+    .Call(`_spiox_iox_cross_avg`, hlist, var_i, var_j, test_coords, S, philist, num_angles, cexp)
 }
 
 make_candidates <- function(w, indsort, col, rho) {
-    .Call(`_inocs_make_candidates`, w, indsort, col, rho)
+    .Call(`_spiox_make_candidates`, w, indsort, col, rho)
 }
 
 neighbor_search_testset <- function(wtrain, wtest, rho) {
-    .Call(`_inocs_neighbor_search_testset`, wtrain, wtest, rho)
+    .Call(`_spiox_neighbor_search_testset`, wtrain, wtest, rho)
 }
 
 radgp_build <- function(coords, rho, phi, sigmasq, nu, tausq, matern = FALSE) {
-    .Call(`_inocs_radgp_build`, coords, rho, phi, sigmasq, nu, tausq, matern)
+    .Call(`_spiox_radgp_build`, coords, rho, phi, sigmasq, nu, tausq, matern)
 }
 
 radgp_logdens <- function(x, coords, rho, phi, sigmasq, nu, tausq, matern = FALSE) {
-    .Call(`_inocs_radgp_logdens`, x, coords, rho, phi, sigmasq, nu, tausq, matern)
+    .Call(`_spiox_radgp_logdens`, x, coords, rho, phi, sigmasq, nu, tausq, matern)
 }
 
 run_spf_model <- function(Y, n_factors, delta_gamma_shape, delta_gamma_rate, dl_dirichlet_a, Lambda_start, Delta_start, mcmc = 1000L, print_every = 1000L, seq_lambda = FALSE) {
-    .Call(`_inocs_run_spf_model`, Y, n_factors, delta_gamma_shape, delta_gamma_rate, dl_dirichlet_a, Lambda_start, Delta_start, mcmc, print_every, seq_lambda)
+    .Call(`_spiox_run_spf_model`, Y, n_factors, delta_gamma_shape, delta_gamma_rate, dl_dirichlet_a, Lambda_start, Delta_start, mcmc, print_every, seq_lambda)
+}
+
+spiox_wishart <- function(Y, X, coords, radgp_rho, theta_opts, Sigma_start, mvreg_B_start, mcmc = 1000L, print_every = 100L, sample_iwish = TRUE, sample_mvr = TRUE, sample_gp = TRUE) {
+    .Call(`_spiox_spiox_wishart`, Y, X, coords, radgp_rho, theta_opts, Sigma_start, mvreg_B_start, mcmc, print_every, sample_iwish, sample_mvr, sample_gp)
+}
+
+spiox_predict <- function(coords_new, X_new, Y, X, Xstar, coords, radgp_rho, theta_options, B, S, theta_which) {
+    .Call(`_spiox_spiox_predict`, coords_new, X_new, Y, X, Xstar, coords, radgp_rho, theta_options, B, S, theta_which)
 }
 

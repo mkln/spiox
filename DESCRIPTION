@@ -1,11 +1,11 @@
-Package: inocs
+Package: spiox
 Type: Package
-Title: Inside-out coregionalization for spatial multivariate data
+Title: Inside-out cross-covariance for spatial multivariate data
 Version: 0.1
 Date: 2024-08-12
 Author: Michele Peruzzi
 Maintainer: Michele Peruzzi <peruzzi@umich.edu>
-Description: Fits Bayesian models for multivariate spatial data using Inside-out coregionalization of radial neighbors Gaussian processes.
+Description: Fits Bayesian models for multivariate spatial data using Inside-out cross-covariance and radial neighbors Gaussian processes.
 License: GPL (>= 2)
 Encoding: UTF-8
 RoxygenNote: 7.3.1

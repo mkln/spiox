@@ -10,7 +10,7 @@ inline int time_count(std::chrono::steady_clock::time_point tstart){
   return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - tstart).count();
 }
 
-class Inocs {
+class SpIOX {
 public:
   // response:
   bool model_response;
@@ -72,7 +72,7 @@ public:
   
   // -------------- constructors
   // for response model inverse Wishart
-  Inocs(const arma::mat& _Y, 
+  SpIOX(const arma::mat& _Y, 
         const arma::mat& _X, 
         const arma::mat& _coords,
         
@@ -118,7 +118,7 @@ public:
   
   
   // for response model spf
-  Inocs(const arma::mat& _Y, 
+  SpIOX(const arma::mat& _Y, 
         const arma::mat& _X, 
         const arma::mat& _coords,
         
@@ -166,7 +166,7 @@ public:
   }
 
   // for predictions
-  Inocs(const arma::mat& _Y, 
+  SpIOX(const arma::mat& _Y, 
           const arma::mat& _X, 
           const arma::mat& _coords,
           
@@ -191,7 +191,7 @@ public:
   
 };
 
-inline void Inocs::init_theta_adapt(){
+inline void SpIOX::init_theta_adapt(){
   // adaptive metropolis
   theta_mcmc_counter = 0;
   which_theta_elem = arma::uvec({2}); // if this includes 2, the upper bound must be 2!
@@ -204,7 +204,7 @@ inline void Inocs::init_theta_adapt(){
   // ---
 }
 
-inline void Inocs::compute_V(){
+inline void SpIOX::compute_V(){
   // whiten the residuals from spatial dependence
   V = ( Y - X * B );
   for(unsigned int i=0; i<q; i++){
@@ -213,7 +213,7 @@ inline void Inocs::compute_V(){
   // V = Li * (y-XB)
 }
 
-inline void Inocs::compute_S(){
+inline void SpIOX::compute_S(){
   //arma::mat Q = spf.Lambda * spf.Lambda.t() + arma::diagmat(spf.Delta);
   //Si = arma::trimatl(arma::chol(Q, "lower"));
   
@@ -227,7 +227,7 @@ inline void Inocs::compute_S(){
   // Sigma = S^T * S = (Si * Si^T)^-1
 }
 
-inline void Inocs::sample_B(){
+inline void SpIOX::sample_B(){
   //Rcpp::Rcout << "+++++++++++++++++ ORIG +++++++++++++++++++" << endl;
   //S^T * S = Sigma
   std::chrono::steady_clock::time_point tstart;
@@ -278,7 +278,7 @@ inline void Inocs::sample_B(){
   
 }
 
-inline void Inocs::sample_theta(){
+inline void SpIOX::sample_theta(){
   std::chrono::steady_clock::time_point tstart;
   std::chrono::steady_clock::time_point tend;
   int timed = 0;
@@ -362,7 +362,7 @@ inline void Inocs::sample_theta(){
   }
 }
 
-inline void Inocs::metrop_options(){
+inline void SpIOX::metrop_options(){
   std::chrono::steady_clock::time_point tstart;
   std::chrono::steady_clock::time_point tend;
   int timed = 0;
@@ -487,7 +487,7 @@ inline void Inocs::metrop_options(){
 }
 
 
-inline void Inocs::gibbs_response(int it, int sample_precision, bool sample_mvr, bool sample_gp){
+inline void SpIOX::gibbs_response(int it, int sample_precision, bool sample_mvr, bool sample_gp){
   
   if(sample_precision > 0){
     //Rcpp::Rcout << "V " << endl;

@@ -1,7 +1,7 @@
-#include "inocs.h"
+#include "spiox.h"
 
 //[[Rcpp::export]]
-Rcpp::List inocs_predict(const arma::mat& coords_new,
+Rcpp::List spiox_predict(const arma::mat& coords_new,
                    const arma::mat& X_new,
                    
                    const arma::mat& Y, 
@@ -19,7 +19,7 @@ Rcpp::List inocs_predict(const arma::mat& coords_new,
   int p = X.n_cols;
   int mcmc = B.n_slices;
   
-  Inocs inocs_model(Y, X, coords, radgp_rho, theta_options);
+  SpIOX spiox_model(Y, X, coords, radgp_rho, theta_options);
   
   arma::uvec oneuv = arma::ones<arma::uvec>(1);
   
@@ -45,7 +45,7 @@ Rcpp::List inocs_predict(const arma::mat& coords_new,
     arma::uvec spmap = theta_which.col(m)-1; // restore c indexing from 0
     
     arma::mat Si = arma::inv(arma::trimatl(S.slice(m)));
-    arma::mat W = (inocs_model.Y - X * B.slice(m))*Si;
+    arma::mat W = (spiox_model.Y - X * B.slice(m))*Si;
     
     arma::mat W_out = arma::zeros(ntest, q);
     arma::mat Y_out = arma::zeros(ntest, q);
@@ -68,9 +68,9 @@ Rcpp::List inocs_predict(const arma::mat& coords_new,
         arma::uvec ix = oneuv * (itarget);
         arma::uvec px = predict_dag(idagtarget);
         
-        arma::mat CC = inocs_model.radgp_options.at(spmap(j)).Corr_export(cxall, ix, ix, true);
-        arma::mat CPt = inocs_model.radgp_options.at(spmap(j)).Corr_export(cxall, px, ix, false);
-        arma::mat PPi = arma::inv_sympd( inocs_model.radgp_options.at(spmap(j)).Corr_export(cxall, px, px, true) );
+        arma::mat CC = spiox_model.radgp_options.at(spmap(j)).Corr_export(cxall, ix, ix, true);
+        arma::mat CPt = spiox_model.radgp_options.at(spmap(j)).Corr_export(cxall, px, ix, false);
+        arma::mat PPi = arma::inv_sympd( spiox_model.radgp_options.at(spmap(j)).Corr_export(cxall, px, px, true) );
           
         arma::vec ht = PPi * CPt;
         double sqrtR = sqrt( arma::conv_to<double>::from(
