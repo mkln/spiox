@@ -119,6 +119,7 @@ arma::mat Correlationf(
 
 }
 
+//[[Rcpp::export]]
 arma::mat Correlationc(
     const arma::mat& coordsx,
     const arma::mat& coordsy,
@@ -130,7 +131,7 @@ arma::mat Correlationc(
 #ifdef _OPENMP
   nthreads = omp_get_num_threads();
 #endif
-  int bessel_ws_inc = 5;//see bessel_k.c for working space needs
+  int bessel_ws_inc = 3;//see bessel_k.c for working space needs
   double *bessel_ws = (double *) R_alloc(nthreads*bessel_ws_inc, sizeof(double));
   
   

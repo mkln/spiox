@@ -20,15 +20,15 @@ DagGP::DagGP(
   
   covar = covariance_model; // pexp or matern
 
-  n_threads = nthread == 0? 1 : nthread;
+  //n_threads = nthread == 0? 1 : nthread;
   
   //thread safe stuff
-  //int nthreads = 0;
-  //#ifdef _OPENMP
-  //nthreads = omp_get_num_threads();
-  //#endif
+  int nthreads = 0;
+  #ifdef _OPENMP
+  nthreads = omp_get_num_threads();
+  #endif
   
-  int bessel_ws_inc = 5;//see bessel_k.c for working space needs
+  int bessel_ws_inc = 3;//see bessel_k.c for working space needs
   bessel_ws = (double *) R_alloc(n_threads*bessel_ws_inc, sizeof(double));
   
   initialize_H();

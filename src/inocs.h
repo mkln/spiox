@@ -51,6 +51,7 @@ public:
   void compute_S();
   void sample_theta(); // gibbs for each outcome choosing from options
   void metrop_options();
+  void init_theta_adapt();
   
   // adaptive metropolis to update theta atoms
   int theta_mcmc_counter;
@@ -64,13 +65,59 @@ public:
   
   
   // -------------- run 1 gibbs iteration based on current values
-  void gibbs_response(int sample_precision, bool sample_mvr, bool sample_gp);
+  void gibbs_response(int it, int sample_precision, bool sample_mvr, bool sample_gp);
   
   std::chrono::steady_clock::time_point tstart;
   arma::vec timings;
   
   // -------------- constructors
-  // for response model
+  // for response model inverse Wishart
+  Inocs(const arma::mat& _Y, 
+        const arma::mat& _X, 
+        const arma::mat& _coords,
+        
+        double radgp_rho, const arma::mat& radgp_theta, 
+        
+        const arma::mat& Sigma_start,
+        const arma::mat& mvreg_B_start) 
+  {
+    model_response = true;
+    
+    Y = _Y;
+    X = _X;
+    
+    n = Y.n_rows;
+    q = Y.n_cols;
+    p = X.n_cols;
+    
+    B = mvreg_B_start;
+    B_Var = arma::ones(arma::size(B));
+    
+    theta_options = radgp_theta;
+    n_options = theta_options.n_cols;
+    radgp_options = std::vector<DagGP>(n_options);//.reserve(n_options);
+    for(unsigned int i=0; i<n_options; i++){
+      radgp_options[i] = DagGP(_coords, theta_options.col(i), radgp_rho, 1, //matern
+                               1);
+    }
+    radgp_options_alt = radgp_options;
+    
+    if(n_options == q){
+      spmap = arma::regspace<arma::uvec>(0, q-1);
+    } else {
+      spmap = arma::zeros<arma::uvec>(q);
+    }
+    
+    init_theta_adapt();
+    
+    S = arma::chol(Sigma_start, "upper");
+    Si = arma::inv(arma::trimatu(S));
+    
+    timings = arma::zeros(10);
+  }
+  
+  
+  // for response model spf
   Inocs(const arma::mat& _Y, 
         const arma::mat& _X, 
         const arma::mat& _coords,
@@ -101,19 +148,13 @@ public:
       radgp_options[i] = DagGP(_coords, theta_options.col(i), radgp_rho, 0, 1);
     }
     radgp_options_alt = radgp_options;
-    spmap = arma::zeros<arma::uvec>(q);
+    if(n_options == q){
+      spmap = arma::regspace<arma::uvec>(0, q-1);
+    } else {
+      spmap = arma::zeros<arma::uvec>(q);
+    }
     
-    // adaptive metropolis
-    theta_mcmc_counter = 0;
-    which_theta_elem = arma::uvec({0}); // if this includes 2, the upper bound must be 2!
-    int n_theta_par = n_options * which_theta_elem.n_elem;
-    theta_unif_bounds = arma::zeros(n_theta_par, 2) + 0.05; // *2 because phi,sig2
-    theta_unif_bounds.col(1).fill(100);
-    theta_metrop_sd = 0.05 * arma::eye(n_theta_par, n_theta_par);
-    theta_adapt = RAMAdapt(n_theta_par, theta_metrop_sd, 0.24);
-    theta_adapt_active = true;
-    // ---
-    
+    init_theta_adapt();
     
     spf = SparsePrecisionFactor(&Y, spf_k, spf_a_delta, spf_b_delta, spf_a_dl);
     spf.Lambda_start(spf_Lambda_start);
@@ -149,6 +190,19 @@ public:
   }  
   
 };
+
+inline void Inocs::init_theta_adapt(){
+  // adaptive metropolis
+  theta_mcmc_counter = 0;
+  which_theta_elem = arma::uvec({2}); // if this includes 2, the upper bound must be 2!
+  int n_theta_par = n_options * which_theta_elem.n_elem;
+  theta_unif_bounds = arma::zeros(n_theta_par, 2) + 0.05; // *2 because phi,sig2
+  theta_unif_bounds.col(1).fill(1.9); // for matern
+  theta_metrop_sd = 0.05 * arma::eye(n_theta_par, n_theta_par);
+  theta_adapt = RAMAdapt(n_theta_par, theta_metrop_sd, 0.24);
+  theta_adapt_active = true;
+  // ---
+}
 
 inline void Inocs::compute_V(){
   // whiten the residuals from spatial dependence
@@ -433,7 +487,7 @@ inline void Inocs::metrop_options(){
 }
 
 
-inline void Inocs::gibbs_response(int sample_precision, bool sample_mvr, bool sample_gp){
+inline void Inocs::gibbs_response(int it, int sample_precision, bool sample_mvr, bool sample_gp){
   
   if(sample_precision > 0){
     //Rcpp::Rcout << "V " << endl;
@@ -462,14 +516,15 @@ inline void Inocs::gibbs_response(int sample_precision, bool sample_mvr, bool sa
       
     } else {
       tstart = std::chrono::steady_clock::now();
-      arma::mat S = n * arma::cov(V) + arma::eye(V.n_cols, V.n_cols);
-      arma::mat Q_mean_post = arma::inv_sympd(S);
+      arma::mat Smean = n * arma::cov(V) + arma::eye(V.n_cols, V.n_cols);
+      arma::mat Q_mean_post = arma::inv_sympd(Smean);
       double df_post = n + (V.n_cols);
       
       arma::mat Q = arma::wishrnd(Q_mean_post, df_post);
       
       Si = arma::chol(Q, "lower");
       S = arma::inv(arma::trimatl(Si));
+      
       timings(2) += time_count(tstart); 
     }
   }
@@ -486,12 +541,19 @@ inline void Inocs::gibbs_response(int sample_precision, bool sample_mvr, bool sa
     //Rcpp::Rcout << "T " << endl;
     // update theta | Y, S based on discrete prior
     tstart = std::chrono::steady_clock::now();
-    sample_theta();
+    // if n_options == q then keep 1:1 assignment
+    if(n_options < q){
+      sample_theta();
+    }
     timings(4) += time_count(tstart);
     
     // update atoms for theta
     tstart = std::chrono::steady_clock::now();
-    metrop_options();
+    //double prob = 1.0/pow(it+1, .3);
+    //double ru = arma::randu();
+    //if(ru < prob){
+      metrop_options();
+    //}
     timings(5) += time_count(tstart);
   }
   

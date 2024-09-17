@@ -10,34 +10,24 @@ image.matrix <- \(x) {
 }
 
 # spatial
-xx <- seq(0, 1, length.out=45)
+xx <- seq(0, 1, length.out=30)
 coords <- expand.grid(xx, xx)
 cx <- as.matrix(coords)
 nr <- nrow(cx)
 
-philist <- c(1,2.5,5.0)
-Clist <- philist %>% lapply(\(phi)  (exp(-phi * as.matrix(dist(cx))^1) + 1e-15*diag(nr)) )
+Ctest <- inocs::Correlationc(cx, cx, c(1,1,1.9,1-8), 1, TRUE)
+
+q <- 15
+
+optlist <- seq(0.4, 1.9, length.out=q) %>% sample(q, replace=T)
+
+#Clist <- optlist %>% lapply(\(phi)  (exp(-phi * as.matrix(dist(cx))^1) + 1e-6*diag(nr)) )
+Clist <- optlist %>% lapply(\(nu) inocs::Correlationc(cx, cx, c(20,1,nu,1e-8), 1, TRUE) )
 Llist <- Clist %>% lapply(\(C) t(chol(C)))
 Lilist <- Llist %>% lapply(\(L) solve(L))
 
-# multivariate
-q <- 6
-k <- 2#round(q/2)
-
-Lambda <- matrix(runif(q*k), ncol=k)
-threshold_val <- .9
-threshold <- abs(Lambda) < threshold_val
-Lambda[threshold] <- 0
-Lambda[!threshold] <- 5*rnorm(sum(!threshold))
-
-Delta <- diag(runif(q, 0.1, .4))
 
 Q <- rWishart(1, q+2, diag(q))[,,1] #
-#tcrossprod(Lambda) + Delta
-
-# percentage of off-diagonal nonzeros 
-(sum(Q!=0) - q)/(prod(dim(Q)) - q)
-
 Sigma <- solve(Q) 
 
 St <- chol(Sigma)
@@ -52,10 +42,10 @@ save_which <- rep(0, q)
 # make q spatial outcomes
 which_process <- rep(0, q)
 for(i in 1:q){
-  which_process[i] <- 1:length(philist) %>% sample(1)
+  which_process[i] <- i #1:length(optlist) %>% sample(1)
   Y_sp[,i] <- Llist[[which_process[i]]] %*% V[,i]
 }
-theta_true <- philist[which_process]
+theta_true <- optlist[which_process]
 
 # regression
 p <- 2
@@ -82,17 +72,16 @@ if(F){
 }
 
 ##############################
-kfit <- k
-## Sp2sp
+
 set.seed(1)
 
-radgp_rho <- 0.1
+radgp_rho <- .12
 test_radgp <- inocs::radgp_build(cx, radgp_rho, phi=1, sigmasq=1, nu=1, tausq=0, matern=F)
 test_radgp$dag %>% sapply(\(x) nrow(x)) %>% summary()
 
-  phi_opts <- seq(0.5, 10, length.out=3)
+theta_opts <- seq(0.6, 1.8, length.out=5)
 
-theta_opts <- phi_opts %>% sapply(\(phi) matrix( c(phi, 1, 1, 1e-9), ncol=1))
+theta_opts <- theta_opts %>% sapply(\(nu) matrix( c(20, 1, nu, 1e-6), ncol=1))
 
 testset <- sample(1:nrow(Y), 10, replace=F)
 
@@ -100,103 +89,63 @@ perturb <- function(x, sd=1){
   return(x + matrix(rnorm(prod(dim(x)), sd), ncol=ncol(x)))
 }
 
+RhpcBLASctl::blas_set_num_threads(16)
+RhpcBLASctl::omp_set_num_threads(16)
+
 set.seed(1) 
 (total_time <- system.time({
-  inocs_out <- inocs::inocs(Y[-testset,,drop=F], 
+  inocs_out <- inocs::inocs_wishart(Y[-testset,,drop=F], 
                             X[-testset,,drop=F],
                             cx[-testset,], 
                             radgp_rho = radgp_rho, theta=theta_opts,
                             
-                            spf_k = kfit, spf_a_delta = .1, spf_b_delta = .1, spf_a_dl = 0.5,
-                            
-                            spf_Lambda_start = Lambda[,1:kfit,drop=F] %>% perturb(),
-                            spf_Delta_start = matrix(runif(q),ncol=1),#diag(Delta),
-                            mvreg_B_start = Beta,# %>% perturb(),
+                            Sigma_start = diag(q),
+                            mvreg_B_start = 0*Beta,# %>% perturb(),
                             
                             mcmc = mcmc <- 1000,
-                            print_every=200,
+                            print_every = 50,
                             
-                            sample_precision=1,
+                            sample_iwish=T,
                             sample_mvr=T,
                             sample_gp=T)
 }))
+
+
+set.seed(1) 
+(total1_time <- system.time({
+  inocs1_out <- inocs::inocs_wishart(Y[-testset,1,drop=F], 
+                                    X[-testset,,drop=F],
+                                    cx[-testset,], 
+                                    radgp_rho = radgp_rho, theta=theta_opts[,1,drop=F],
+                                    
+                                    Sigma_start = diag(1),
+                                    mvreg_B_start = 0*Beta[,1,drop=F],# %>% perturb(),
+                                    
+                                    mcmc = mcmc <- 10000,
+                                    print_every = 50,
+                                    
+                                    sample_iwish=T,
+                                    sample_mvr=T,
+                                    sample_gp=T)
+}))
+
+
+
+
+
+
 cbind(inocs_out$theta %>% apply(1, mean), theta_true)
 
-obj_out <- inocs_out
-
-#sparse test
-sLambda <- obj_out$Lambda
-#sLambda[abs(sLambda) < quantile(abs(sLambda), 0.95)] <- 0
-
-Sig_samples <- 1:mcmc %>% 
-  sapply(\(i) with(obj_out, solve(tcrossprod( sLambda[,,i] ) + diag(Delta[,i]) ))) %>% 
-  array(dim=c(q, q, mcmc))
+inocs_out$Sigma %>% tail(c(NA, NA, round(mcmc/2))) %>% apply(1:2, mean)
 
 # microergodics
 diag(Sigma) * theta_true
-j <- 6
-plot(inocs_out$theta[1,j,] * 
-       Sig_samples[j,j,], type='l')
-
-
-Qa_samples <- 1:mcmc %>% 
-  sapply(\(i) with(obj_out, cov2cor(tcrossprod( sLambda[,,i] ) + diag(Delta[,i]) ))) %>% 
-  array(dim=c(q, q, mcmc))
-
-Qa_post_sjns <- Qa_samples %>% apply(1:2, mean)
-
-
-mean((Qa_post_sjns-cov2cor(Q))^2)
-
-
-image(1*(Qa_post_sjns!=0))
-mean(Q_true_pattern == (Qa_post_sjns!=0))
-
-
-Q_samples <- 1:mcmc %>% 
-  sapply(\(i) with(inocs_out, tcrossprod( Si[,,i] ) )) %>% 
-  array(dim=c(q, q, mcmc))
-
-Q_post_sjns <- Q_samples %>% apply(1:2, mean)
-
-
-mean((Q_post_sjns-Q)^2)
-
-
-Qc_samples <- 1:mcmc %>% 
-  sapply(\(i) with(inocs_out, cov2cor( tcrossprod( Si[,,i] )))) %>% 
-  array(dim=c(q, q, mcmc))
-
-Qc_post_sjns <- Qc_samples %>% apply(1:2, mean)
-
-mean((Qc_post_sjns - cov2cor(Q))^2)
-
-#Q_samples[,,2500]
-
-Qc_est_pattern <- Qc_samples %>% tail(c(NA,NA,round(3*mcmc/4))) %>% 
-  apply(1:2, \(x) 1*(sign(quantile(x, 0.025))==sign(quantile(x, 0.975)))) 
-
-Q_true_pattern <- 1*(Q!=0) 
-
-image(Qc_est_pattern)
-image(Q_true_pattern)
-mean(Q_true_pattern == Qc_est_pattern)
-
-Q_est_pattern <- Q_samples %>% tail(c(NA,NA,round(3*mcmc/4))) %>% 
-  apply(1:2, \(x) 1*(sign(quantile(x, 0.005))==sign(quantile(x, 0.995)))) 
-
-# percentage of correct off-diagonal nonzeros 
-
-mean(Q_true_pattern == Q_est_pattern)
-
-
-#(sum(check_pattern) - q)/(prod(dim(Q)) - q)
-image(Q_est_pattern)
+j <- 2
+plot(inocs_out$theta[j,] * 
+       inocs_out$Sigma[j,j,], type='l')
 
 
 
-
-# alternative models
 
 
 

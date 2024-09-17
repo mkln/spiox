@@ -5,12 +5,15 @@ library(Matrix)
 
 set.seed(2)
 
+sumabs <- \(x) sum(abs(x))
+trroot <- \(x) sum( sqrt(svd(x)$d ))
+svdroot <- \(x) with(svd(x), u %*% diag(sqrt(d)) %*% t(u))
 image.matrix <- \(x) {
   image(as(x, "dgCMatrix"))
 }
 
 # spatial
-xx <- seq(0, 1, length.out=3)
+xx <- seq(0, 1, length.out=5)
 coords <- #cbind(runif(100), runif(100))#
   expand.grid(xx, xx)
 cx <- as.matrix(coords)
@@ -18,58 +21,50 @@ nr <- nrow(cx)
 
 
 # multivariate
-q <- 3
+q <- 2
 Q <- rWishart(1, q+2, diag(q))[,,1] #
 #tcrossprod(Lambda) + Delta
 
 Sigma <- solve(Q) 
 
-philist <- c(5, 1.1,1.5)[1:q]
+philist <- c(3, 1, 1.5)[1:q]
 
 Clist <- philist %>% lapply(\(phi)  (exp(-phi * as.matrix(dist(cx))^1.9) ) )
 Llist <- Clist %>% lapply(\(C) t(chol(C)))
+Llist2 <- Clist %>% lapply(\(C) with(svd(C), u %*% diag(sqrt(d))) )
+
+Croots <- Clist %>% lapply(\(C) with(svd(C), u %*% diag(sqrt(d)) %*% t(u) ) )
+
+Matrix::trac
+
 Lilist <- Llist %>% lapply(\(L) solve(L))
 
-# subset of S and some new
-xcov_h <- function(h, var_i, var_j, test_coords, n_rand=10, cexp=1){
-  xcov <- rep(0, nrow(test_coords))
-  for(i in 1:nrow(test_coords)){
-    new1 <- test_coords[i,,drop=F]
-    rand_angles <- runif(n_rand, 0, 2*pi)
-    for(a in rand_angles){
-      new2 <- matrix(c(new1[1,1] + h*cos(a), new1[1,2] + h*sin(a)), nrow=1)
-      xcov[i] <- xcov[i] + iox_precomp(new1, new2, var_i, var_j, Lilist, cx, philist, cexp)/n_rand
-        iox(new1, new2, var_i, var_j, cx, philist, cexp)/n_rand
-    }
-  }
-  return(xcov)
-}
-
+Cbig <- Matrix::bdiag(Llist) %*% (Sigma %x% diag(nr)) %*% t(Matrix::bdiag(Llist))
+Cbig2 <- Matrix::bdiag(Llist2) %*% (Sigma %x% diag(nr)) %*% t(Matrix::bdiag(Llist2))
+Cbig3 <- Matrix::bdiag(Croots) %*% (Sigma %x% diag(nr)) %*% t(Matrix::bdiag(Croots))
 
 hvec <- seq(0, .5, length.out=25)
-xg <- seq(-.2, 1.1, length.out=10)
+xg <- seq(0.2, 0.8, length.out=2)
 test_coords <- expand.grid(xg,xg) %>% as.matrix()
 
-system.time({
-  xcov_mat <- hvec %>% 
-  sapply(\(h) xcov_h(h, 1, 2, test_coords, 50, 1.9))
-})
-
-xcov_mat %>% apply(2, mean) %>% plot(type='l')
-
-xg <- seq(-.2, 1.1, length.out=10)
-test_coords <- expand.grid(xg,xg) %>% as.matrix()
-
-testh <- iox_cross_avg(hvec, 1, 2, 
-              test_coords, cx, philist, 50, 1.9)
-
+testh <- iox_cross_avg(hvec, 2, 1,
+                       test_coords, cx, philist, 10, 1)
+plot(hvec, testh, type='l', ylim=c(0,1))
+lines(hvec, testh, col="green")
 
 
 
 new1 <- matrix(x1 <- c(.1,.23),nrow=1)
 h <-  runif(2)
 new2 <- new1+h
-iox_mat(new2, new1, cx, philist)
+iox_mat(new1, new2, cx, philist)
+iox_mat_svd(new1, new2, cx, philist)
+iox_mat_svd(new2, new1, cx, philist) %>% t()
+
+iox_mat_svd(new2, new1, cx, philist) %>% t()
+[,1]      [,2]
+[1,] 0.1145687 0.5488148
+[2,] 0.6278148 0.4856909
 
 # C(Ts, Tu) should be dimension 5*q x 2*q
 

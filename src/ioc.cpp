@@ -18,6 +18,54 @@ arma::mat expcov(const arma::mat& x, const arma::mat& y, double phi){
 }
 
 //[[Rcpp::export]]
+arma::mat iox_svd(const arma::mat& x, const arma::mat& y, int i, int j,
+              const arma::mat& S, const arma::vec& philist, double cexp=1){
+  
+  arma::vec thetai = arma::ones(4);
+  thetai(0) = philist(i-1); // r indexing?
+  thetai(2) = cexp; 
+  thetai(3) = 0;
+  arma::mat Ki = Correlationc(S, S, thetai, 0, true);
+  
+  arma::mat Ki_U, Ki_V; 
+  arma::vec Ki_s;
+  svd(Ki_U, Ki_s, Ki_V, Ki);
+  
+  arma::mat Li_inv = Ki_U * arma::diagmat(1.0/sqrt(Ki_s)) * Ki_U.t();
+  arma::mat Ki_inv = Li_inv * Li_inv;
+  arma::mat rhoi_xS = Correlationc(x, S, thetai, 0, false);
+  
+  arma::vec thetaj = arma::ones(4);
+  thetaj(0) = philist(j-1); // r indexing 
+  thetaj(2) = cexp;
+  thetaj(3) = 0;
+  arma::mat Kj = Correlationc(S, S, thetaj, 0, true);
+  
+  arma::mat Kj_U, Kj_V; 
+  arma::vec Kj_s;
+  svd(Kj_U, Kj_s, Kj_V, Kj);
+  
+  arma::mat Lj_inv = Kj_U * arma::diagmat(1.0/sqrt(Kj_s)) * Kj_U.t();
+  arma::mat rhoj_yS = Correlationc(y, S, thetaj, 0, false);
+  
+  arma::mat Rix = arma::zeros(x.n_rows, y.n_rows);
+  if(i==j){
+    for(unsigned int r=0; r<x.n_rows; r++){
+      for(unsigned int c=0; c<y.n_rows; c++){
+        double dist = arma::accu(abs( x.row(r) - y.row(c) ));
+        if(dist == 0){
+          Rix(r,c) = 1 - arma::conv_to<double>::from(
+            rhoi_xS.row(r) * Ki_inv * arma::trans(rhoi_xS.row(r)));  
+        }
+      }
+    } 
+  }
+  
+  return rhoi_xS * Li_inv * Lj_inv * rhoj_yS.t() + Rix;
+}
+
+
+//[[Rcpp::export]]
 arma::mat iox(const arma::mat& x, const arma::mat& y, int i, int j,
                    const arma::mat& S, const arma::vec& philist, double cexp=1){
   
@@ -38,7 +86,6 @@ arma::mat iox(const arma::mat& x, const arma::mat& y, int i, int j,
   arma::mat Kj = Correlationc(S, S, thetaj, 0, true);
   arma::mat Lj = arma::chol(Kj, "lower");
   arma::mat Lj_inv = arma::inv(arma::trimatl(Lj));
-  arma::mat Kj_inv = Lj_inv.t() * Lj_inv;
   arma::mat rhoj_yS = Correlationc(y, S, thetaj, 0, false);
   
   arma::mat Rix = arma::zeros(x.n_rows, y.n_rows);
@@ -114,6 +161,20 @@ arma::mat iox_mat(const arma::rowvec& x, const arma::rowvec& y,
   return(result);
 }
 
+//[[Rcpp::export]]
+arma::mat iox_mat_svd(const arma::rowvec& x, const arma::rowvec& y, 
+                  const arma::mat& S, const arma::vec& philist, double cexp=1){
+  arma::mat result = arma::zeros(philist.n_elem, philist.n_elem);
+  for(unsigned int i=0; i<philist.n_elem; i++){
+    for(unsigned int j=0; j<philist.n_elem; j++){
+      int ir = i+1;
+      int jr = j+1;
+      result(i, j) = iox_svd(x, y, ir, jr, S, philist, cexp)(0,0);
+    }
+  }
+  return(result);
+}
+
 
 //[[Rcpp::export]]
 arma::vec iox_cross_avg(const arma::vec& hlist, int var_i, int var_j,
@@ -134,21 +195,19 @@ arma::vec iox_cross_avg(const arma::vec& hlist, int var_i, int var_j,
   
   arma::mat xcov = arma::mat(test_coords.n_rows, hlist.n_elem);
 
-  // prepare random unif outside omp loop
-  arma::vec bigu = arma::randu(hlist.n_elem * test_coords.n_elem * num_angles);
-  arma::cube crandu = arma::cube(bigu.memptr(), hlist.n_elem, test_coords.n_elem, num_angles);
+  arma::vec angles = arma::regspace(0, num_angles);
+  angles = angles.head(num_angles) * 2 * Pi;
   
-//#ifdef _OPENMP
+#ifdef _OPENMP
 //#pragma omp parallel for 
-//#endif
+#endif
   for(unsigned int hi=0; hi<hlist.n_elem; hi++){
     double h = hlist(hi);
     for(unsigned int i=0; i<test_coords.n_rows; i++){
       arma::rowvec x1 = test_coords.row(i);
       
-      arma::vec rand_angles = crandu.tube(hi, i) * 2 * Pi;
       for(unsigned int j=0; j<num_angles; j++){
-        double angle = rand_angles(j);
+        double angle = angles(j);
         
         arma::rowvec x2 = x1;
         x2(0) += h * cos(angle);
