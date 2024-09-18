@@ -1,4 +1,5 @@
 #include "spiox.h"
+#include "interrupt.h"
 
 //[[Rcpp::export]]
 Rcpp::List spiox_wishart(const arma::mat& Y, 
@@ -14,7 +15,9 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
                     int print_every=100,
                     bool sample_iwish=true,
                     bool sample_mvr=true,
-                    bool sample_gp=true){
+                    bool sample_gp=true,
+                    bool upd_opts=true,
+                    int num_threads = 1){
   
   int q = Y.n_cols;
   int n = Y.n_rows;
@@ -27,11 +30,12 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
   
   SpIOX iox_model(Y, X, coords, radgp_rho, theta_opts, 
                      Sigma_start,
-                     mvreg_B_start);
+                     mvreg_B_start,
+                     num_threads);
   
   // storage
   arma::cube B = arma::zeros(iox_model.p, q, mcmc);
-  arma::mat theta = arma::zeros(q, mcmc);
+  arma::cube theta = arma::zeros(4, q, mcmc);
   arma::umat theta_which = arma::zeros<arma::umat>(q, mcmc);
   arma::cube theta_opts_save = arma::zeros(theta_opts.n_rows, theta_opts.n_cols, mcmc);
   
@@ -43,20 +47,20 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
   
   for(unsigned int m=0; m<mcmc; m++){
     
-    iox_model.gibbs_response(m, sample_precision, sample_mvr, sample_gp);
-    
+    iox_model.gibbs_response(m, sample_precision, sample_mvr, sample_gp, upd_opts);
+
     B.slice(m) = iox_model.B;
     Sigma.slice(m) = iox_model.S.t() * iox_model.S;
     
     theta_opts_save.slice(m) = iox_model.theta_options;
     
-    arma::mat theta_choice = arma::zeros(1, q);
+    arma::mat theta_choice = arma::zeros(4, q);
     for(unsigned int j=0; j<q; j++){
-      theta_choice(0, j) = iox_model.theta_options(2, iox_model.spmap(j));
-        //submat(0, iox_model.spmap(j), 1, iox_model.spmap(j));
+      theta_choice.col(j) = iox_model.theta_options.col(iox_model.spmap(j)); 
+        
     }
     
-    theta.col(m) = theta_choice.t();
+    theta.slice(m) = theta_choice;
     theta_which.col(m) = iox_model.spmap;
     
     bool print_condition = (print_every>0);
@@ -65,6 +69,11 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
     };
     if(print_condition){
       Rcpp::Rcout << "Iteration: " <<  m+1 << " of " << mcmc << endl;
+    }
+    
+    bool interrupted = checkInterrupt();
+    if(interrupted){
+      Rcpp::stop("Interrupted by the user.");
     }
   }
 
@@ -96,7 +105,9 @@ Rcpp::List spiox_spf(const arma::mat& Y,
                          int print_every=100,
                          bool sample_spf=true,
                          bool sample_mvr=true,
-                         bool sample_gp=true){
+                         bool sample_gp=true,
+                         bool upd_opts=true,
+                         int num_threads = 1){
   
   int q = Y.n_cols;
   int n = Y.n_rows;
@@ -116,7 +127,8 @@ Rcpp::List spiox_spf(const arma::mat& Y,
   SpIOX iox_model(Y, X, coords, radgp_rho, theta_opts, 
                     spf_k, spf_a_delta, spf_b_delta, spf_a_dl,
                     spf_Lambda_start, spf_Delta_start,
-                    mvreg_B_start);
+                    mvreg_B_start,
+                    num_threads);
   
   // storage
   arma::cube B = arma::zeros(iox_model.p, q, mcmc);
@@ -133,7 +145,7 @@ Rcpp::List spiox_spf(const arma::mat& Y,
   
   for(unsigned int m=0; m<mcmc; m++){
     
-    iox_model.gibbs_response(m, sample_spf, sample_mvr, sample_gp);
+    iox_model.gibbs_response(m, sample_spf, sample_mvr, sample_gp, upd_opts);
     
     B.slice(m) = iox_model.B;
     Lambda.slice(m) = iox_model.spf.Lambda;
@@ -156,6 +168,11 @@ Rcpp::List spiox_spf(const arma::mat& Y,
     };
     if(print_condition){
       Rcpp::Rcout << "Iteration: " <<  m+1 << " of " << mcmc << endl;
+    }
+    
+    bool interrupted = checkInterrupt();
+    if(interrupted){
+      Rcpp::stop("Interrupted by the user.");
     }
   }
   return Rcpp::List::create(

@@ -26,6 +26,7 @@ public:
   
   // metadata
   int n, q, p;
+  int num_threads;
   //double spatial_sparsity;
   
   // -------------- model parameters
@@ -53,6 +54,7 @@ public:
   void metrop_options();
   void init_theta_adapt();
   
+  bool nu_sampling;
   // adaptive metropolis to update theta atoms
   int theta_mcmc_counter;
   arma::uvec which_theta_elem;
@@ -65,7 +67,7 @@ public:
   
   
   // -------------- run 1 gibbs iteration based on current values
-  void gibbs_response(int it, int sample_precision, bool sample_mvr, bool sample_gp);
+  void gibbs_response(int it, int sample_precision, bool sample_mvr, bool sample_gp, bool upd_opts);
   
   std::chrono::steady_clock::time_point tstart;
   arma::vec timings;
@@ -79,9 +81,11 @@ public:
         double radgp_rho, const arma::mat& radgp_theta, 
         
         const arma::mat& Sigma_start,
-        const arma::mat& mvreg_B_start) 
+        const arma::mat& mvreg_B_start,
+        int num_threads_in) 
   {
     model_response = true;
+    num_threads = num_threads_in;
     
     Y = _Y;
     X = _X;
@@ -96,10 +100,16 @@ public:
     theta_options = radgp_theta;
     n_options = theta_options.n_cols;
     radgp_options = std::vector<DagGP>(n_options);//.reserve(n_options);
+
+    // if multiple nu options, interpret as wanting to sample smoothness for matern
+    // otherwise, power exponential with fixed exponent.
+    nu_sampling = arma::var(theta_options.row(2)) != 0;
+    
     for(unsigned int i=0; i<n_options; i++){
-      radgp_options[i] = DagGP(_coords, theta_options.col(i), radgp_rho, 1, //matern
-                               1);
+      radgp_options[i] = DagGP(_coords, theta_options.col(i), radgp_rho, nu_sampling, //matern 
+                               num_threads);
     }
+    
     radgp_options_alt = radgp_options;
     
     if(n_options == q){
@@ -127,9 +137,11 @@ public:
         int spf_k, double spf_a_delta, double spf_b_delta, double spf_a_dl,
         
         const arma::mat& spf_Lambda_start, const arma::vec& spf_Delta_start,
-        const arma::mat& mvreg_B_start) 
+        const arma::mat& mvreg_B_start,
+        int num_threads_in) 
   {
     model_response = true;
+    num_threads = num_threads_in;
     
     Y = _Y;
     X = _X;
@@ -144,8 +156,11 @@ public:
     theta_options = radgp_theta;
     n_options = theta_options.n_cols;
     radgp_options = std::vector<DagGP>(n_options);//.reserve(n_options);
+    nu_sampling = arma::var(theta_options.row(2)) != 0;
+
     for(unsigned int i=0; i<n_options; i++){
-      radgp_options[i] = DagGP(_coords, theta_options.col(i), radgp_rho, 0, 1);
+      radgp_options[i] = DagGP(_coords, theta_options.col(i), radgp_rho, nu_sampling, 
+                               num_threads);
     }
     radgp_options_alt = radgp_options;
     if(n_options == q){
@@ -194,10 +209,14 @@ public:
 inline void SpIOX::init_theta_adapt(){
   // adaptive metropolis
   theta_mcmc_counter = 0;
-  which_theta_elem = arma::uvec({2}); // if this includes 2, the upper bound must be 2!
+  which_theta_elem = arma::uvec({0,1});//arma::uvec({2 * nu_sampling}); // if this includes 2, the upper bound must be 2!
   int n_theta_par = n_options * which_theta_elem.n_elem;
-  theta_unif_bounds = arma::zeros(n_theta_par, 2) + 0.05; // *2 because phi,sig2
-  theta_unif_bounds.col(1).fill(1.9); // for matern
+  
+  double uplim = nu_sampling? 1.9 : 100;
+  double lowlim = nu_sampling? 0.4 : 0.1;
+  theta_unif_bounds = arma::zeros(n_theta_par, 2) + lowlim; // *2 because phi,sig2
+  
+  theta_unif_bounds.col(1).fill(uplim); // for matern
   theta_metrop_sd = 0.05 * arma::eye(n_theta_par, n_theta_par);
   theta_adapt = RAMAdapt(n_theta_par, theta_metrop_sd, 0.24);
   theta_adapt_active = true;
@@ -240,7 +259,7 @@ inline void SpIOX::sample_B(){
   arma::vec radgp_logdets = arma::zeros(q);
   
 #ifdef _OPENMP
-#pragma omp parallel for 
+#pragma omp parallel for num_threads(num_threads)
 #endif
   for(unsigned int j=0; j<q; j++){
     Ytilde.col(j) = radgp_options.at(spmap(j)).H * Y.col(j);
@@ -306,7 +325,7 @@ inline void SpIOX::sample_theta(){
     arma::vec opt_logdens = arma::zeros(n_options);
     // -- loop over options // parallel ok if we create a copy of ytilde and Xtilde
 #ifdef _OPENMP
-#pragma omp parallel for 
+#pragma omp parallel for num_threads(num_threads)
 #endif
     for(unsigned int r=0; r<n_options; r++){
       // compute unnorm logdens 
@@ -389,7 +408,7 @@ inline void SpIOX::metrop_options(){
   //Rcpp::Rcout << "------- builds2 ----" << endl;
   tstart = std::chrono::steady_clock::now();
 #ifdef _OPENMP
-#pragma omp parallel for 
+#pragma omp parallel for num_threads(num_threads)
 #endif
   for(unsigned int j=0; j<q; j++){
     Ytilde.col(j) = radgp_options.at(spmap(j)).H * Y.col(j);
@@ -436,7 +455,7 @@ inline void SpIOX::metrop_options(){
   //Rcpp::Rcout << "------- builds2 ----" << endl;
   tstart = std::chrono::steady_clock::now();
 #ifdef _OPENMP
-#pragma omp parallel for 
+#pragma omp parallel for num_threads(num_threads)
 #endif
   for(unsigned int j=0; j<q; j++){
     Ytilde_alt.col(j) = radgp_options_alt.at(spmap(j)).H * Y.col(j);
@@ -487,7 +506,7 @@ inline void SpIOX::metrop_options(){
 }
 
 
-inline void SpIOX::gibbs_response(int it, int sample_precision, bool sample_mvr, bool sample_gp){
+inline void SpIOX::gibbs_response(int it, int sample_precision, bool sample_mvr, bool sample_gp, bool upd_opts){
   
   if(sample_precision > 0){
     //Rcpp::Rcout << "V " << endl;
@@ -552,7 +571,9 @@ inline void SpIOX::gibbs_response(int it, int sample_precision, bool sample_mvr,
     //double prob = 1.0/pow(it+1, .3);
     //double ru = arma::randu();
     //if(ru < prob){
+    if(upd_opts){
       metrop_options();
+    }
     //}
     timings(5) += time_count(tstart);
   }

@@ -6,7 +6,7 @@ DagGP::DagGP(
     const arma::vec& theta_in,
     double rho_in,
     int covariance_model,
-    int nthread){
+    int num_threads_in){
   
   coords = coords_in;
   theta = theta_in;
@@ -23,12 +23,9 @@ DagGP::DagGP(
   //n_threads = nthread == 0? 1 : nthread;
   
   //thread safe stuff
-  int nthreads = 0;
-  #ifdef _OPENMP
-  nthreads = omp_get_num_threads();
-  #endif
+  n_threads = num_threads_in;
   
-  int bessel_ws_inc = 3;//see bessel_k.c for working space needs
+  int bessel_ws_inc = MAT_NU_MAX;//see bessel_k.c for working space needs
   bessel_ws = (double *) R_alloc(n_threads*bessel_ws_inc, sizeof(double));
   
   initialize_H();
@@ -51,7 +48,7 @@ void DagGP::initialize_H(){
   
   // calculate components for H and Ci
 #ifdef _OPENMP
-#pragma omp parallel for 
+#pragma omp parallel for num_threads(n_threads)
 #endif
   for(int i=0; i<nr; i++){
     arma::uvec ix = oneuv * i;
@@ -104,7 +101,7 @@ arma::mat DagGP::Corr_export(const arma::mat& these_coords, const arma::uvec& ix
 //[[Rcpp::export]]
 Rcpp::List radgp_build(const arma::mat& coords, double rho, 
                        double phi, double sigmasq, double nu, double tausq,
-                       bool matern=false){
+                       bool matern=false, int num_threads=1){
   
   arma::vec theta(4);
   theta(0) = phi;
@@ -113,7 +110,7 @@ Rcpp::List radgp_build(const arma::mat& coords, double rho,
   theta(3) = tausq;
   
   int covar = matern;
-  DagGP adag(coords, theta, rho, covar, 1);
+  DagGP adag(coords, theta, rho, covar, num_threads);
   arma::sp_mat Ci = adag.H.t() * adag.H;
   
   return Rcpp::List::create(
@@ -138,7 +135,7 @@ Rcpp::List radgp_logdens(const arma::vec& x,
   theta(3) = tausq;
   
   int covar = matern;
-  DagGP adag(coords, theta, rho, covar, 1);
+  DagGP adag(coords, theta, rho, covar);
   arma::sp_mat Ci = adag.H.t() * adag.H;
   double logdens = adag.logdens(x);
   

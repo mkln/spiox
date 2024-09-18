@@ -26,7 +26,7 @@ void matern_inplace(arma::mat& res,
         double hphi = arma::norm(delta) * phi;
         if(hphi > 0.0){
           res(i, j) = pow(hphi, nu) * pow2_nu1_gammanu_sigmasq *
-            R::bessel_k_ex(hphi, nu, 1.0, &bessel_ws[threadid*3]);
+            R::bessel_k_ex(hphi, nu, 1.0, &bessel_ws[threadid*MAT_NU_MAX]);
         } else {
           res(i, j) = sigmasq + nugginside;
         }
@@ -41,7 +41,7 @@ void matern_inplace(arma::mat& res,
         double hphi = arma::norm(delta) * phi;
         if(hphi > 0.0){
           res(i, j) = pow(hphi, nu) * pow2_nu1_gammanu_sigmasq *
-            R::bessel_k_ex(hphi, nu, 1.0, &bessel_ws[threadid*3]);
+            R::bessel_k_ex(hphi, nu, 1.0, &bessel_ws[threadid*MAT_NU_MAX]);
         } else {
           res(i, j) = sigmasq + nugginside;
         }
@@ -127,12 +127,9 @@ arma::mat Correlationc(
     int covar,
     bool same){
 
-  int nthreads = 0;
-#ifdef _OPENMP
-  nthreads = omp_get_num_threads();
-#endif
-  int bessel_ws_inc = 3;//see bessel_k.c for working space needs
-  double *bessel_ws = (double *) R_alloc(nthreads*bessel_ws_inc, sizeof(double));
+  int nthreads = 1;
+  //int bessel_ws_inc = 3;//see bessel_k.c for working space needs
+  double *bessel_ws = (double *) R_alloc(nthreads*MAT_NU_MAX, sizeof(double));
   
   
   if(same){

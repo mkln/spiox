@@ -5,6 +5,8 @@
 #include <RcppArmadillo.h>
 #include "omp_import.h"
 
+const int MAT_NU_MAX=3;
+
 using namespace std;
 
 

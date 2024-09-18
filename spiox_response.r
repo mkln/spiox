@@ -10,28 +10,35 @@ image.matrix <- \(x) {
 }
 
 # spatial
-xx <- seq(0, 1, length.out=30)
+xx <- seq(0, 1, length.out=80)
 coords <- expand.grid(xx, xx)
 cx <- as.matrix(coords)
 nr <- nrow(cx)
 
-Ctest <- inocs::Correlationc(cx, cx, c(1,1,1.9,1-8), 1, TRUE)
+test_radgp <- spiox::radgp_build(cx, 0.1, phi=20, sigmasq=1, nu=1.5, tausq=0, matern=T, 16)
+w <- solve(test_radgp$H, rnorm(nr))
 
-q <- 15
+Ctest <- spiox::Correlationc(cx, cx, c(1,1,1.9,1-8), 1, TRUE)
 
-optlist <- seq(0.4, 1.9, length.out=q) %>% sample(q, replace=T)
+q <- 2
+
+optlist <- c(0.5,1.5)#seq(0.4, 21.9, length.out=q) %>% sample(q, replace=T)
 
 #Clist <- optlist %>% lapply(\(phi)  (exp(-phi * as.matrix(dist(cx))^1) + 1e-6*diag(nr)) )
-Clist <- optlist %>% lapply(\(nu) inocs::Correlationc(cx, cx, c(20,1,nu,1e-8), 1, TRUE) )
+Clist <- optlist %>% lapply(\(nu) spiox::Correlationc(cx, cx, c(20,1,nu,1e-8), 1, TRUE) )
 Llist <- Clist %>% lapply(\(C) t(chol(C)))
 Lilist <- Llist %>% lapply(\(L) solve(L))
 
 
-Q <- rWishart(1, q+2, diag(q))[,,1] #
+Q <- rWishart(1, q+2, 1/20*diag(q))[,,1] #
 Sigma <- solve(Q) 
+
+Sigma <- matrix(c(1,0.999,0.999,1), ncol=2)
 
 St <- chol(Sigma)
 S <- t(St)
+
+
 
 V <- matrix(rnorm(nr * q), ncol=q) %*% St
 
@@ -60,7 +67,7 @@ Y <- as.matrix(Y_sp + Y_regression) #+ Error
 cov_Y_cols <- cov(Y) %>% as("dgCMatrix")
 cov_Y_rows <- cov(t(Y)) %>% as("dgCMatrix")
 
-df <- data.frame(coords, y=Y_sp) %>% 
+df <- data.frame(coords, y=as.matrix(w)) %>% 
   pivot_longer(cols=-c(Var1, Var2))
 
 if(F){
@@ -76,12 +83,15 @@ if(F){
 set.seed(1)
 
 radgp_rho <- .12
-test_radgp <- inocs::radgp_build(cx, radgp_rho, phi=1, sigmasq=1, nu=1, tausq=0, matern=F)
+test_radgp <- spiox::radgp_build(cx, radgp_rho, phi=10, sigmasq=1, nu=1.5, tausq=0, matern=T)
+
+
 test_radgp$dag %>% sapply(\(x) nrow(x)) %>% summary()
 
-theta_opts <- seq(0.6, 1.8, length.out=5)
+par_opts <- seq(0.5, 1.8, length.out=5)
 
-theta_opts <- theta_opts %>% sapply(\(nu) matrix( c(20, 1, nu, 1e-6), ncol=1))
+#theta_opts <- par_opts %>% sapply(\(nu) matrix( c(20, 1, nu, 1e-6), ncol=1))
+theta_opts <- par_opts %>% sapply(\(phi) matrix( c(phi, 1, 1, 1e-16), ncol=1))
 
 testset <- sample(1:nrow(Y), 10, replace=F)
 
@@ -89,12 +99,9 @@ perturb <- function(x, sd=1){
   return(x + matrix(rnorm(prod(dim(x)), sd), ncol=ncol(x)))
 }
 
-RhpcBLASctl::blas_set_num_threads(16)
-RhpcBLASctl::omp_set_num_threads(16)
-
 set.seed(1) 
 (total_time <- system.time({
-  inocs_out <- inocs::inocs_wishart(Y[-testset,,drop=F], 
+  spiox_out <- spiox::spiox_wishart(Y[-testset,,drop=F], 
                             X[-testset,,drop=F],
                             cx[-testset,], 
                             radgp_rho = radgp_rho, theta=theta_opts,
@@ -102,49 +109,60 @@ set.seed(1)
                             Sigma_start = diag(q),
                             mvreg_B_start = 0*Beta,# %>% perturb(),
                             
-                            mcmc = mcmc <- 1000,
-                            print_every = 50,
+                            mcmc = mcmc <- 5000,
+                            print_every = 15,
                             
                             sample_iwish=T,
                             sample_mvr=T,
-                            sample_gp=T)
+                            sample_gp=T,
+                            upd_opts=T,
+                            num_threads = 16)
 }))
 
 
-set.seed(1) 
-(total1_time <- system.time({
-  inocs1_out <- inocs::inocs_wishart(Y[-testset,1,drop=F], 
-                                    X[-testset,,drop=F],
-                                    cx[-testset,], 
-                                    radgp_rho = radgp_rho, theta=theta_opts[,1,drop=F],
-                                    
-                                    Sigma_start = diag(1),
-                                    mvreg_B_start = 0*Beta[,1,drop=F],# %>% perturb(),
-                                    
-                                    mcmc = mcmc <- 10000,
-                                    print_every = 50,
-                                    
-                                    sample_iwish=T,
-                                    sample_mvr=T,
-                                    sample_gp=T)
-}))
+spiox_out$theta %>% tail(c(NA,NA,round(mcmc/2))) %>% apply(1:2, mean)
 
+Sig_est <- round(mcmc/2):mcmc %>% sapply(\(m) with(spiox_out,  diag(sqrt(theta[2,,m])) %*% 
+                                         Sigma[,,m] %*% diag(sqrt(theta[2,,m])) ) ) %>% 
+  array(c(q,q,mcmc)) %>% apply(1:2, mean)
 
+cbind(spiox_out$theta %>% apply(1:2, mean), theta_true) %>% data.frame() %>% arrange(theta_true)
 
+Cor_mcmc <- spiox_out$Sigma %>% tail(c(NA, NA, round(mcmc/2))) %>% apply(3, \(x) cov2cor(x)) %>%
+  array(dim=c(q,q,round(mcmc/2)))
 
-
-
-cbind(inocs_out$theta %>% apply(1, mean), theta_true)
-
-inocs_out$Sigma %>% tail(c(NA, NA, round(mcmc/2))) %>% apply(1:2, mean)
+image(abs(cov2cor(Sigma) - apply(Cor_mcmc, 1:2, mean)))
 
 # microergodics
 diag(Sigma) * theta_true
 j <- 2
-plot(inocs_out$theta[j,] * 
-       inocs_out$Sigma[j,j,], type='l')
+plot(spiox_out$theta[j,] * 
+       spiox_out$Sigma[j,j,], type='l')
 
 
+
+
+mesh_total_time <- system.time({
+  meshout <- meshed::spmeshed(y=Y, 
+                              x=X,
+                              coords=cx, k = q,
+                              block_size = 50, 
+                              n_samples = 5000, 
+                              n_burn = 1, 
+                              n_thin = 1, 
+                              n_threads = 16,
+                              prior = list(phi=c(1, 20)),
+                              verbose=50
+  )})
+h <- 0
+mesh_mcmc <- dim(meshout$theta_mcmc)[3]
+
+mesh_h_f <- function(h){
+  sig_mcmc <- 1:mesh_mcmc %>% sapply(\(m) with(meshout, 
+                                               lambda_mcmc[,,m] %*% diag(exp(-theta_mcmc[1,,m]*h)) %*% t(lambda_mcmc[,,m]) + diag(tausq_mcmc[,m])
+  )) %>% array(dim=c(3,3,mesh_mcmc))
+  return(sig_mcmc %>% apply(1:2, mean))
+}
 
 
 
@@ -172,7 +190,7 @@ set.seed(1)
 
 
 
-spf_test <- inocs::run_spf_model(Y, kfit, .1, .1, 0.5, 
+spf_test <- spiox::run_spf_model(Y, kfit, .1, .1, 0.5, 
                                  Lambda[,1:kfit] %>% perturb(), runif(q), 
                                  mcmc = mcmc, 100, seq_lambda = F)
 
@@ -200,11 +218,11 @@ mean(check_pattern)
 
 
 S_samples <- 1:mcmc %>% sapply(\(i) 
-                               with(inocs_out, solve(tcrossprod(Lambda[,,i]) + diag(Delta[,i])) ) ) %>% 
+                               with(spiox_out, solve(tcrossprod(Lambda[,,i]) + diag(Delta[,i])) ) ) %>% 
   array(dim=c(qstar,qstar,mcmc))
 
 B_reg <- 1:mcmc %>% sapply(\(i) {
-  S <- with(inocs_out, solve(tcrossprod(Lambda[,,i]) + diag(Delta[,i])) )
+  S <- with(spiox_out, solve(tcrossprod(Lambda[,,i]) + diag(Delta[,i])) )
   return( S[-(1:pstar),1:pstar] %*% solve(S[1:pstar,1:pstar]) )
 }
 ) %>% 
@@ -278,7 +296,7 @@ preds <- ROCR::prediction(Q_est_pattern[lower.tri(Q_est_pattern)], Q_true_patter
 
 
 
-boom <- inocs::inocs_predict(coords_new = cx[testset,],
+boom <- spiox::spiox_predict(coords_new = cx[testset,],
                              X_new = X[testset,,drop=F],
                              Xstar_new = Xstar[testset,,drop=F],
                              
@@ -289,9 +307,9 @@ boom <- inocs::inocs_predict(coords_new = cx[testset,],
                              cx[-testset,], 
                              
                              radgp_rho, theta_opts, 
-                             inocs_out$B %>% tail(c(NA, NA, 100)), 
-                             inocs_out$S %>% tail(c(NA, NA, 100)), 
-                             inocs_out$theta_which %>% tail(c(NA, 100)))
+                             spiox_out$B %>% tail(c(NA, NA, 100)), 
+                             spiox_out$S %>% tail(c(NA, NA, 100)), 
+                             spiox_out$theta_which %>% tail(c(NA, 100)))
 
 Wtest <- boom$Y %>% apply(1:2, mean)
 Wtrue <- XY[testset,]

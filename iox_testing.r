@@ -21,7 +21,7 @@ nr <- nrow(cx)
 
 
 # multivariate
-q <- 2
+q <- 3
 Q <- rWishart(1, q+2, diag(q))[,,1] #
 #tcrossprod(Lambda) + Delta
 
@@ -31,6 +31,10 @@ philist <- c(3, 1, 1.5)[1:q]
 
 Clist <- philist %>% lapply(\(phi)  (exp(-phi * as.matrix(dist(cx))^1.9) ) )
 Llist <- Clist %>% lapply(\(C) t(chol(C)))
+
+Lbig <- Matrix::bdiag(Llist[1:2]) 
+Lbig[26:50,1:25] <- Llist[[3]]
+
 Llist2 <- Clist %>% lapply(\(C) with(svd(C), u %*% diag(sqrt(d))) )
 
 Croots <- Clist %>% lapply(\(C) with(svd(C), u %*% diag(sqrt(d)) %*% t(u) ) )

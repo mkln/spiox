@@ -5,7 +5,6 @@
 
 #include "nnsearch.h"
 #include "covariance.h"
-#include "interrupt.h"
 
 using namespace std;
 
@@ -41,7 +40,7 @@ public:
         const arma::vec& theta_in,
         double rho, 
     int covariance_model=0,
-    int nthread=0);
+    int num_threads_in=1);
   
   // utils
   arma::uvec oneuv;

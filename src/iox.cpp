@@ -67,62 +67,89 @@ arma::mat iox_svd(const arma::mat& x, const arma::mat& y, int i, int j,
 
 //[[Rcpp::export]]
 arma::mat iox(const arma::mat& x, const arma::mat& y, int i, int j,
-                   const arma::mat& S, const arma::vec& philist, double cexp=1){
+                   const arma::mat& S, 
+                   const arma::mat& theta, bool diag_only=false, bool limit=false){
   
-  arma::vec thetai = arma::ones(4);
-  thetai(0) = philist(i-1); // r indexing?
-  thetai(2) = cexp; 
-  thetai(3) = 0;
+  arma::vec thetai = theta.col(i-1);
   arma::mat Ki = Correlationc(S, S, thetai, 0, true);
   arma::mat Li = arma::chol(Ki, "lower");
   arma::mat Li_inv = arma::inv(arma::trimatl(Li));
   arma::mat Ki_inv = Li_inv.t() * Li_inv;
   arma::mat rhoi_xS = Correlationc(x, S, thetai, 0, false);
   
-  arma::vec thetaj = arma::ones(4);
-  thetaj(0) = philist(j-1); // r indexing 
-  thetaj(2) = cexp;
-  thetaj(3) = 0;
+  arma::vec thetaj = theta.col(j-1);
   arma::mat Kj = Correlationc(S, S, thetaj, 0, true);
   arma::mat Lj = arma::chol(Kj, "lower");
   arma::mat Lj_inv = arma::inv(arma::trimatl(Lj));
   arma::mat rhoj_yS = Correlationc(y, S, thetaj, 0, false);
   
   arma::mat Rix = arma::zeros(x.n_rows, y.n_rows);
-  if(i==j){
-    for(unsigned int r=0; r<x.n_rows; r++){
-      for(unsigned int c=0; c<y.n_rows; c++){
-        double dist = arma::accu(abs( x.row(r) - y.row(c) ));
-        if(dist == 0){
-          Rix(r,c) = 1 - arma::conv_to<double>::from(
-            rhoi_xS.row(r) * Ki_inv * arma::trans(rhoi_xS.row(r)));  
+  
+  if(!limit){
+    if(i==j){
+      for(unsigned int r=0; r<x.n_rows; r++){
+        for(unsigned int c=0; c<y.n_rows; c++){
+          double dist = arma::accu(abs( x.row(r) - y.row(c) ));
+          if(dist == 0){
+            Rix(r,c) = 1 - arma::conv_to<double>::from(
+              rhoi_xS.row(r) * Ki_inv * arma::trans(rhoi_xS.row(r)));  
+          }
         }
-      }
-    } 
+      } 
+    }
   }
   
-  return rhoi_xS * Li_inv.t() * Lj_inv * rhoj_yS.t() + Rix;
+  if(diag_only){
+    return arma::sum((rhoi_xS * Li_inv.t())%(rhoj_yS * Lj_inv.t()), 1) + Rix.diag();
+  } else {
+    return rhoi_xS * Li_inv.t() * Lj_inv * rhoj_yS.t() + Rix;
+  }
 }
+
+
+//[[Rcpp::export]]
+arma::mat iox_mat(const arma::rowvec& x, const arma::rowvec& y, 
+                  const arma::mat& S, const arma::vec& philist, double cexp=1){
+  arma::mat result = arma::zeros(philist.n_elem, philist.n_elem);
+  for(unsigned int i=0; i<philist.n_elem; i++){
+    for(unsigned int j=0; j<philist.n_elem; j++){
+      int ir = i+1;
+      int jr = j+1;
+      result(i, j) = iox(x, y, ir, jr, S, philist, cexp)(0,0);
+    }
+  }
+  return(result);
+}
+
+//[[Rcpp::export]]
+arma::mat iox_mat_svd(const arma::rowvec& x, const arma::rowvec& y, 
+                      const arma::mat& S, const arma::vec& philist, double cexp=1){
+  arma::mat result = arma::zeros(philist.n_elem, philist.n_elem);
+  for(unsigned int i=0; i<philist.n_elem; i++){
+    for(unsigned int j=0; j<philist.n_elem; j++){
+      int ir = i+1;
+      int jr = j+1;
+      result(i, j) = iox_svd(x, y, ir, jr, S, philist, cexp)(0,0);
+    }
+  }
+  return(result);
+}
+
+
 
 //[[Rcpp::export]]
 arma::mat iox_precomp(const arma::mat& x, const arma::mat& y, int i, int j,
                    const arma::field<arma::mat>& Li_invs, 
-                   const arma::mat& S, const arma::vec& philist, double cexp=1){
+                   const arma::mat& S, const arma::mat& theta){
   
   // same as iox but this avoids computing chol/invs
-  arma::vec thetai = arma::ones(4);
-  thetai(0) = philist(i-1); // r indexing?
-  thetai(2) = cexp; // squared exp
-  thetai(3) = 0;
+  arma::vec thetai = theta.col(i-1);
   arma::mat Li_inv = Li_invs(i-1); 
   arma::mat Ki_inv; 
   bool done_Ki_inv = false;
   arma::mat rhoi_xS = Correlationc(x, S, thetai, 0, false);
   
-  arma::vec thetaj = arma::ones(4);
-  thetaj(0) = philist(j-1); // r indexing 
-  thetaj(2) = cexp;
-  thetaj(3) = 0;
+  arma::vec thetaj = theta.col(j-1);
   arma::mat Lj_inv = Li_invs(j-1); 
   arma::mat rhoj_yS = Correlationc(y, S, thetaj, 0, false);
   
@@ -148,46 +175,15 @@ arma::mat iox_precomp(const arma::mat& x, const arma::mat& y, int i, int j,
 
 
 //[[Rcpp::export]]
-arma::mat iox_mat(const arma::rowvec& x, const arma::rowvec& y, 
-                       const arma::mat& S, const arma::vec& philist, double cexp=1){
-  arma::mat result = arma::zeros(philist.n_elem, philist.n_elem);
-  for(unsigned int i=0; i<philist.n_elem; i++){
-    for(unsigned int j=0; j<philist.n_elem; j++){
-      int ir = i+1;
-      int jr = j+1;
-      result(i, j) = iox(x, y, ir, jr, S, philist, cexp)(0,0);
-    }
-  }
-  return(result);
-}
-
-//[[Rcpp::export]]
-arma::mat iox_mat_svd(const arma::rowvec& x, const arma::rowvec& y, 
-                  const arma::mat& S, const arma::vec& philist, double cexp=1){
-  arma::mat result = arma::zeros(philist.n_elem, philist.n_elem);
-  for(unsigned int i=0; i<philist.n_elem; i++){
-    for(unsigned int j=0; j<philist.n_elem; j++){
-      int ir = i+1;
-      int jr = j+1;
-      result(i, j) = iox_svd(x, y, ir, jr, S, philist, cexp)(0,0);
-    }
-  }
-  return(result);
-}
-
-
-//[[Rcpp::export]]
 arma::vec iox_cross_avg(const arma::vec& hlist, int var_i, int var_j,
                         const arma::mat& test_coords, 
-                        const arma::mat& S, const arma::vec& philist, 
-                        int num_angles=10, double cexp=1){
+                        const arma::mat& S,
+                        const arma::mat& theta,
+                        int num_angles=10, int num_threads=1){
   
-  arma::field<arma::mat> Li_invs(philist.n_elem);
-  for(unsigned int i=0; i<philist.n_elem; i++){
-    arma::vec thetai = arma::ones(4);
-    thetai(0) = philist(i); // r indexing?
-    thetai(2) = cexp; 
-    thetai(3) = 0;
+  arma::field<arma::mat> Li_invs(theta.n_cols);
+  for(unsigned int i=0; i<theta.n_cols; i++){
+    arma::vec thetai = theta.col(i);
     arma::mat Ki = Correlationc(S, S, thetai, 0, true);
     arma::mat Li = arma::chol(Ki, "lower");
     Li_invs(i) = arma::inv(arma::trimatl(Li));
@@ -199,7 +195,7 @@ arma::vec iox_cross_avg(const arma::vec& hlist, int var_i, int var_j,
   angles = angles.head(num_angles) * 2 * Pi;
   
 #ifdef _OPENMP
-//#pragma omp parallel for 
+#pragma omp parallel for num_threads(num_threads)
 #endif
   for(unsigned int hi=0; hi<hlist.n_elem; hi++){
     double h = hlist(hi);
@@ -213,7 +209,7 @@ arma::vec iox_cross_avg(const arma::vec& hlist, int var_i, int var_j,
         x2(0) += h * cos(angle);
         x2(1) += h * sin(angle);
         
-        arma::mat ioxmat = iox_precomp(x1, x2, var_i, var_j, Li_invs, S, philist, cexp);
+        arma::mat ioxmat = iox_precomp(x1, x2, var_i, var_j, Li_invs, S, theta);
         xcov(i, hi) += ioxmat(0,0)/(.0+num_angles);
       }
     }
