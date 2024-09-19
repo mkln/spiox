@@ -9,32 +9,20 @@ dl_update_variances <- function(theta, a, b) {
     .Call(`_spiox_dl_update_variances`, theta, a, b)
 }
 
-expcov <- function(x, y, phi) {
-    .Call(`_spiox_expcov`, x, y, phi)
+iox <- function(x, y, i, j, S, theta, matern = TRUE, diag_only = FALSE, limit = FALSE) {
+    .Call(`_spiox_iox`, x, y, i, j, S, theta, matern, diag_only, limit)
 }
 
-iox_svd <- function(x, y, i, j, S, philist, cexp = 1) {
-    .Call(`_spiox_iox_svd`, x, y, i, j, S, philist, cexp)
+iox_precomp <- function(x, y, i, j, S, theta, L_invs, matern = TRUE, diag_only = FALSE, limit = FALSE) {
+    .Call(`_spiox_iox_precomp`, x, y, i, j, S, theta, L_invs, matern, diag_only, limit)
 }
 
-iox <- function(x, y, i, j, S, theta, diag_only = FALSE) {
-    .Call(`_spiox_iox`, x, y, i, j, S, theta, diag_only)
+make_ix <- function(q, n) {
+    .Call(`_spiox_make_ix`, q, n)
 }
 
-iox_mat <- function(x, y, S, philist, cexp = 1) {
-    .Call(`_spiox_iox_mat`, x, y, S, philist, cexp)
-}
-
-iox_mat_svd <- function(x, y, S, philist, cexp = 1) {
-    .Call(`_spiox_iox_mat_svd`, x, y, S, philist, cexp)
-}
-
-iox_precomp <- function(x, y, i, j, Li_invs, S, theta) {
-    .Call(`_spiox_iox_precomp`, x, y, i, j, Li_invs, S, theta)
-}
-
-iox_cross_avg <- function(hlist, var_i, var_j, test_coords, S, theta, num_angles = 10L, num_threads = 1L) {
-    .Call(`_spiox_iox_cross_avg`, hlist, var_i, var_j, test_coords, S, theta, num_angles, num_threads)
+iox_mat <- function(x, y, S, theta, matern = TRUE) {
+    .Call(`_spiox_iox_mat`, x, y, S, theta, matern)
 }
 
 make_candidates <- function(w, indsort, col, rho) {

@@ -39,39 +39,9 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// expcov
-arma::mat expcov(const arma::mat& x, const arma::mat& y, double phi);
-RcppExport SEXP _spiox_expcov(SEXP xSEXP, SEXP ySEXP, SEXP phiSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type x(xSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type y(ySEXP);
-    Rcpp::traits::input_parameter< double >::type phi(phiSEXP);
-    rcpp_result_gen = Rcpp::wrap(expcov(x, y, phi));
-    return rcpp_result_gen;
-END_RCPP
-}
-// iox_svd
-arma::mat iox_svd(const arma::mat& x, const arma::mat& y, int i, int j, const arma::mat& S, const arma::vec& philist, double cexp);
-RcppExport SEXP _spiox_iox_svd(SEXP xSEXP, SEXP ySEXP, SEXP iSEXP, SEXP jSEXP, SEXP SSEXP, SEXP philistSEXP, SEXP cexpSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type x(xSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type y(ySEXP);
-    Rcpp::traits::input_parameter< int >::type i(iSEXP);
-    Rcpp::traits::input_parameter< int >::type j(jSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type S(SSEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type philist(philistSEXP);
-    Rcpp::traits::input_parameter< double >::type cexp(cexpSEXP);
-    rcpp_result_gen = Rcpp::wrap(iox_svd(x, y, i, j, S, philist, cexp));
-    return rcpp_result_gen;
-END_RCPP
-}
 // iox
-arma::mat iox(const arma::mat& x, const arma::mat& y, int i, int j, const arma::mat& S, const arma::mat& theta, bool diag_only);
-RcppExport SEXP _spiox_iox(SEXP xSEXP, SEXP ySEXP, SEXP iSEXP, SEXP jSEXP, SEXP SSEXP, SEXP thetaSEXP, SEXP diag_onlySEXP) {
+arma::mat iox(const arma::mat& x, const arma::mat& y, int i, int j, const arma::mat& S, const arma::mat& theta, bool matern, bool diag_only, bool limit);
+RcppExport SEXP _spiox_iox(SEXP xSEXP, SEXP ySEXP, SEXP iSEXP, SEXP jSEXP, SEXP SSEXP, SEXP thetaSEXP, SEXP maternSEXP, SEXP diag_onlySEXP, SEXP limitSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -81,44 +51,16 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type j(jSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type S(SSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type theta(thetaSEXP);
+    Rcpp::traits::input_parameter< bool >::type matern(maternSEXP);
     Rcpp::traits::input_parameter< bool >::type diag_only(diag_onlySEXP);
-    rcpp_result_gen = Rcpp::wrap(iox(x, y, i, j, S, theta, diag_only));
-    return rcpp_result_gen;
-END_RCPP
-}
-// iox_mat
-arma::mat iox_mat(const arma::rowvec& x, const arma::rowvec& y, const arma::mat& S, const arma::vec& philist, double cexp);
-RcppExport SEXP _spiox_iox_mat(SEXP xSEXP, SEXP ySEXP, SEXP SSEXP, SEXP philistSEXP, SEXP cexpSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::rowvec& >::type x(xSEXP);
-    Rcpp::traits::input_parameter< const arma::rowvec& >::type y(ySEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type S(SSEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type philist(philistSEXP);
-    Rcpp::traits::input_parameter< double >::type cexp(cexpSEXP);
-    rcpp_result_gen = Rcpp::wrap(iox_mat(x, y, S, philist, cexp));
-    return rcpp_result_gen;
-END_RCPP
-}
-// iox_mat_svd
-arma::mat iox_mat_svd(const arma::rowvec& x, const arma::rowvec& y, const arma::mat& S, const arma::vec& philist, double cexp);
-RcppExport SEXP _spiox_iox_mat_svd(SEXP xSEXP, SEXP ySEXP, SEXP SSEXP, SEXP philistSEXP, SEXP cexpSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::rowvec& >::type x(xSEXP);
-    Rcpp::traits::input_parameter< const arma::rowvec& >::type y(ySEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type S(SSEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type philist(philistSEXP);
-    Rcpp::traits::input_parameter< double >::type cexp(cexpSEXP);
-    rcpp_result_gen = Rcpp::wrap(iox_mat_svd(x, y, S, philist, cexp));
+    Rcpp::traits::input_parameter< bool >::type limit(limitSEXP);
+    rcpp_result_gen = Rcpp::wrap(iox(x, y, i, j, S, theta, matern, diag_only, limit));
     return rcpp_result_gen;
 END_RCPP
 }
 // iox_precomp
-arma::mat iox_precomp(const arma::mat& x, const arma::mat& y, int i, int j, const arma::field<arma::mat>& Li_invs, const arma::mat& S, const arma::mat& theta);
-RcppExport SEXP _spiox_iox_precomp(SEXP xSEXP, SEXP ySEXP, SEXP iSEXP, SEXP jSEXP, SEXP Li_invsSEXP, SEXP SSEXP, SEXP thetaSEXP) {
+arma::mat iox_precomp(const arma::mat& x, const arma::mat& y, int i, int j, const arma::mat& S, const arma::mat& theta, const arma::field<arma::mat>& L_invs, bool matern, bool diag_only, bool limit);
+RcppExport SEXP _spiox_iox_precomp(SEXP xSEXP, SEXP ySEXP, SEXP iSEXP, SEXP jSEXP, SEXP SSEXP, SEXP thetaSEXP, SEXP L_invsSEXP, SEXP maternSEXP, SEXP diag_onlySEXP, SEXP limitSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -126,28 +68,40 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::mat& >::type y(ySEXP);
     Rcpp::traits::input_parameter< int >::type i(iSEXP);
     Rcpp::traits::input_parameter< int >::type j(jSEXP);
-    Rcpp::traits::input_parameter< const arma::field<arma::mat>& >::type Li_invs(Li_invsSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type S(SSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type theta(thetaSEXP);
-    rcpp_result_gen = Rcpp::wrap(iox_precomp(x, y, i, j, Li_invs, S, theta));
+    Rcpp::traits::input_parameter< const arma::field<arma::mat>& >::type L_invs(L_invsSEXP);
+    Rcpp::traits::input_parameter< bool >::type matern(maternSEXP);
+    Rcpp::traits::input_parameter< bool >::type diag_only(diag_onlySEXP);
+    Rcpp::traits::input_parameter< bool >::type limit(limitSEXP);
+    rcpp_result_gen = Rcpp::wrap(iox_precomp(x, y, i, j, S, theta, L_invs, matern, diag_only, limit));
     return rcpp_result_gen;
 END_RCPP
 }
-// iox_cross_avg
-arma::vec iox_cross_avg(const arma::vec& hlist, int var_i, int var_j, const arma::mat& test_coords, const arma::mat& S, const arma::mat& theta, int num_angles, int num_threads);
-RcppExport SEXP _spiox_iox_cross_avg(SEXP hlistSEXP, SEXP var_iSEXP, SEXP var_jSEXP, SEXP test_coordsSEXP, SEXP SSEXP, SEXP thetaSEXP, SEXP num_anglesSEXP, SEXP num_threadsSEXP) {
+// make_ix
+arma::uvec make_ix(int q, int n);
+RcppExport SEXP _spiox_make_ix(SEXP qSEXP, SEXP nSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::vec& >::type hlist(hlistSEXP);
-    Rcpp::traits::input_parameter< int >::type var_i(var_iSEXP);
-    Rcpp::traits::input_parameter< int >::type var_j(var_jSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type test_coords(test_coordsSEXP);
+    Rcpp::traits::input_parameter< int >::type q(qSEXP);
+    Rcpp::traits::input_parameter< int >::type n(nSEXP);
+    rcpp_result_gen = Rcpp::wrap(make_ix(q, n));
+    return rcpp_result_gen;
+END_RCPP
+}
+// iox_mat
+arma::mat iox_mat(const arma::mat& x, const arma::mat& y, const arma::mat& S, const arma::mat& theta, bool matern);
+RcppExport SEXP _spiox_iox_mat(SEXP xSEXP, SEXP ySEXP, SEXP SSEXP, SEXP thetaSEXP, SEXP maternSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type x(xSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type y(ySEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type S(SSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type theta(thetaSEXP);
-    Rcpp::traits::input_parameter< int >::type num_angles(num_anglesSEXP);
-    Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(iox_cross_avg(hlist, var_i, var_j, test_coords, S, theta, num_angles, num_threads));
+    Rcpp::traits::input_parameter< bool >::type matern(maternSEXP);
+    rcpp_result_gen = Rcpp::wrap(iox_mat(x, y, S, theta, matern));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -283,13 +237,10 @@ END_RCPP
 static const R_CallMethodDef CallEntries[] = {
     {"_spiox_Correlationc", (DL_FUNC) &_spiox_Correlationc, 5},
     {"_spiox_dl_update_variances", (DL_FUNC) &_spiox_dl_update_variances, 3},
-    {"_spiox_expcov", (DL_FUNC) &_spiox_expcov, 3},
-    {"_spiox_iox_svd", (DL_FUNC) &_spiox_iox_svd, 7},
-    {"_spiox_iox", (DL_FUNC) &_spiox_iox, 7},
+    {"_spiox_iox", (DL_FUNC) &_spiox_iox, 9},
+    {"_spiox_iox_precomp", (DL_FUNC) &_spiox_iox_precomp, 10},
+    {"_spiox_make_ix", (DL_FUNC) &_spiox_make_ix, 2},
     {"_spiox_iox_mat", (DL_FUNC) &_spiox_iox_mat, 5},
-    {"_spiox_iox_mat_svd", (DL_FUNC) &_spiox_iox_mat_svd, 5},
-    {"_spiox_iox_precomp", (DL_FUNC) &_spiox_iox_precomp, 7},
-    {"_spiox_iox_cross_avg", (DL_FUNC) &_spiox_iox_cross_avg, 8},
     {"_spiox_make_candidates", (DL_FUNC) &_spiox_make_candidates, 4},
     {"_spiox_neighbor_search_testset", (DL_FUNC) &_spiox_neighbor_search_testset, 3},
     {"_spiox_radgp_build", (DL_FUNC) &_spiox_radgp_build, 8},
