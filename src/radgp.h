@@ -39,7 +39,14 @@ public:
   DagGP(const arma::mat& coords, 
         const arma::vec& theta_in,
         double rho, 
-    int covariance_model=0,
+    int covariance_model=1, // matern
+    int num_threads_in=1);
+  
+  DagGP(
+    const arma::mat& coords_in, 
+    const arma::vec& theta_in,
+    const arma::field<arma::uvec>& custom_dag,
+    int covariance_model=1,
     int num_threads_in=1);
   
   // utils

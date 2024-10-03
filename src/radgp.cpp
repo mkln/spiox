@@ -31,6 +31,38 @@ DagGP::DagGP(
   initialize_H();
 }
 
+
+DagGP::DagGP(
+  const arma::mat& coords_in,
+  const arma::vec& theta_in,
+  const arma::field<arma::uvec>& custom_dag,
+  int covariance_model,
+  int num_threads_in){
+  
+  coords = coords_in;
+  theta = theta_in;
+  
+  nr = coords.n_rows;
+  rho = -1;
+  
+  dag = custom_dag;
+  oneuv = arma::ones<arma::uvec>(1);
+  
+  covar = covariance_model; // pexp or matern
+  
+  //n_threads = nthread == 0? 1 : nthread;
+  
+  //thread safe stuff
+  n_threads = num_threads_in;
+  
+  int bessel_ws_inc = MAT_NU_MAX;//see bessel_k.c for working space needs
+  bessel_ws = (double *) R_alloc(n_threads*bessel_ws_inc, sizeof(double));
+  
+  initialize_H();
+}
+
+
+
 double DagGP::logdens(const arma::vec& x){
   double loggausscore = arma::conv_to<double>::from( x.t() * H.t() * H * x );
   return 0.5 * ( precision_logdeterminant - loggausscore );
@@ -119,6 +151,29 @@ Rcpp::List radgp_build(const arma::mat& coords, double rho,
     Rcpp::Named("Cinv") = Ci,
     Rcpp::Named("Cinv_logdet") = adag.precision_logdeterminant,
     Rcpp::Named("layers") = adag.layers
+  );
+}
+
+//[[Rcpp::export]]
+Rcpp::List radgp_build_from_dag(const arma::mat& coords, const arma::field<arma::uvec>& dag,
+                       double phi, double sigmasq, double nu, double tausq,
+                       bool matern=false, int num_threads=1){
+  
+  arma::vec theta(4);
+  theta(0) = phi;
+  theta(1) = sigmasq;
+  theta(2) = nu;
+  theta(3) = tausq;
+  
+  int covar = matern;
+  DagGP adag(coords, theta, dag, covar, num_threads);
+  arma::sp_mat Ci = adag.H.t() * adag.H;
+  
+  return Rcpp::List::create(
+    Rcpp::Named("dag") = adag.dag,
+    Rcpp::Named("H") = adag.H,
+    Rcpp::Named("Cinv") = Ci,
+    Rcpp::Named("Cinv_logdet") = adag.precision_logdeterminant
   );
 }
 

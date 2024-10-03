@@ -6,7 +6,9 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
                     const arma::mat& X, 
                     const arma::mat& coords,
                     
-                    double radgp_rho, const arma::mat& theta_opts, 
+                    const arma::field<arma::uvec>& custom_dag,
+                    
+                    const arma::mat& theta_opts, 
                     
                     const arma::mat& Sigma_start,
                     const arma::mat& mvreg_B_start,
@@ -15,9 +17,20 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
                     int print_every=100,
                     bool sample_iwish=true,
                     bool sample_mvr=true,
-                    bool sample_gp=true,
-                    bool upd_opts=true,
+                    bool sample_theta_gibbs=true,
+                    bool upd_theta_opts=true,
                     int num_threads = 1){
+  
+  
+#ifdef _OPENMP
+  omp_set_num_threads(num_threads);
+#else
+  if(num_threads > 1){
+    Rcpp::warning("num_threads > 1, but source not compiled with OpenMP support.");
+    num_threads = 1;
+  }
+#endif
+  
   
   int q = Y.n_cols;
   int n = Y.n_rows;
@@ -28,7 +41,7 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
     Rcpp::Rcout << "Preparing..." << endl;
   }
   
-  SpIOX iox_model(Y, X, coords, radgp_rho, theta_opts, 
+  SpIOX iox_model(Y, X, coords, custom_dag, theta_opts, 
                      Sigma_start,
                      mvreg_B_start,
                      num_threads);
@@ -47,7 +60,7 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
   
   for(unsigned int m=0; m<mcmc; m++){
     
-    iox_model.gibbs_response(m, sample_precision, sample_mvr, sample_gp, upd_opts);
+    iox_model.gibbs_response(m, sample_precision, sample_mvr, sample_theta_gibbs, upd_theta_opts);
 
     B.slice(m) = iox_model.B;
     Sigma.slice(m) = iox_model.S.t() * iox_model.S;
@@ -86,6 +99,31 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
     Rcpp::Named("timings") = iox_model.timings
   );
   
+}
+
+//[[Rcpp::export]]
+double spiox_logdens(const arma::mat& Y, 
+                     const arma::mat& X, 
+                     const arma::mat& coords,
+                     
+                     const arma::field<arma::uvec>& custom_dag,
+                     
+                     const arma::mat& theta, 
+                     const arma::mat& Sigma,
+                     const arma::mat& mvreg_B){
+  
+  int q = Y.n_cols;
+  int n = Y.n_rows;
+  
+  Rcpp::Rcout << "Preparing..." << endl;
+  
+  SpIOX iox_model(Y, X, coords, custom_dag, theta, 
+                     Sigma,
+                     mvreg_B,
+                     1);
+  
+  double ldens = iox_model.logdens_eval();
+  return ldens;
 }
 
 

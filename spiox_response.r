@@ -10,19 +10,19 @@ image.matrix <- \(x) {
 }
 
 # spatial
-xx <- seq(0, 1, length.out=80)
+xx <- seq(0, 1, length.out=50)
 coords <- expand.grid(xx, xx)
 cx <- as.matrix(coords)
 nr <- nrow(cx)
 
-test_radgp <- spiox::radgp_build(cx, 0.1, phi=20, sigmasq=1, nu=1.5, tausq=0, matern=T, 16)
+test_radgp <- spiox::radgp_build(cx, 0.12, phi=20, sigmasq=1, nu=1.5, tausq=0, matern=T, 16)
 w <- solve(test_radgp$H, rnorm(nr))
 
 Ctest <- spiox::Correlationc(cx, cx, c(1,1,1.9,1-8), 1, TRUE)
 
 q <- 2
 
-optlist <- c(0.5,1.5)#seq(0.4, 21.9, length.out=q) %>% sample(q, replace=T)
+optlist <- seq(0.4, 21.9, length.out=q) %>% sample(q, replace=T)
 
 #Clist <- optlist %>% lapply(\(phi)  (exp(-phi * as.matrix(dist(cx))^1) + 1e-6*diag(nr)) )
 Clist <- optlist %>% lapply(\(nu) spiox::Correlationc(cx, cx, c(20,1,nu,1e-8), 1, TRUE) )
@@ -32,8 +32,6 @@ Lilist <- Llist %>% lapply(\(L) solve(L))
 
 Q <- rWishart(1, q+2, 1/20*diag(q))[,,1] #
 Sigma <- solve(Q) 
-
-Sigma <- matrix(c(1,0.999,0.999,1), ncol=2)
 
 St <- chol(Sigma)
 S <- t(St)
@@ -61,13 +59,13 @@ X <- matrix(1, ncol=1, nrow=nr) %>% cbind(matrix(rnorm(nr*(p-1)), ncol=p-1))
 Beta <- matrix(rnorm(q * p), ncol=q)
 
 Y_regression <- X %*% Beta
-Error <- matrix(rnorm(nr * q),ncol=q) # %*% diag(D <- runif(q, 0, 0.1))
-Y <- as.matrix(Y_sp + Y_regression) #+ Error
+Error <- matrix(rnorm(nr * q),ncol=q) %*% diag(D <- runif(q, 0, 0.1))
+Y <- as.matrix(Y_sp + Y_regression) + Error
 
 cov_Y_cols <- cov(Y) %>% as("dgCMatrix")
 cov_Y_rows <- cov(t(Y)) %>% as("dgCMatrix")
 
-df <- data.frame(coords, y=as.matrix(w)) %>% 
+df <- data.frame(coords, y=as.matrix(Y_sp)) %>% 
   pivot_longer(cols=-c(Var1, Var2))
 
 if(F){
@@ -82,16 +80,17 @@ if(F){
 
 set.seed(1)
 
-radgp_rho <- .12
+radgp_rho <- .1
 test_radgp <- spiox::radgp_build(cx, radgp_rho, phi=10, sigmasq=1, nu=1.5, tausq=0, matern=T)
 
 
 test_radgp$dag %>% sapply(\(x) nrow(x)) %>% summary()
 
-par_opts <- seq(0.5, 1.8, length.out=5)
+par_opts <- seq(0.51, 1.8, length.out=5)
 
+theta_opts <- cbind(c(19, 1, 0.51, 1e-4), c(20, 1, 1.5, 1e-5))
 #theta_opts <- par_opts %>% sapply(\(nu) matrix( c(20, 1, nu, 1e-6), ncol=1))
-theta_opts <- par_opts %>% sapply(\(phi) matrix( c(phi, 1, 1, 1e-16), ncol=1))
+#theta_opts <- par_opts %>% sapply(\(phi) matrix( c(phi, 1, 1, 1e-16), ncol=1))
 
 testset <- sample(1:nrow(Y), 10, replace=F)
 
@@ -104,20 +103,40 @@ set.seed(1)
   spiox_out <- spiox::spiox_wishart(Y[-testset,,drop=F], 
                             X[-testset,,drop=F],
                             cx[-testset,], 
-                            radgp_rho = radgp_rho, theta=theta_opts,
+                            radgp_rho = radgp_rho, theta=theta_opts[,1:2],
                             
                             Sigma_start = diag(q),
                             mvreg_B_start = 0*Beta,# %>% perturb(),
                             
-                            mcmc = mcmc <- 5000,
-                            print_every = 15,
+                            mcmc = mcmc <- 10000,
+                            print_every = 100,
                             
                             sample_iwish=T,
                             sample_mvr=T,
-                            sample_gp=T,
-                            upd_opts=T,
+                            sample_theta_gibbs=T,
+                            upd_theta_opts=T,
                             num_threads = 16)
 }))
+
+
+boom2 <- spiox::spiox_predict(X_new = X[testset,,drop=F],
+                              coords_new = cx[testset,],
+                              
+                              # data
+                              Y[-testset,], 
+                              X[-testset,,drop=F], 
+                              cx[-testset,], 
+                              
+                              radgp_rho, 
+                              spiox_out$B %>% tail(c(NA, NA, round(mcmc/2))), 
+                              spiox_out$S %>% tail(c(NA, NA, round(mcmc/2))), 
+                              spiox_out$theta %>% tail(c(NA, NA, round(mcmc/2))), 
+                              num_threads = 16)
+
+Ytest <- boom2$Y %>% apply(1:2, mean)
+Ytrue <- Y[testset,]
+
+1:q %>% sapply(\(j) cor(Ytest[,j], Ytrue[,j]))
 
 
 spiox_out$theta %>% tail(c(NA,NA,round(mcmc/2))) %>% apply(1:2, mean)
@@ -138,6 +157,17 @@ diag(Sigma) * theta_true
 j <- 2
 plot(spiox_out$theta[j,] * 
        spiox_out$Sigma[j,j,], type='l')
+
+
+df_test <- data.frame(cx[testset,], y=Wtest) %>%
+  pivot_longer(cols=-c(Var1, Var2))
+ggplot(df_test, aes(Var1, Var2, color=value)) +
+  geom_point() +
+  facet_grid(~name) +
+  scale_color_viridis_c() +
+  theme_minimal()
+
+
 
 
 
@@ -293,34 +323,6 @@ mean(Q_true_pattern == Qc_est_pattern)
 
 preds <- ROCR::prediction(Q_est_pattern[lower.tri(Q_est_pattern)], Q_true_pattern[lower.tri(Q_true_pattern)])
 (perf <- ROCR::performance(preds, "fpr")@y.values[[1]][2])
-
-
-
-boom <- spiox::spiox_predict(coords_new = cx[testset,],
-                             X_new = X[testset,,drop=F],
-                             Xstar_new = Xstar[testset,,drop=F],
-                             
-                             # data
-                             Y[-testset,], 
-                             X[-testset,,drop=F], 
-                             Xstar[-testset,,drop=F], 
-                             cx[-testset,], 
-                             
-                             radgp_rho, theta_opts, 
-                             spiox_out$B %>% tail(c(NA, NA, 100)), 
-                             spiox_out$S %>% tail(c(NA, NA, 100)), 
-                             spiox_out$theta_which %>% tail(c(NA, 100)))
-
-Wtest <- boom$Y %>% apply(1:2, mean)
-Wtrue <- XY[testset,]
-
-df_test <- data.frame(cx[testset,], y=Wtest) %>%
-  pivot_longer(cols=-c(Var1, Var2))
-ggplot(df_test, aes(Var1, Var2, color=value)) +
-  geom_point() +
-  facet_grid(~name) +
-  scale_color_viridis_c() +
-  theme_minimal()
 
 
 
