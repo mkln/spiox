@@ -1,1 +1,1 @@
-# INOCS: INside-Out Coregionalization for Spatial multivariate data
+# spiox: Spatial analysis with Inside-Out Cross-covariance (IOX)

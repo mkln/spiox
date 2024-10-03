@@ -1,5 +1,5 @@
 #include "omp_import.h"
-#include "radgp.h"
+#include "daggp.h"
 #include "ramadapt.h"
 #include "spf.h"
 #include "cholesky_lrupd.h"
