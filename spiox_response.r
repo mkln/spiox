@@ -20,17 +20,17 @@ w <- solve(test_radgp$H, rnorm(nr))
 
 Ctest <- spiox::Correlationc(cx, cx, c(1,1,1.9,1-8), 1, TRUE)
 
-q <- 2
+q <- 5
 
-optlist <- seq(0.4, 21.9, length.out=q) %>% sample(q, replace=T)
+optlist <- seq(0.5, 1.9, length.out=q) #%>% sample(q, replace=T)
 
 #Clist <- optlist %>% lapply(\(phi)  (exp(-phi * as.matrix(dist(cx))^1) + 1e-6*diag(nr)) )
-Clist <- optlist %>% lapply(\(nu) spiox::Correlationc(cx, cx, c(20,1,nu,1e-8), 1, TRUE) )
+Clist <- optlist %>% lapply(\(nu) spiox::Correlationc(cx, cx, c(20,1,nu,1e-12), 1, TRUE) )
 Llist <- Clist %>% lapply(\(C) t(chol(C)))
 Lilist <- Llist %>% lapply(\(L) solve(L))
 
 
-Q <- rWishart(1, q+2, 1/20*diag(q))[,,1] #
+Q <- rWishart(1, q+1, 1/2 * diag(q))[,,1] #
 Sigma <- solve(Q) 
 
 St <- chol(Sigma)
@@ -80,15 +80,10 @@ if(F){
 
 set.seed(1)
 
-radgp_rho <- .1
-test_radgp <- spiox::radgp_build(cx, radgp_rho, phi=10, sigmasq=1, nu=1.5, tausq=0, matern=T)
-
-
-test_radgp$dag %>% sapply(\(x) nrow(x)) %>% summary()
-
 par_opts <- seq(0.51, 1.8, length.out=5)
 
-theta_opts <- cbind(c(19, 1, 0.51, 1e-4), c(20, 1, 1.5, 1e-5))
+#theta_opts <- cbind(c(20, 1, .51, 1e-15), c(20, 1, 1.5, 1e-15))
+theta_opts <- rbind(20, 1, seq(.5, 1.9, length.out=q), 1e-15)
 #theta_opts <- par_opts %>% sapply(\(nu) matrix( c(20, 1, nu, 1e-6), ncol=1))
 #theta_opts <- par_opts %>% sapply(\(phi) matrix( c(phi, 1, 1, 1e-16), ncol=1))
 
@@ -97,26 +92,32 @@ testset <- sample(1:nrow(Y), 10, replace=F)
 perturb <- function(x, sd=1){
   return(x + matrix(rnorm(prod(dim(x)), sd), ncol=ncol(x)))
 }
+m_nn <- 20
+
+cx_in <- cx[-testset,]
+custom_dag <- dag_vecchia(cx_in, m_nn)
 
 set.seed(1) 
 (total_time <- system.time({
   spiox_out <- spiox::spiox_wishart(Y[-testset,,drop=F], 
                             X[-testset,,drop=F],
-                            cx[-testset,], 
-                            radgp_rho = radgp_rho, theta=theta_opts[,1:2],
+                            cx_in, 
+                            custom_dag = custom_dag, 
+                            theta=theta_opts,
                             
-                            Sigma_start = diag(q),
-                            mvreg_B_start = 0*Beta,# %>% perturb(),
+                            Sigma_start = Sigma,
+                            mvreg_B_start = Beta,# %>% perturb(),
                             
-                            mcmc = mcmc <- 10000,
+                            mcmc = mcmc <- 5000,
                             print_every = 100,
                             
                             sample_iwish=T,
                             sample_mvr=T,
-                            sample_theta_gibbs=T,
+                            sample_theta_gibbs=F,
                             upd_theta_opts=T,
                             num_threads = 16)
 }))
+
 
 
 boom2 <- spiox::spiox_predict(X_new = X[testset,,drop=F],
