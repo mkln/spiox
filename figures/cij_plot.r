@@ -86,3 +86,4 @@ nu_corr <- results %>% bind_rows() %>%
 
 cij_plot <- grid.arrange(phi_corr, nu_corr, nrow=1)
 ggsave("figures/cij_plot.pdf", plot=cij_plot, width=8.75, height=3)
+ggsave("figures/cij_plot.png", plot=cij_plot, width=8.75, height=3)
