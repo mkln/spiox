@@ -1,4 +1,4 @@
-# spiox: Spatial analysis with Inside-Out Cross-covariance
+# Multivariate Gaussian processes with Inside-Out Cross-covariance
 
 ![Simulated data from IOX](figures/prior_sample_3.png)
 
