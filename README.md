@@ -1,4 +1,4 @@
-# Multivariate Gaussian processes with Inside-Out Cross-covariance
+# Inside-Out Cross-covariance for multivariate Gaussian processes
 
 ![Simulated data from IOX](figures/prior_sample_3.png)
 
