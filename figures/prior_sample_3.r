@@ -78,3 +78,4 @@ df <- data.frame(coords, y=Y) %>%
       axis.text.y = element_text(margin = margin(r = 0), vjust=1) ) )
 
 ggsave("figures/prior_sample_3.pdf", plot=p2, width=8.7, height=3)
+ggsave("figures/prior_sample_3.png", plot=p2, width=8.7, height=3)
