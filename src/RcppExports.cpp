@@ -26,6 +26,60 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// radgp_build
+Rcpp::List radgp_build(const arma::mat& coords, double rho, double phi, double sigmasq, double nu, double tausq, bool matern, int num_threads);
+RcppExport SEXP _spiox_radgp_build(SEXP coordsSEXP, SEXP rhoSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP, SEXP num_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
+    Rcpp::traits::input_parameter< double >::type rho(rhoSEXP);
+    Rcpp::traits::input_parameter< double >::type phi(phiSEXP);
+    Rcpp::traits::input_parameter< double >::type sigmasq(sigmasqSEXP);
+    Rcpp::traits::input_parameter< double >::type nu(nuSEXP);
+    Rcpp::traits::input_parameter< double >::type tausq(tausqSEXP);
+    Rcpp::traits::input_parameter< bool >::type matern(maternSEXP);
+    Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(radgp_build(coords, rho, phi, sigmasq, nu, tausq, matern, num_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// daggp_build
+Rcpp::List daggp_build(const arma::mat& coords, const arma::field<arma::uvec>& dag, double phi, double sigmasq, double nu, double tausq, bool matern, int num_threads);
+RcppExport SEXP _spiox_daggp_build(SEXP coordsSEXP, SEXP dagSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP, SEXP num_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
+    Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type dag(dagSEXP);
+    Rcpp::traits::input_parameter< double >::type phi(phiSEXP);
+    Rcpp::traits::input_parameter< double >::type sigmasq(sigmasqSEXP);
+    Rcpp::traits::input_parameter< double >::type nu(nuSEXP);
+    Rcpp::traits::input_parameter< double >::type tausq(tausqSEXP);
+    Rcpp::traits::input_parameter< bool >::type matern(maternSEXP);
+    Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(daggp_build(coords, dag, phi, sigmasq, nu, tausq, matern, num_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// radgp_logdens
+Rcpp::List radgp_logdens(const arma::vec& x, const arma::mat& coords, double rho, double phi, double sigmasq, double nu, double tausq, bool matern);
+RcppExport SEXP _spiox_radgp_logdens(SEXP xSEXP, SEXP coordsSEXP, SEXP rhoSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type x(xSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
+    Rcpp::traits::input_parameter< double >::type rho(rhoSEXP);
+    Rcpp::traits::input_parameter< double >::type phi(phiSEXP);
+    Rcpp::traits::input_parameter< double >::type sigmasq(sigmasqSEXP);
+    Rcpp::traits::input_parameter< double >::type nu(nuSEXP);
+    Rcpp::traits::input_parameter< double >::type tausq(tausqSEXP);
+    Rcpp::traits::input_parameter< bool >::type matern(maternSEXP);
+    rcpp_result_gen = Rcpp::wrap(radgp_logdens(x, coords, rho, phi, sigmasq, nu, tausq, matern));
+    return rcpp_result_gen;
+END_RCPP
+}
 // dl_update_variances
 arma::vec dl_update_variances(const arma::vec& theta, double a, double b);
 RcppExport SEXP _spiox_dl_update_variances(SEXP thetaSEXP, SEXP aSEXP, SEXP bSEXP) {
@@ -128,60 +182,6 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// radgp_build
-Rcpp::List radgp_build(const arma::mat& coords, double rho, double phi, double sigmasq, double nu, double tausq, bool matern, int num_threads);
-RcppExport SEXP _spiox_radgp_build(SEXP coordsSEXP, SEXP rhoSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP, SEXP num_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
-    Rcpp::traits::input_parameter< double >::type rho(rhoSEXP);
-    Rcpp::traits::input_parameter< double >::type phi(phiSEXP);
-    Rcpp::traits::input_parameter< double >::type sigmasq(sigmasqSEXP);
-    Rcpp::traits::input_parameter< double >::type nu(nuSEXP);
-    Rcpp::traits::input_parameter< double >::type tausq(tausqSEXP);
-    Rcpp::traits::input_parameter< bool >::type matern(maternSEXP);
-    Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(radgp_build(coords, rho, phi, sigmasq, nu, tausq, matern, num_threads));
-    return rcpp_result_gen;
-END_RCPP
-}
-// radgp_build_from_dag
-Rcpp::List radgp_build_from_dag(const arma::mat& coords, const arma::field<arma::uvec>& dag, double phi, double sigmasq, double nu, double tausq, bool matern, int num_threads);
-RcppExport SEXP _spiox_radgp_build_from_dag(SEXP coordsSEXP, SEXP dagSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP, SEXP num_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
-    Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type dag(dagSEXP);
-    Rcpp::traits::input_parameter< double >::type phi(phiSEXP);
-    Rcpp::traits::input_parameter< double >::type sigmasq(sigmasqSEXP);
-    Rcpp::traits::input_parameter< double >::type nu(nuSEXP);
-    Rcpp::traits::input_parameter< double >::type tausq(tausqSEXP);
-    Rcpp::traits::input_parameter< bool >::type matern(maternSEXP);
-    Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(radgp_build_from_dag(coords, dag, phi, sigmasq, nu, tausq, matern, num_threads));
-    return rcpp_result_gen;
-END_RCPP
-}
-// radgp_logdens
-Rcpp::List radgp_logdens(const arma::vec& x, const arma::mat& coords, double rho, double phi, double sigmasq, double nu, double tausq, bool matern);
-RcppExport SEXP _spiox_radgp_logdens(SEXP xSEXP, SEXP coordsSEXP, SEXP rhoSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::vec& >::type x(xSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
-    Rcpp::traits::input_parameter< double >::type rho(rhoSEXP);
-    Rcpp::traits::input_parameter< double >::type phi(phiSEXP);
-    Rcpp::traits::input_parameter< double >::type sigmasq(sigmasqSEXP);
-    Rcpp::traits::input_parameter< double >::type nu(nuSEXP);
-    Rcpp::traits::input_parameter< double >::type tausq(tausqSEXP);
-    Rcpp::traits::input_parameter< bool >::type matern(maternSEXP);
-    rcpp_result_gen = Rcpp::wrap(radgp_logdens(x, coords, rho, phi, sigmasq, nu, tausq, matern));
-    return rcpp_result_gen;
-END_RCPP
-}
 // run_spf_model
 Rcpp::List run_spf_model(arma::mat& Y, unsigned int n_factors, double delta_gamma_shape, double delta_gamma_rate, double dl_dirichlet_a, const arma::mat& Lambda_start, const arma::vec& Delta_start, unsigned int mcmc, int print_every, bool seq_lambda);
 RcppExport SEXP _spiox_run_spf_model(SEXP YSEXP, SEXP n_factorsSEXP, SEXP delta_gamma_shapeSEXP, SEXP delta_gamma_rateSEXP, SEXP dl_dirichlet_aSEXP, SEXP Lambda_startSEXP, SEXP Delta_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP seq_lambdaSEXP) {
@@ -266,6 +266,9 @@ END_RCPP
 
 static const R_CallMethodDef CallEntries[] = {
     {"_spiox_Correlationc", (DL_FUNC) &_spiox_Correlationc, 5},
+    {"_spiox_radgp_build", (DL_FUNC) &_spiox_radgp_build, 8},
+    {"_spiox_daggp_build", (DL_FUNC) &_spiox_daggp_build, 8},
+    {"_spiox_radgp_logdens", (DL_FUNC) &_spiox_radgp_logdens, 8},
     {"_spiox_dl_update_variances", (DL_FUNC) &_spiox_dl_update_variances, 3},
     {"_spiox_iox", (DL_FUNC) &_spiox_iox, 9},
     {"_spiox_rvec", (DL_FUNC) &_spiox_rvec, 5},
@@ -273,9 +276,6 @@ static const R_CallMethodDef CallEntries[] = {
     {"_spiox_iox_mat", (DL_FUNC) &_spiox_iox_mat, 6},
     {"_spiox_make_candidates", (DL_FUNC) &_spiox_make_candidates, 4},
     {"_spiox_neighbor_search_testset", (DL_FUNC) &_spiox_neighbor_search_testset, 3},
-    {"_spiox_radgp_build", (DL_FUNC) &_spiox_radgp_build, 8},
-    {"_spiox_radgp_build_from_dag", (DL_FUNC) &_spiox_radgp_build_from_dag, 8},
-    {"_spiox_radgp_logdens", (DL_FUNC) &_spiox_radgp_logdens, 8},
     {"_spiox_run_spf_model", (DL_FUNC) &_spiox_run_spf_model, 10},
     {"_spiox_spiox_wishart", (DL_FUNC) &_spiox_spiox_wishart, 14},
     {"_spiox_spiox_logdens", (DL_FUNC) &_spiox_spiox_logdens, 7},

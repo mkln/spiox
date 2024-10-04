@@ -51,6 +51,7 @@ public:
   void compute_V(); // whitened
   void compute_S();
   void sample_theta_discr(); // gibbs for each outcome choosing from options
+  void sample_theta_discr2(); // gibbs for each outcome choosing from options // old
   void upd_theta_metrop();
   void init_theta_adapt();
   
@@ -298,15 +299,9 @@ inline void SpIOX::sample_B(){
   tstart = std::chrono::steady_clock::now();
   
   arma::vec vecB_Var = arma::vectorise(B_Var);
-  
   arma::mat post_precision = arma::diagmat(1.0/vecB_Var) + Xtilde.t() * Xtilde;
-  
-  
   arma::mat pp_ichol = arma::inv(arma::trimatl(arma::chol(post_precision, "lower")));
-  
-  
   arma::vec beta = pp_ichol.t() * (pp_ichol * Xtilde.t() * ytilde + arma::randn(p*q));
-  
   B = arma::mat(beta.memptr(), p, q);
   
   tend = std::chrono::steady_clock::now();
@@ -316,6 +311,68 @@ inline void SpIOX::sample_B(){
 }
 
 inline void SpIOX::sample_theta_discr(){
+  std::chrono::steady_clock::time_point tstart;
+  std::chrono::steady_clock::time_point tend;
+  int timed = 0;
+  
+  arma::vec zz = arma::zeros(1);
+  
+  // initialize current setup 
+  arma::vec vecYtilde = arma::vectorise(Y - X * B);
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+  for(unsigned int j=0; j<q; j++){
+    vecYtilde.subvec(j*n, (j+1)*n-1) = radgp_options.at(spmap(j)).H * vecYtilde.subvec(j*n, (j+1)*n-1);
+  }
+  
+  // loop over outcomes -- this is gibbs so cannot parallelize
+  for(unsigned int j=0; j<q; j++){
+    arma::vec opt_logdens = arma::zeros(n_options);
+    // -- loop over options // parallel ok if we create a copy of ytilde and Xtilde
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+    for(unsigned int r=0; r<n_options; r++){
+      // compute unnorm logdens 
+      // change option for this outcome: spmap(i) is the new theta option
+      arma::vec vecYtilde_loc = vecYtilde;
+      vecYtilde_loc.subvec(j*n, (j+1)*n-1) = radgp_options.at(r).H * (Y.col(j) - X * B.col(j));
+
+      double opt_prec_logdet = radgp_options.at(r).precision_logdeterminant;
+      arma::mat Ytildemat_loc = arma::mat(vecYtilde_loc.memptr(), n, q, false, true);
+      arma::vec ytilde_loc = arma::vectorise(Ytildemat_loc * Si);
+      // at each i, we ytilde and Xtilde remain the same except for outcome j
+      opt_logdens(r) = 0.5 * opt_prec_logdet - 0.5 * arma::accu(pow(ytilde_loc, 2.0));
+    }
+    
+    // these probabilities are unnormalized
+    //Rcpp::Rcout << "options probs unnorm: " << opt_logdens.t() << endl;
+    
+    double c = arma::max(opt_logdens);
+    double log_norm_const = c + log(arma::accu(exp(opt_logdens - c)));
+    // now normalize
+    opt_logdens = exp(opt_logdens - log_norm_const);
+    
+    //Rcpp::Rcout << "options probs unnorm: " << opt_logdens.t() << endl;
+    
+    // finally sample
+    double u = arma::randu();
+    arma::vec cprobs = arma::join_vert(zz, arma::cumsum(opt_logdens));
+    // reassign process hyperparameters based on gp density
+    spmap(j) = arma::max(arma::find(cprobs < u));
+    
+    // update ytilde and Xtilde accordingly so we can move on to the next
+    vecYtilde.subvec(j*n, (j+1)*n-1) = radgp_options.at(spmap(j)).H * (Y.col(j) - X * B.col(j));
+    //Rcpp::Rcout << "done" << endl;
+  }
+  
+  
+  
+}
+
+
+inline void SpIOX::sample_theta_discr2(){
   std::chrono::steady_clock::time_point tstart;
   std::chrono::steady_clock::time_point tend;
   int timed = 0;
@@ -451,13 +508,13 @@ inline void SpIOX::upd_theta_metrop(){
   }
   
   // current
-  arma::mat Ytildemat = arma::mat(vecYtilde.memptr(), n, q);
+  arma::mat Ytildemat = arma::mat(vecYtilde.memptr(), n, q, false, true);
   arma::vec ytilde = arma::vectorise(Ytildemat * Si);
   double curr_ldet = +0.5*arma::accu(radgp_logdets);
   double curr_logdens = curr_ldet - 0.5*arma::accu(pow(ytilde, 2.0));
   
   // proposal
-  arma::mat Ytildemat_alt = arma::mat(vecYtilde_alt.memptr(), n, q);
+  arma::mat Ytildemat_alt = arma::mat(vecYtilde_alt.memptr(), n, q, false, true);
   arma::vec ytilde_alt = arma::vectorise(Ytildemat_alt * Si);
   double prop_ldet = +0.5*arma::accu(radgp_alt_logdets);
   double prop_logdens = prop_ldet - 0.5*arma::accu(pow(ytilde_alt, 2.0));
@@ -545,7 +602,7 @@ inline void SpIOX::gibbs_response(int it, int sample_precision, bool sample_mvr,
   tstart = std::chrono::steady_clock::now();
   // if n_options == q then keep 1:1 assignment
   if(sample_theta_gibbs){
-    sample_theta_discr();
+    sample_theta_discr2();
   }
   timings(4) += time_count(tstart);
   
@@ -571,7 +628,7 @@ inline double SpIOX::logdens_eval(){
     radgp_logdets(j) = radgp_options.at(spmap(j)).precision_logdeterminant;
   }
   
-  arma::mat Ytildemat = arma::mat(vecYtilde.memptr(), n, q);
+  arma::mat Ytildemat = arma::mat(vecYtilde.memptr(), n, q, false, true);
   arma::vec ytilde = arma::vectorise(Ytildemat * Si);
   
   double curr_ldet = +0.5*arma::accu(radgp_logdets);

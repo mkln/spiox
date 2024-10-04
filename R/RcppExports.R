@@ -5,6 +5,18 @@ Correlationc <- function(coordsx, coordsy, theta, covar, same) {
     .Call(`_spiox_Correlationc`, coordsx, coordsy, theta, covar, same)
 }
 
+radgp_build <- function(coords, rho, phi, sigmasq, nu, tausq, matern = FALSE, num_threads = 1L) {
+    .Call(`_spiox_radgp_build`, coords, rho, phi, sigmasq, nu, tausq, matern, num_threads)
+}
+
+daggp_build <- function(coords, dag, phi, sigmasq, nu, tausq, matern = FALSE, num_threads = 1L) {
+    .Call(`_spiox_daggp_build`, coords, dag, phi, sigmasq, nu, tausq, matern, num_threads)
+}
+
+radgp_logdens <- function(x, coords, rho, phi, sigmasq, nu, tausq, matern = FALSE) {
+    .Call(`_spiox_radgp_logdens`, x, coords, rho, phi, sigmasq, nu, tausq, matern)
+}
+
 dl_update_variances <- function(theta, a, b) {
     .Call(`_spiox_dl_update_variances`, theta, a, b)
 }
@@ -31,18 +43,6 @@ make_candidates <- function(w, indsort, col, rho) {
 
 neighbor_search_testset <- function(wtrain, wtest, rho) {
     .Call(`_spiox_neighbor_search_testset`, wtrain, wtest, rho)
-}
-
-radgp_build <- function(coords, rho, phi, sigmasq, nu, tausq, matern = FALSE, num_threads = 1L) {
-    .Call(`_spiox_radgp_build`, coords, rho, phi, sigmasq, nu, tausq, matern, num_threads)
-}
-
-radgp_build_from_dag <- function(coords, dag, phi, sigmasq, nu, tausq, matern = FALSE, num_threads = 1L) {
-    .Call(`_spiox_radgp_build_from_dag`, coords, dag, phi, sigmasq, nu, tausq, matern, num_threads)
-}
-
-radgp_logdens <- function(x, coords, rho, phi, sigmasq, nu, tausq, matern = FALSE) {
-    .Call(`_spiox_radgp_logdens`, x, coords, rho, phi, sigmasq, nu, tausq, matern)
 }
 
 run_spf_model <- function(Y, n_factors, delta_gamma_shape, delta_gamma_rate, dl_dirichlet_a, Lambda_start, Delta_start, mcmc = 1000L, print_every = 1000L, seq_lambda = FALSE) {
