@@ -26,23 +26,32 @@ St <- chol(Sigma)
 S <- t(St)
 
 # spatial
-xx <- seq(0, 1, length.out=200)
-coords <- expand.grid(xx, xx)
-nr <- nrow(coords)
-cx <- as.matrix(coords)
+xS <- seq(0, 1, length.out=50)
+cooS <- expand.grid(xS, xS)
+nrS <- nrow(cooS)
+cxS <- as.matrix(cooS) + matrix(runif(nrS*2, -1e-5, 1e-5), ncol=2)
+
+xU <- seq(0, 1, length.out=200)
+cooU <- expand.grid(xU, xU)
+cxU <- as.matrix(cooU)
+
+coords <- bind_rows(cooS %>% mutate(type="S"), 
+                    cooU %>% mutate(type="U"))
 
 m <- 50
 
-custom_dag <- dag_vecchia(cx, m)
+custom_dag_S <- dag_vecchia(cxS, m)
+custom_dag_U <- dag_vecchia_predict(cxS, cxU, m = m)
 
 Hlist <- 1:q %>% sapply(\(j)
-                        spiox::daggp_build(cx, custom_dag, 
+                        spiox::daggp_build(rbind(cxS, cxU), c(custom_dag_S, custom_dag_U), 
                                            phi=theta_mat[1,j], sigmasq=theta_mat[2,j], 
                                            nu=theta_mat[3,j], tausq=theta_mat[4,j], 
                                            matern=T, 16)$H
 )
 
-
+nr <- nrow(cooS) + nrow(cooU)
+  
 V <- matrix(rnorm(nr * q), ncol=q) %*% St
 
 Y <- V
@@ -56,8 +65,8 @@ for(i in 1:q){
   Y[,i] <- Matrix::solve(Hlist[[i]], V[,i], sparse=T) 
 }
 
-df <- data.frame(coords, y=Y) %>% 
-  pivot_longer(cols=-c(Var1, Var2)) %>%
+df <- data.frame(coords, y=Y) %>% filter(type=="U") %>% 
+  pivot_longer(cols=-c(Var1, Var2, type)) %>%
   mutate(name = ifelse(name == "y.1", "Outcome 1", ifelse(name == "y.2", "Outcome 2", "Outcome 3")))
 
 ( p2 <- ggplot(df, 
@@ -77,4 +86,4 @@ df <- data.frame(coords, y=Y) %>%
       
       axis.text.y = element_text(margin = margin(r = 0), vjust=1) ) )
 
-ggsave("figures/prior_sample_3.pdf", plot=p2, width=8.7, height=3)
+ggsave("figures/prior_sample_Sc.pdf", plot=p2, width=8.7, height=3)
