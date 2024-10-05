@@ -1,11 +1,11 @@
 Package: spiox
 Type: Package
 Title: Inside-out cross-covariance for spatial multivariate data
-Version: 0.1
-Date: 2024-08-12
+Version: 0.2
+Date: 2024-10-04
 Author: Michele Peruzzi
 Maintainer: Michele Peruzzi <peruzzi@umich.edu>
-Description: Fits Bayesian models for multivariate spatial data using Inside-out cross-covariance and radial neighbors Gaussian processes.
+Description: Fits Bayesian models for multivariate spatial data using Inside-out cross-covariance and Vecchia approximations of GPs.
 License: GPL (>= 2)
 Encoding: UTF-8
 RoxygenNote: 7.3.1
