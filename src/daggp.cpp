@@ -168,13 +168,21 @@ arma::mat DagGP::H_times_A(const arma::mat& A){
   
   arma::mat result = arma::zeros(nr, A.n_cols);
   // calculate components for H and Ci
+  for(unsigned int j=0; j<A.n_cols; j++){
+    arma::vec Aj = A.col(j);
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(n_threads)
 #endif
-  for(unsigned int j=0; j<A.n_cols; j++){
-    arma::vec Aj = A.col(j);
     for(int i=0; i<nr; i++){
       result(i, j) = arma::accu(hrows(i) % Aj(ax(i)));
+      
+      //const arma::uvec& indices = ax(i); // Pre-computed index vector for sparse pattern
+      //const arma::vec& hrow_i = hrows(i); // Sparse row data
+      //arma::vec Aj_sub = Aj(indices); // Subvector of Aj corresponding to ax(i)
+      
+      // Perform dot product
+      //result(i, j) = arma::dot(hrow_i, Aj_sub);
+      
     }
   }
   return result;
