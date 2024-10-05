@@ -259,6 +259,9 @@ inline void SpIOX::init_theta_adapt(){
 inline void SpIOX::compute_V(){
   // whiten the residuals from spatial dependence
   V = ( Y - X * B );
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
   for(unsigned int i=0; i<q; i++){
     V.col(i) = //radgp_options.at(spmap(i)).H * V.col(i);  
       radgp_options.at(spmap(i)).H_times_A(V.col(i));
