@@ -29,6 +29,8 @@ DagGP::DagGP(
   bessel_ws = (double *) R_alloc(n_threads*bessel_ws_inc, sizeof(double));
   
   //initialize_H();
+  hrows = arma::field<arma::vec>(nr);
+  ax = arma::field<arma::uvec>(nr);
   compute_comps();
 }
 
@@ -60,6 +62,8 @@ DagGP::DagGP(
   bessel_ws = (double *) R_alloc(n_threads*bessel_ws_inc, sizeof(double));
   
   //initialize_H();
+  hrows = arma::field<arma::vec>(nr);
+  ax = arma::field<arma::uvec>(nr);
   compute_comps();
 }
 
@@ -131,8 +135,6 @@ void DagGP::compute_comps(){
   // this function avoids building H since H is always used to multiply a matrix A
   
   arma::vec logdetvec(nr);
-  hrows = arma::field<arma::rowvec>(nr);
-  
   // calculate components for H and Ci
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(n_threads)
@@ -140,22 +142,22 @@ void DagGP::compute_comps(){
   for(int i=0; i<nr; i++){
     arma::uvec ix = oneuv * i;
     arma::uvec px = dag(i);
-    arma::uvec ax = arma::join_vert(ix, px);
     
+    ax(i) = arma::join_vert(ix, px);
     arma::mat CC = Correlationf(coords, ix, ix, 
                                 theta, bessel_ws, covar, true);
     arma::mat CPt = Correlationf(coords, px, ix, theta, bessel_ws, covar, false);
     arma::mat PPi = 
       arma::inv_sympd( Correlationf(coords, px, px, theta, bessel_ws, covar, true) );
     
-    arma::rowvec h = arma::trans(PPi * CPt);
+    arma::vec h = PPi * CPt;
     double sqrtR = sqrt( arma::conv_to<double>::from(
-      CC - CPt.t() * h.t() ));
+      CC - CPt.t() * h ));
     
-    arma::rowvec mhR = -h/sqrtR;
-    arma::rowvec rowoneR = arma::ones<arma::rowvec>(1)/sqrtR;
+    arma::vec mhR = -h/sqrtR;
+    arma::vec rowoneR = arma::ones(1)/sqrtR;
     
-    hrows(i) = arma::join_horiz(mhR, rowoneR);
+    hrows(i) = arma::join_vert(mhR, rowoneR);
     logdetvec(i) = -log(sqrtR);
   }
   precision_logdeterminant = 2 * arma::accu(logdetvec);
@@ -164,22 +166,15 @@ void DagGP::compute_comps(){
 arma::mat DagGP::H_times_A(const arma::mat& A){
   // this function avoids building H since H is always used to multiply a matrix A
   
-  arma::field<arma::vec> ht(nr);
-  arma::vec sqrtR(nr);
-  arma::vec logdetvec(nr);
   arma::mat result = arma::zeros(nr, A.n_cols);
-  
   // calculate components for H and Ci
 #ifdef _OPENMP
-//#pragma omp parallel for num_threads(n_threads)
+#pragma omp parallel for num_threads(n_threads)
 #endif
-  for(int i=0; i<nr; i++){
-    arma::uvec ix = oneuv * i;
-    arma::uvec px = dag(i);
-    arma::uvec ax = arma::join_vert(px, ix);
-    
-    for(unsigned int j=0; j<A.n_cols; j++){
-      result(i, j) = arma::conv_to<double>::from(hrows(i) * A.submat(ax, oneuv*j));
+  for(unsigned int j=0; j<A.n_cols; j++){
+    arma::vec Aj = A.col(j);
+    for(int i=0; i<nr; i++){
+      result(i, j) = arma::accu(hrows(i) % Aj(ax(i)));
     }
   }
   return result;
