@@ -44,12 +44,13 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// daggp_build
-Rcpp::List daggp_build(const arma::mat& coords, const arma::field<arma::uvec>& dag, double phi, double sigmasq, double nu, double tausq, bool matern, int num_threads);
-RcppExport SEXP _spiox_daggp_build(SEXP coordsSEXP, SEXP dagSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP, SEXP num_threadsSEXP) {
+// daggp_build_mm
+Rcpp::List daggp_build_mm(const arma::mat& A, const arma::mat& coords, const arma::field<arma::uvec>& dag, double phi, double sigmasq, double nu, double tausq, bool matern, int num_threads);
+RcppExport SEXP _spiox_daggp_build_mm(SEXP ASEXP, SEXP coordsSEXP, SEXP dagSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP, SEXP num_threadsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type A(ASEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
     Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type dag(dagSEXP);
     Rcpp::traits::input_parameter< double >::type phi(phiSEXP);
@@ -58,7 +59,7 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type tausq(tausqSEXP);
     Rcpp::traits::input_parameter< bool >::type matern(maternSEXP);
     Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(daggp_build(coords, dag, phi, sigmasq, nu, tausq, matern, num_threads));
+    rcpp_result_gen = Rcpp::wrap(daggp_build_mm(A, coords, dag, phi, sigmasq, nu, tausq, matern, num_threads));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -267,7 +268,7 @@ END_RCPP
 static const R_CallMethodDef CallEntries[] = {
     {"_spiox_Correlationc", (DL_FUNC) &_spiox_Correlationc, 5},
     {"_spiox_radgp_build", (DL_FUNC) &_spiox_radgp_build, 8},
-    {"_spiox_daggp_build", (DL_FUNC) &_spiox_daggp_build, 8},
+    {"_spiox_daggp_build_mm", (DL_FUNC) &_spiox_daggp_build_mm, 9},
     {"_spiox_radgp_logdens", (DL_FUNC) &_spiox_radgp_logdens, 8},
     {"_spiox_dl_update_variances", (DL_FUNC) &_spiox_dl_update_variances, 3},
     {"_spiox_iox", (DL_FUNC) &_spiox_iox, 9},

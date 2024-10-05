@@ -27,6 +27,11 @@ public:
   
   arma::field<arma::uvec> dag;
   
+  // storing just the nonzero elements of rows of H
+  arma::field<arma::rowvec> hrows; 
+  void compute_comps();
+  arma::mat H_times_A(const arma::mat& A);
+  
   // info about covariance model:
   // 0 = power exponential
   // anything else = matern

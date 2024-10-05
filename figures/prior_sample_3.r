@@ -10,6 +10,11 @@ image.matrix <- \(x) {
   image(as(x, "dgCMatrix"))
 }
 
+
+
+
+
+
 q <- 3
 
 theta_mat <- matrix(1, ncol=q, nrow=4)
@@ -26,21 +31,21 @@ St <- chol(Sigma)
 S <- t(St)
 
 # spatial
-xx <- seq(0, 1, length.out=200)
+xx <- seq(0, 1, length.out=20)
 coords <- expand.grid(xx, xx)
 nr <- nrow(coords)
 cx <- as.matrix(coords)
+A <- matrix(runif(nr), ncol=1)
 
-j <- 1
-radius <- 0.025
-test <- spiox::radgp_build(cx, radius, 
-                           phi=5, sigmasq=1, 
-                           nu=1.5, tausq=1e-5, 
-                           matern=F, 16)
-test$dag %>% sapply(\(x) prod(dim(x))) %>% summary()
+m <- 20
+
+custom_dag <- dag_vecchia(cx, m)
+
+test <- daggp_build_mm(A, cx, custom_dag,
+               20, 1, 1, 1e-7, T)
 
 Hlist <- 1:q %>% sapply(\(j)
-                        spiox::radgp_build(cx, radius, 
+                        spiox::daggp_build(cx, custom_dag, 
                                            phi=theta_mat[1,j], sigmasq=theta_mat[2,j], 
                                            nu=theta_mat[3,j], tausq=theta_mat[4,j], 
                                            matern=T, 16)$H
@@ -70,7 +75,7 @@ df <- data.frame(coords, y=Y) %>%
     scico::scale_fill_scico(palette="vik") + # bam, broc, cork, managua, vik
     facet_wrap(~name, ncol=q) +
     theme_minimal() + 
-    labs(x=NULL, y=NULL) +
+    labs(x=NULL, y=NULL, fill="Value") +
     scale_x_continuous(breaks=c(0.5, 1), expand=c(0,0)) +
     scale_y_continuous(breaks=c(0, 0.5, 1), expand=c(0,0)) +
     theme(
@@ -81,4 +86,3 @@ df <- data.frame(coords, y=Y) %>%
       
       axis.text.y = element_text(margin = margin(r = 0), vjust=1) ) )
 
-ggsave("figures/prior_sample_3.pdf", plot=p2, width=8.7, height=3)
