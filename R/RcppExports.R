@@ -9,8 +9,8 @@ radgp_build <- function(coords, rho, phi, sigmasq, nu, tausq, matern = FALSE, nu
     .Call(`_spiox_radgp_build`, coords, rho, phi, sigmasq, nu, tausq, matern, num_threads)
 }
 
-daggp_build <- function(coords, dag, phi, sigmasq, nu, tausq, matern = FALSE, num_threads = 1L) {
-    .Call(`_spiox_daggp_build`, coords, dag, phi, sigmasq, nu, tausq, matern, num_threads)
+daggp_build_mm <- function(A, coords, dag, phi, sigmasq, nu, tausq, matern = FALSE, num_threads = 1L) {
+    .Call(`_spiox_daggp_build_mm`, A, coords, dag, phi, sigmasq, nu, tausq, matern, num_threads)
 }
 
 radgp_logdens <- function(x, coords, rho, phi, sigmasq, nu, tausq, matern = FALSE) {

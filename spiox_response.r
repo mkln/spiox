@@ -80,10 +80,13 @@ if(F){
 
 set.seed(1)
 
-par_opts <- seq(0.51, 1.8, length.out=5)
+phi_opts <- seq(5, 30, length.out=5)
+nu_opts <- seq(0.5, 1.9, length.out=20)
+optsall <- expand.grid(phi_opts, nu_opts) %>% as.matrix()
+
 
 #theta_opts <- cbind(c(20, 1, .51, 1e-15), c(20, 1, 1.5, 1e-15))
-theta_opts <- rbind(20, 1, seq(.5, 1.9, length.out=q), 1e-15)
+theta_opts <- rbind(optsall[,1], 1, optsall[,2], 1e-8)
 #theta_opts <- par_opts %>% sapply(\(nu) matrix( c(20, 1, nu, 1e-6), ncol=1))
 #theta_opts <- par_opts %>% sapply(\(phi) matrix( c(phi, 1, 1, 1e-16), ncol=1))
 
@@ -108,13 +111,13 @@ set.seed(1)
                             Sigma_start = Sigma,
                             mvreg_B_start = Beta,# %>% perturb(),
                             
-                            mcmc = mcmc <- 5000,
+                            mcmc = mcmc <- 1500,
                             print_every = 100,
                             
                             sample_iwish=T,
                             sample_mvr=T,
-                            sample_theta_gibbs=F,
-                            upd_theta_opts=T,
+                            sample_theta_gibbs=T,
+                            upd_theta_opts=F,
                             num_threads = 16)
 }))
 

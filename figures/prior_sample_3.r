@@ -10,6 +10,11 @@ image.matrix <- \(x) {
   image(as(x, "dgCMatrix"))
 }
 
+
+
+
+
+
 q <- 3
 
 theta_mat <- matrix(1, ncol=q, nrow=4)
@@ -26,10 +31,16 @@ St <- chol(Sigma)
 S <- t(St)
 
 # spatial
-xx <- seq(0, 1, length.out=200)
+xx <- seq(0, 1, length.out=20)
 coords <- expand.grid(xx, xx)
 nr <- nrow(coords)
 cx <- as.matrix(coords)
+A <- matrix(runif(nr), ncol=1)
+
+m <- 20
+
+custom_dag <- dag_vecchia(cx, m)
+
 
 m <- 50
 
@@ -77,5 +88,6 @@ df <- data.frame(coords, y=Y) %>%
       
       axis.text.y = element_text(margin = margin(r = 0), vjust=1) ) )
 
-ggsave("figures/prior_sample_3.pdf", plot=p2, width=8.7, height=3)
-ggsave("figures/prior_sample_3.png", plot=p2, width=8.7, height=3)
+#ggsave("figures/prior_sample_3.pdf", plot=p2, width=8.7, height=3)
+#ggsave("figures/prior_sample_3.png", plot=p2, width=8.7, height=3)
+
