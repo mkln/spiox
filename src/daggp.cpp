@@ -75,9 +75,9 @@ double DagGP::logdens(const arma::vec& x){
   return 0.5 * ( precision_logdeterminant - loggausscore );
 }
 
-void DagGP::update_theta(const arma::vec& newtheta){
+void DagGP::update_theta(const arma::vec& newtheta, bool update_H){
   theta = newtheta;
-  compute_comps(true);
+  compute_comps(update_H);
 }
 void DagGP::compute_comps(bool update_H){
   // this function avoids building H since H is always used to multiply a matrix A
@@ -150,6 +150,9 @@ arma::mat DagGP::H_times_A(const arma::mat& A, bool use_spmat){
     // calculate components for H and Ci
     for(unsigned int j=0; j<A.n_cols; j++){
       arma::vec Aj = A.col(j);
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(n_threads)
+#endif
       for(int i=0; i<nr; i++){
         result(i, j) = arma::accu(hrows(i).t() * Aj(ax(i)));
       }
@@ -208,8 +211,6 @@ Rcpp::List daggp_build_mm(const arma::mat& A, const arma::mat& coords, const arm
   adag.compute_comps();
   adag.initialize_H();
   arma::sp_mat Ci = adag.H.t() * adag.H;
-  
-  adag.compute_comps();
   arma::vec result = adag.H_times_A(A);
   
   return Rcpp::List::create(

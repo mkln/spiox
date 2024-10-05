@@ -344,7 +344,7 @@ inline void SpIOX::sample_theta_discr(){
       // compute unnorm logdens 
       // change option for this outcome: spmap(i) is the new theta option
       arma::mat V_loc = V;
-      V_loc.col(j) = daggp_options.at(r).H_times_A(Ytilde.col(j), true);// * Ytilde.col(j);
+      V_loc.col(j) = daggp_options.at(r).H_times_A(Ytilde.col(j));// * Ytilde.col(j);
       double opt_prec_logdet = daggp_options.at(r).precision_logdeterminant;
       
       // at each i, we ytilde and Xtilde remain the same except for outcome j
@@ -393,10 +393,17 @@ inline void SpIOX::upd_theta_metrop(){
   
   theta_alt.rows(which_theta_elem) = phisig_alt_mat; 
   
+  if(!theta_alt.is_finite()){
+    Rcpp::stop("Some value of theta outside of MCMC search limits.\n");
+  }
+  
   // ---------------------
   // create proposal radgp
   //Rcpp::Rcout << "------- builds1 ----" << endl;
   tstart = std::chrono::steady_clock::now();
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
   for(unsigned int i=0; i<n_options; i++){
     daggp_options_alt[i].update_theta(theta_alt.col(i));
   }
@@ -406,6 +413,7 @@ inline void SpIOX::upd_theta_metrop(){
   
   // ----------------------
   // current density and proposal density
+  //Rcpp::Rcout << "------- builds2 ----" << endl;
   tstart = std::chrono::steady_clock::now();
   
   //arma::vec vecYtilde = arma::vectorise(Y - X * B);
