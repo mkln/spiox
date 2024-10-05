@@ -39,10 +39,10 @@ public:
   arma::mat S, Si; // S^T * S = Sigma = Q^-1 = (Lambda*Lambda^T + Delta)^-1 = (Si * Si^T)^-1
   
   // RadGP for spatial dependence
-  std::vector<DagGP> radgp_options, radgp_options_alt;
+  std::vector<DagGP> daggp_options, daggp_options_alt;
   arma::mat theta_options; // each column is one alternative value for theta
   unsigned int n_options;
-  arma::uvec spmap; // qx1 vector spmap(i) = which element of radgp_options for factor i
+  arma::uvec spmap; // qx1 vector spmap(i) = which element of daggp_options for factor i
   
   arma::mat V; 
   
@@ -51,7 +51,6 @@ public:
   void compute_V(); // whitened
   void compute_S();
   void sample_theta_discr(); // gibbs for each outcome choosing from options
-  void sample_theta_discr2(); // gibbs for each outcome choosing from options // old
   void upd_theta_metrop();
   void init_theta_adapt();
   
@@ -64,8 +63,6 @@ public:
   RAMAdapt theta_adapt;
   bool theta_adapt_active;
   // --------
-  
-  
   
   // -------------- run 1 gibbs iteration based on current values
   void gibbs_response(int it, int sample_precision, bool sample_mvr, bool sample_theta_gibbs, bool upd_theta_opts);
@@ -102,7 +99,7 @@ public:
     
     theta_options = radgp_theta;
     n_options = theta_options.n_cols;
-    radgp_options = std::vector<DagGP>(n_options);//.reserve(n_options);
+    daggp_options = std::vector<DagGP>(n_options);//.reserve(n_options);
     
     // if multiple nu options, interpret as wanting to sample smoothness for matern
     // otherwise, power exponential with fixed exponent.
@@ -111,11 +108,11 @@ public:
     tausq_sampling = arma::var(theta_options.row(3)) != 0;
     
     for(unsigned int i=0; i<n_options; i++){
-      radgp_options[i] = DagGP(_coords, theta_options.col(i), custom_dag, //radgp_rho, 
+      daggp_options[i] = DagGP(_coords, theta_options.col(i), custom_dag, //radgp_rho, 
                                nu_sampling, //matern 
                                num_threads);
     }
-    radgp_options_alt = radgp_options;
+    daggp_options_alt = daggp_options;
     if(n_options < q){
       // will need update from discrete
       spmap = arma::zeros<arma::uvec>(q);
@@ -164,17 +161,17 @@ public:
     
     theta_options = radgp_theta;
     n_options = theta_options.n_cols;
-    radgp_options = std::vector<DagGP>(n_options);//.reserve(n_options);
+    daggp_options = std::vector<DagGP>(n_options);//.reserve(n_options);
     
     phi_sampling = arma::var(theta_options.row(0)) != 0;
     nu_sampling = arma::var(theta_options.row(2)) != 0;
     tausq_sampling = arma::var(theta_options.row(3)) != 0;
     
     for(unsigned int i=0; i<n_options; i++){
-      radgp_options[i] = DagGP(_coords, theta_options.col(i), radgp_rho, nu_sampling, 
+      daggp_options[i] = DagGP(_coords, theta_options.col(i), radgp_rho, nu_sampling, 
                                num_threads);
     }
-    radgp_options_alt = radgp_options;
+    daggp_options_alt = daggp_options;
     if(n_options < q){
       // will need update from discrete
       spmap = arma::zeros<arma::uvec>(q);
@@ -213,9 +210,9 @@ public:
     
     theta_options = radgp_theta;
     n_options = theta_options.n_cols;
-    radgp_options = std::vector<DagGP>(n_options);//.reserve(n_options);
+    daggp_options = std::vector<DagGP>(n_options);//.reserve(n_options);
     for(unsigned int i=0; i<n_options; i++){
-      radgp_options[i] = DagGP(_coords, theta_options.col(i), radgp_rho, 0, 1);
+      daggp_options[i] = DagGP(_coords, theta_options.col(i), radgp_rho, 0, 1);
     }
   }  
   
@@ -263,8 +260,8 @@ inline void SpIOX::compute_V(){
 #pragma omp parallel for num_threads(num_threads)
 #endif
   for(unsigned int i=0; i<q; i++){
-    V.col(i) = //radgp_options.at(spmap(i)).H * V.col(i);  
-      radgp_options.at(spmap(i)).H_times_A(V.col(i));
+    V.col(i) = //daggp_options.at(spmap(i)).H * V.col(i);  
+      daggp_options.at(spmap(i)).H_times_A(V.col(i));
   }
   // V = Li * (y-XB)
 }
@@ -298,9 +295,9 @@ inline void SpIOX::sample_B(){
 #pragma omp parallel for num_threads(num_threads)
 #endif
   for(unsigned int j=0; j<q; j++){
-    Ytilde.col(j) = radgp_options.at(spmap(j)).H_times_A(Y.col(j));// * Y.col(j);
-    arma::mat HX = radgp_options.at(spmap(j)).H_times_A(X);// * X;
-    radgp_logdets(j) = radgp_options.at(spmap(j)).precision_logdeterminant;
+    Ytilde.col(j) = daggp_options.at(spmap(j)).H_times_A(Y.col(j));// * Y.col(j);
+    arma::mat HX = daggp_options.at(spmap(j)).H_times_A(X);// * X;
+    radgp_logdets(j) = daggp_options.at(spmap(j)).precision_logdeterminant;
     for(unsigned int i=0; i<q; i++){
       Xtilde.submat(i * n,       j * p,
                     (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX; 
@@ -347,8 +344,8 @@ inline void SpIOX::sample_theta_discr(){
       // compute unnorm logdens 
       // change option for this outcome: spmap(i) is the new theta option
       arma::mat V_loc = V;
-      V_loc.col(j) = radgp_options.at(r).H_times_A(Ytilde.col(j));// * Ytilde.col(j);
-      double opt_prec_logdet = radgp_options.at(r).precision_logdeterminant;
+      V_loc.col(j) = daggp_options.at(r).H_times_A(Ytilde.col(j));// * Ytilde.col(j);
+      double opt_prec_logdet = daggp_options.at(r).precision_logdeterminant;
       
       // at each i, we ytilde and Xtilde remain the same except for outcome j
       opt_logdens(r) = 0.5 * opt_prec_logdet - 0.5 * arma::accu(pow(V_loc * Si, 2.0));
@@ -369,7 +366,7 @@ inline void SpIOX::sample_theta_discr(){
     spmap(j) = arma::max(arma::find(cprobs < u));
     
     // update ytilde and Xtilde accordingly so we can move on to the next
-    V.col(j) = radgp_options.at(spmap(j)).H_times_A(Ytilde.col(j));// * Ytilde.col(j);
+    V.col(j) = daggp_options.at(spmap(j)).H_times_A(Ytilde.col(j));// * Ytilde.col(j);
     //Rcpp::Rcout << "done" << endl;
   }
   
@@ -401,7 +398,7 @@ inline void SpIOX::upd_theta_metrop(){
   //Rcpp::Rcout << "------- builds1 ----" << endl;
   tstart = std::chrono::steady_clock::now();
   for(unsigned int i=0; i<n_options; i++){
-    radgp_options_alt[i].update_theta(theta_alt.col(i));
+    daggp_options_alt[i].update_theta(theta_alt.col(i));
   }
   tend = std::chrono::steady_clock::now();
   timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
@@ -420,12 +417,12 @@ inline void SpIOX::upd_theta_metrop(){
 #pragma omp parallel for num_threads(num_threads)
 #endif
   for(unsigned int j=0; j<q; j++){
-    //vecYtilde.subvec(j*n, (j+1)*n-1) = radgp_options.at(spmap(j)).H * vecYtilde.subvec(j*n, (j+1)*n-1);
-    //vecYtilde_alt.subvec(j*n, (j+1)*n-1) = radgp_options_alt.at(spmap(j)).H * vecYtilde_alt.subvec(j*n, (j+1)*n-1);
+    //vecYtilde.subvec(j*n, (j+1)*n-1) = daggp_options.at(spmap(j)).H * vecYtilde.subvec(j*n, (j+1)*n-1);
+    //vecYtilde_alt.subvec(j*n, (j+1)*n-1) = daggp_options_alt.at(spmap(j)).H * vecYtilde_alt.subvec(j*n, (j+1)*n-1);
     arma::mat YXBj = Y.col(j) - X*B.col(j);
-    V_alt.col(j) = radgp_options_alt.at(spmap(j)).H_times_A(YXBj);// * (Y.col(j) - X * B.col(j));
-    radgp_logdets(j) = radgp_options.at(spmap(j)).precision_logdeterminant;
-    radgp_alt_logdets(j) = radgp_options_alt.at(spmap(j)).precision_logdeterminant;
+    V_alt.col(j) = daggp_options_alt.at(spmap(j)).H_times_A(YXBj);// * (Y.col(j) - X * B.col(j));
+    radgp_logdets(j) = daggp_options.at(spmap(j)).precision_logdeterminant;
+    radgp_alt_logdets(j) = daggp_options_alt.at(spmap(j)).precision_logdeterminant;
   }
   
   // current
@@ -452,7 +449,7 @@ inline void SpIOX::upd_theta_metrop(){
   
   if(accepted){
     theta_options = theta_alt;
-    std::swap(radgp_options, radgp_options_alt);
+    std::swap(daggp_options, daggp_options_alt);
     std::swap(V, V_alt);
   } 
   
@@ -541,8 +538,8 @@ inline double SpIOX::logdens_eval(){
   arma::vec radgp_logdets = arma::zeros(q);
   for(unsigned int j=0; j<q; j++){
     arma::mat vYtlocal = vecYtilde.subvec(j*n, (j+1)*n-1);
-    vecYtilde.subvec(j*n, (j+1)*n-1) = radgp_options.at(spmap(j)).H_times_A(vYtlocal);// * vecYtilde.subvec(j*n, (j+1)*n-1);
-    radgp_logdets(j) = radgp_options.at(spmap(j)).precision_logdeterminant;
+    vecYtilde.subvec(j*n, (j+1)*n-1) = daggp_options.at(spmap(j)).H_times_A(vYtlocal);// * vecYtilde.subvec(j*n, (j+1)*n-1);
+    radgp_logdets(j) = daggp_options.at(spmap(j)).precision_logdeterminant;
   }
   
   arma::mat Ytildemat = arma::mat(vecYtilde.memptr(), n, q, false, true);
