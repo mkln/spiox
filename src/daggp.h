@@ -30,8 +30,10 @@ public:
   // storing just the nonzero elements of rows of H
   arma::field<arma::uvec> ax;
   arma::field<arma::vec> hrows; 
-  void compute_comps();
-  arma::mat H_times_A(const arma::mat& A);
+  arma::vec sqrtR;
+  arma::field<arma::vec> h;
+  void compute_comps(bool update_H=false);
+  arma::mat H_times_A(const arma::mat& A, bool use_spmat=false);
   
   // info about covariance model:
   // 0 = power exponential

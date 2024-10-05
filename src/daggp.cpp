@@ -28,10 +28,10 @@ DagGP::DagGP(
   int bessel_ws_inc = MAT_NU_MAX;//see bessel_k.c for working space needs
   bessel_ws = (double *) R_alloc(n_threads*bessel_ws_inc, sizeof(double));
   
-  //initialize_H();
   hrows = arma::field<arma::vec>(nr);
   ax = arma::field<arma::uvec>(nr);
   compute_comps();
+  initialize_H();
 }
 
 
@@ -61,10 +61,11 @@ DagGP::DagGP(
   int bessel_ws_inc = MAT_NU_MAX;//see bessel_k.c for working space needs
   bessel_ws = (double *) R_alloc(n_threads*bessel_ws_inc, sizeof(double));
   
-  //initialize_H();
+  //
   hrows = arma::field<arma::vec>(nr);
   ax = arma::field<arma::uvec>(nr);
   compute_comps();
+  initialize_H();
 }
 
 
@@ -76,15 +77,13 @@ double DagGP::logdens(const arma::vec& x){
 
 void DagGP::update_theta(const arma::vec& newtheta){
   theta = newtheta;
-  //initialize_H();
-  compute_comps();
+  compute_comps(true);
 }
-
-void DagGP::initialize_H(){
-  arma::field<arma::vec> ht(nr);
-  arma::vec sqrtR(nr);
+void DagGP::compute_comps(bool update_H){
+  // this function avoids building H since H is always used to multiply a matrix A
+  sqrtR = arma::zeros(nr);
+  h = arma::field<arma::vec>(nr);
   arma::vec logdetvec(nr);
-  
   // calculate components for H and Ci
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(n_threads)
@@ -93,18 +92,33 @@ void DagGP::initialize_H(){
     arma::uvec ix = oneuv * i;
     arma::uvec px = dag(i);
     
-    arma::mat CC = Correlationf(coords, ix, ix, 
-                                theta, bessel_ws, covar, true);
+    ax(i) = arma::join_vert(ix, px);
+    arma::mat CC = Correlationf(coords, ix, ix, theta, bessel_ws, covar, true);
     arma::mat CPt = Correlationf(coords, px, ix, theta, bessel_ws, covar, false);
-    arma::mat PPi = 
-      arma::inv_sympd( Correlationf(coords, px, px, theta, bessel_ws, covar, true) );
+    arma::mat PPi = arma::inv_sympd( 
+                Correlationf(coords, px, px, theta, bessel_ws, covar, true) );
     
-    ht(i) = PPi * CPt;
+    h(i) = PPi * CPt;
     sqrtR(i) = sqrt( arma::conv_to<double>::from(
-                                          CC - CPt.t() * ht(i) ));
+      CC - CPt.t() * h(i) ));
+    
+    arma::vec mhR = -h(i)/sqrtR(i);
+    arma::vec rowoneR = arma::ones(1)/sqrtR(i);
+    
+    hrows(i) = arma::join_vert(rowoneR, mhR);
     logdetvec(i) = -log(sqrtR(i));
+    
+    if(update_H){
+      H(i,i) = 1.0/sqrtR(i);
+      for(unsigned int j=0; j<dag(i).n_elem; j++){
+        H(i, dag(i)(j)) = -h(i)(j)/sqrtR(i);
+      }
+    }
   }
+  precision_logdeterminant = 2 * arma::accu(logdetvec);
+}
 
+void DagGP::initialize_H(){
   // building sparse H and Ci
   unsigned int H_n_elem = nr;
   for(int i=0; i<nr; i++){
@@ -121,67 +135,29 @@ void DagGP::initialize_H(){
     for(unsigned int j=0; j<dag(i).n_elem; j++){
       H_locs(0, ix) = i;
       H_locs(1, ix) = dag(i)(j);
-      H_values(ix) =  -ht(i)(j)/sqrtR(i);
+      H_values(ix) =  -h(i)(j)/sqrtR(i);
       ix ++;
     }
   }
-
-  precision_logdeterminant = 2 * arma::accu(logdetvec);
   H = arma::sp_mat(H_locs, H_values);
   //Ci = H.t() * H;
 }
 
-void DagGP::compute_comps(){
+arma::mat DagGP::H_times_A(const arma::mat& A, bool use_spmat){
   // this function avoids building H since H is always used to multiply a matrix A
-  
-  arma::vec logdetvec(nr);
-  // calculate components for H and Ci
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(n_threads)
-#endif
-  for(int i=0; i<nr; i++){
-    arma::uvec ix = oneuv * i;
-    arma::uvec px = dag(i);
-    
-    ax(i) = arma::join_vert(ix, px);
-    arma::mat CC = Correlationf(coords, ix, ix, 
-                                theta, bessel_ws, covar, true);
-    arma::mat CPt = Correlationf(coords, px, ix, theta, bessel_ws, covar, false);
-    arma::mat PPi = 
-      arma::inv_sympd( Correlationf(coords, px, px, theta, bessel_ws, covar, true) );
-    
-    arma::vec h = PPi * CPt;
-    double sqrtR = sqrt( arma::conv_to<double>::from(
-      CC - CPt.t() * h ));
-    
-    arma::vec mhR = -h/sqrtR;
-    arma::vec rowoneR = arma::ones(1)/sqrtR;
-    
-    hrows(i) = arma::join_vert(mhR, rowoneR);
-    logdetvec(i) = -log(sqrtR);
-  }
-  precision_logdeterminant = 2 * arma::accu(logdetvec);
-}
-
-arma::mat DagGP::H_times_A(const arma::mat& A){
-  // this function avoids building H since H is always used to multiply a matrix A
-  
-  arma::mat result = arma::zeros(nr, A.n_cols);
-  // calculate components for H and Ci
-  for(unsigned int j=0; j<A.n_cols; j++){
-    arma::vec Aj = A.col(j);
-    for(int i=0; i<nr; i++){
-      result(i, j) = arma::accu(hrows(i) % Aj(ax(i)));
-      
-      //const arma::uvec& indices = ax(i); // Pre-computed index vector for sparse pattern
-      //const arma::vec& hrow_i = hrows(i); // Sparse row data
-      //arma::vec Aj_sub = Aj(indices); // Subvector of Aj corresponding to ax(i)
-      
-      // Perform dot product
-      //result(i, j) = arma::dot(hrow_i, Aj_sub);
+  if(!use_spmat){
+    arma::mat result = arma::zeros(nr, A.n_cols);
+    // calculate components for H and Ci
+    for(unsigned int j=0; j<A.n_cols; j++){
+      arma::vec Aj = A.col(j);
+      for(int i=0; i<nr; i++){
+        result(i, j) = arma::accu(hrows(i).t() * Aj(ax(i)));
+      }
     }
+    return result;
+  } else {
+    return H * A;
   }
-  return result;
 }
 
 
@@ -203,6 +179,7 @@ Rcpp::List radgp_build(const arma::mat& coords, double rho,
   
   int covar = matern;
   DagGP adag(coords, theta, rho, covar, num_threads);
+  adag.compute_comps();
   adag.initialize_H();
   arma::sp_mat Ci = adag.H.t() * adag.H;
   
@@ -228,6 +205,7 @@ Rcpp::List daggp_build_mm(const arma::mat& A, const arma::mat& coords, const arm
   
   int covar = matern;
   DagGP adag(coords, theta, dag, covar, num_threads);
+  adag.compute_comps();
   adag.initialize_H();
   arma::sp_mat Ci = adag.H.t() * adag.H;
   
@@ -258,6 +236,7 @@ Rcpp::List radgp_logdens(const arma::vec& x,
   
   int covar = matern;
   DagGP adag(coords, theta, rho, covar);
+  adag.compute_comps();
   adag.initialize_H();
   arma::sp_mat Ci = adag.H.t() * adag.H;
   double logdens = adag.logdens(x);

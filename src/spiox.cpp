@@ -8,7 +8,7 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
                     
                     const arma::field<arma::uvec>& custom_dag,
                     
-                    const arma::mat& theta_opts, 
+                    arma::mat theta_opts, 
                     
                     const arma::mat& Sigma_start,
                     const arma::mat& mvreg_B_start,
@@ -32,8 +32,17 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
 #endif
   
   
-  int q = Y.n_cols;
-  int n = Y.n_rows;
+  unsigned int q = Y.n_cols;
+  unsigned int n = Y.n_rows;
+  
+  if(upd_theta_opts){
+    unsigned int n_opts = theta_opts.n_cols;
+    if(n_opts > q){
+      theta_opts = theta_opts.head_cols(q);
+      Rcpp::warning("Limiting theta options to = number of outcomes.\n"
+                    "(More options provided for theta than number of outcomes & updating via Metropolis) ");
+    }
+  }
   
   int sample_precision = 2 * sample_iwish;
   

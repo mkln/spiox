@@ -344,7 +344,7 @@ inline void SpIOX::sample_theta_discr(){
       // compute unnorm logdens 
       // change option for this outcome: spmap(i) is the new theta option
       arma::mat V_loc = V;
-      V_loc.col(j) = daggp_options.at(r).H_times_A(Ytilde.col(j));// * Ytilde.col(j);
+      V_loc.col(j) = daggp_options.at(r).H_times_A(Ytilde.col(j), true);// * Ytilde.col(j);
       double opt_prec_logdet = daggp_options.at(r).precision_logdeterminant;
       
       // at each i, we ytilde and Xtilde remain the same except for outcome j
