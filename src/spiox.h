@@ -470,11 +470,9 @@ inline void SpIOX::gibbs_w_sequential(){
       }
     }
   }
-  
   arma::field<arma::mat> Ctchol(n); //tchol of conditional covariances
   arma::mat Di = arma::diagmat(1/Dvec);
-  
-  
+
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
@@ -632,7 +630,7 @@ inline void SpIOX::gibbs(int it, int sample_precision, bool sample_mvr, bool sam
   
   if(latent_model){
     tstart = std::chrono::steady_clock::now();
-    gibbs_w_sequential();
+    gibbs_w_block();
     sample_Dvec();
     compute_V();
     timings(6) += time_count(tstart);
