@@ -12,8 +12,6 @@ inline int time_count(std::chrono::steady_clock::time_point tstart){
 
 class SpIOX {
 public:
-  // response:
-  bool model_response;
   // Y = XB + Z where Z is multivariate q,q IOC-GP
   // S^T*S = Sigma = Q^-1 = (Lambda*Lambda^T + Delta)^-1. Lambda, Q are sparse
   
@@ -23,6 +21,7 @@ public:
   arma::mat Y;
   // matrix of predictors dim n, p
   arma::mat X;
+  
   
   // metadata
   unsigned int n, q, p;
@@ -36,7 +35,7 @@ public:
   
   // SPF for sparse latent precision
   SparsePrecisionFactor spf;
-  arma::mat S, Si; // S^T * S = Sigma = Q^-1 = (Lambda*Lambda^T + Delta)^-1 = (Si * Si^T)^-1
+  arma::mat S, Si, Sigma, Q; // S^T * S = Sigma = Q^-1 = (Lambda*Lambda^T + Delta)^-1 = (Si * Si^T)^-1
   
   // RadGP for spatial dependence
   std::vector<DagGP> daggp_options, daggp_options_alt;
@@ -54,6 +53,16 @@ public:
   void upd_theta_metrop();
   void init_theta_adapt();
   
+  // latent model 
+  bool latent_model;
+  arma::mat W;
+  void gibbs_w_sequential();
+  void gibbs_w_block();
+  void sample_Dvec();
+  arma::vec Dvec;
+  arma::mat XtX;
+  //
+  
   bool phi_sampling, nu_sampling, tausq_sampling;
   // adaptive metropolis to update theta atoms
   int theta_mcmc_counter;
@@ -65,7 +74,7 @@ public:
   // --------
   
   // -------------- run 1 gibbs iteration based on current values
-  void gibbs_response(int it, int sample_precision, bool sample_mvr, bool sample_theta_gibbs, bool upd_theta_opts);
+  void gibbs(int it, int sample_precision, bool sample_mvr, bool sample_theta_gibbs, bool upd_theta_opts);
   double logdens_eval();
   
   std::chrono::steady_clock::time_point tstart;
@@ -77,14 +86,13 @@ public:
         const arma::mat& _X, 
         const arma::mat& _coords,
         const arma::field<arma::uvec>& custom_dag,
-        //double radgp_rho, 
+        bool response,
         const arma::mat& radgp_theta, 
         
         const arma::mat& Sigma_start,
         const arma::mat& mvreg_B_start,
         int num_threads_in) 
   {
-    model_response = true;
     num_threads = num_threads_in;
     
     Y = _Y;
@@ -93,6 +101,13 @@ public:
     n = Y.n_rows;
     q = Y.n_cols;
     p = X.n_cols;
+    
+    latent_model = !response; // latent model? 
+    if(latent_model){
+      W = arma::zeros(n, q);
+      XtX = X.t() * X;
+      Dvec = arma::ones(q)*.01;
+    }
     
     B = mvreg_B_start;
     B_Var = arma::ones(arma::size(B));
@@ -109,7 +124,7 @@ public:
     
     for(unsigned int i=0; i<n_options; i++){
       daggp_options[i] = DagGP(_coords, theta_options.col(i), custom_dag, //radgp_rho, 
-                               nu_sampling, //matern 
+                               true, //matern 
                                num_threads);
     }
     daggp_options_alt = daggp_options;
@@ -125,97 +140,14 @@ public:
     
     S = arma::chol(Sigma_start, "upper");
     Si = arma::inv(arma::trimatu(S));
+    Sigma = S.t() * S;
+    Q = Si * Si.t();
     
     compute_V();
     
     timings = arma::zeros(10);
   }
-  
-  
-  // for response model spf
-  SpIOX(const arma::mat& _Y, 
-        const arma::mat& _X, 
-        const arma::mat& _coords,
-        
-        double radgp_rho, 
-        const arma::mat& radgp_theta, 
-        
-        int spf_k, double spf_a_delta, double spf_b_delta, double spf_a_dl,
-        
-        const arma::mat& spf_Lambda_start, const arma::vec& spf_Delta_start,
-        const arma::mat& mvreg_B_start,
-        int num_threads_in) 
-  {
-    model_response = true;
-    num_threads = num_threads_in;
-    
-    Y = _Y;
-    X = _X;
-    
-    n = Y.n_rows;
-    q = Y.n_cols;
-    p = X.n_cols;
-    
-    B = mvreg_B_start;
-    B_Var = 100*arma::ones(arma::size(B));
-    
-    theta_options = radgp_theta;
-    n_options = theta_options.n_cols;
-    daggp_options = std::vector<DagGP>(n_options);//.reserve(n_options);
-    
-    phi_sampling = arma::var(theta_options.row(0)) != 0;
-    nu_sampling = arma::var(theta_options.row(2)) != 0;
-    tausq_sampling = arma::var(theta_options.row(3)) != 0;
-    
-    for(unsigned int i=0; i<n_options; i++){
-      daggp_options[i] = DagGP(_coords, theta_options.col(i), radgp_rho, nu_sampling, 
-                               num_threads);
-    }
-    daggp_options_alt = daggp_options;
-    if(n_options < q){
-      // will need update from discrete
-      spmap = arma::zeros<arma::uvec>(q);
-    } else { 
-      // 
-      spmap = arma::regspace<arma::uvec>(0, q-1);
-    }
-    
-    init_theta_adapt();
-    
-    spf = SparsePrecisionFactor(&Y, spf_k, spf_a_delta, spf_b_delta, spf_a_dl);
-    spf.Lambda_start(spf_Lambda_start);
-    spf.Delta_start(spf_Delta_start);
-    
-    compute_S();
-    compute_V();
-    
-    timings = arma::zeros(10);
-  }
-  
-  // for predictions
-  SpIOX(const arma::mat& _Y, 
-        const arma::mat& _X, 
-        const arma::mat& _coords,
-        
-        double radgp_rho, const arma::mat& radgp_theta) 
-  {
-    model_response = true;
-    
-    Y = _Y;
-    X = _X;
-    
-    n = Y.n_rows;
-    q = Y.n_cols;
-    p = X.n_cols;
-    
-    theta_options = radgp_theta;
-    n_options = theta_options.n_cols;
-    daggp_options = std::vector<DagGP>(n_options);//.reserve(n_options);
-    for(unsigned int i=0; i<n_options; i++){
-      daggp_options[i] = DagGP(_coords, theta_options.col(i), radgp_rho, 0, 1);
-    }
-  }  
-  
+
 };
 
 inline void SpIOX::init_theta_adapt(){
@@ -255,7 +187,12 @@ inline void SpIOX::init_theta_adapt(){
 
 inline void SpIOX::compute_V(){
   // whiten the residuals from spatial dependence
-  V = ( Y - X * B );
+  if(latent_model){
+    V = W;
+  } else {
+    V = ( Y - X * B );
+  }
+  
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
@@ -276,51 +213,69 @@ inline void SpIOX::compute_S(){
   
   Si = U.t();
   S = arma::inv(arma::trimatl(Si));
+  
+  Sigma = S.t() * S;
+  Q = Si * Si.t();
   // Sigma = S^T * S = (Si * Si^T)^-1
 }
 
 inline void SpIOX::sample_B(){
-  //Rcpp::Rcout << "+++++++++++++++++ ORIG +++++++++++++++++++" << endl;
-  //S^T * S = Sigma
-  std::chrono::steady_clock::time_point tstart;
-  std::chrono::steady_clock::time_point tend;
-  int timed = 0;
-  //Rcpp::Rcout << "------- builds0 ----" << endl;
-  tstart = std::chrono::steady_clock::now();
-  arma::mat Ytilde = Y;
-  arma::mat Xtilde = arma::zeros(n*q, p*q);
-  arma::vec radgp_logdets = arma::zeros(q);
   
+  if(!latent_model){
+    // update B via gibbs for the response model
+    //Rcpp::Rcout << "+++++++++++++++++ ORIG +++++++++++++++++++" << endl;
+    //S^T * S = Sigma
+    std::chrono::steady_clock::time_point tstart;
+    std::chrono::steady_clock::time_point tend;
+    int timed = 0;
+    //Rcpp::Rcout << "------- builds0 ----" << endl;
+    tstart = std::chrono::steady_clock::now();
+    arma::mat Ytilde = Y;
+    arma::mat Xtilde = arma::zeros(n*q, p*q);
+    arma::vec radgp_logdets = arma::zeros(q);
+    
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
-  for(unsigned int j=0; j<q; j++){
-    Ytilde.col(j) = daggp_options.at(spmap(j)).H_times_A(Y.col(j));// * Y.col(j);
-    arma::mat HX = daggp_options.at(spmap(j)).H_times_A(X);// * X;
-    radgp_logdets(j) = daggp_options.at(spmap(j)).precision_logdeterminant;
-    for(unsigned int i=0; i<q; i++){
-      Xtilde.submat(i * n,       j * p,
-                    (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX; 
+    for(unsigned int j=0; j<q; j++){
+      Ytilde.col(j) = daggp_options.at(spmap(j)).H_times_A(Y.col(j));// * Y.col(j);
+      arma::mat HX = daggp_options.at(spmap(j)).H_times_A(X);// * X;
+      radgp_logdets(j) = daggp_options.at(spmap(j)).precision_logdeterminant;
+      for(unsigned int i=0; i<q; i++){
+        Xtilde.submat(i * n,       j * p,
+                      (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX; 
+      }
+    }
+    
+    arma::vec ytilde = arma::vectorise(Ytilde * Si);
+    tend = std::chrono::steady_clock::now();
+    timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
+    //Rcpp::Rcout << timed << endl;
+    
+    //Rcpp::Rcout << "------- builds3 ----" << endl;
+    tstart = std::chrono::steady_clock::now();
+    
+    arma::vec vecB_Var = arma::vectorise(B_Var);
+    arma::mat post_precision = arma::diagmat(1.0/vecB_Var) + Xtilde.t() * Xtilde;
+    arma::mat pp_ichol = arma::inv(arma::trimatl(arma::chol(post_precision, "lower")));
+    arma::vec beta = pp_ichol.t() * (pp_ichol * Xtilde.t() * ytilde + arma::randn(p*q));
+    B = arma::mat(beta.memptr(), p, q);
+    
+    tend = std::chrono::steady_clock::now();
+    timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
+    //Rcpp::Rcout << timed << endl;
+    
+  } else {
+    // update B via gibbs for the latent model
+    // we could make this into a conjugate MN update rather than conj N
+    arma::mat Ytilde = Y - W;
+    arma::mat mvnorm = arma::randn(p, q);
+    for(int i=0; i<q; i++){
+      arma::mat post_precision = arma::diagmat(1.0/B_Var.col(i)) + XtX/Dvec(i);
+      arma::mat pp_ichol = arma::inv(arma::trimatl(arma::chol(post_precision, "lower")));
+      B.col(i) = pp_ichol.t() * (pp_ichol * X.t() * Ytilde.col(i)/Dvec(i) + mvnorm.col(i));
     }
   }
-  
-  arma::vec ytilde = arma::vectorise(Ytilde * Si);
-  tend = std::chrono::steady_clock::now();
-  timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
-  //Rcpp::Rcout << timed << endl;
-  
-  //Rcpp::Rcout << "------- builds3 ----" << endl;
-  tstart = std::chrono::steady_clock::now();
-  
-  arma::vec vecB_Var = arma::vectorise(B_Var);
-  arma::mat post_precision = arma::diagmat(1.0/vecB_Var) + Xtilde.t() * Xtilde;
-  arma::mat pp_ichol = arma::inv(arma::trimatl(arma::chol(post_precision, "lower")));
-  arma::vec beta = pp_ichol.t() * (pp_ichol * Xtilde.t() * ytilde + arma::randn(p*q));
-  B = arma::mat(beta.memptr(), p, q);
-  
-  tend = std::chrono::steady_clock::now();
-  timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
-  //Rcpp::Rcout << timed << endl;
   
 }
 
@@ -331,7 +286,12 @@ inline void SpIOX::sample_theta_discr(){
   
   arma::vec zz = arma::zeros(1);
   
-  arma::mat Ytilde = Y - X*B;
+  arma::mat Target;
+  if(latent_model){
+    Target = W;
+  } else {
+    Target = Y - X * B;
+  }
   
   // loop over outcomes -- this is gibbs so cannot parallelize
   for(unsigned int j=0; j<q; j++){
@@ -344,7 +304,7 @@ inline void SpIOX::sample_theta_discr(){
       // compute unnorm logdens 
       // change option for this outcome: spmap(i) is the new theta option
       arma::mat V_loc = V;
-      V_loc.col(j) = daggp_options.at(r).H_times_A(Ytilde.col(j));// * Ytilde.col(j);
+      V_loc.col(j) = daggp_options.at(r).H_times_A(Target.col(j));// * Ytilde.col(j);
       double opt_prec_logdet = daggp_options.at(r).precision_logdeterminant;
       
       // at each i, we ytilde and Xtilde remain the same except for outcome j
@@ -366,7 +326,7 @@ inline void SpIOX::sample_theta_discr(){
     spmap(j) = arma::max(arma::find(cprobs < u));
     
     // update ytilde and Xtilde accordingly so we can move on to the next
-    V.col(j) = daggp_options.at(spmap(j)).H_times_A(Ytilde.col(j));// * Ytilde.col(j);
+    V.col(j) = daggp_options.at(spmap(j)).H_times_A(Target.col(j));// * Ytilde.col(j);
     //Rcpp::Rcout << "done" << endl;
   }
   
@@ -405,7 +365,7 @@ inline void SpIOX::upd_theta_metrop(){
 #pragma omp parallel for num_threads(num_threads)
 #endif
   for(unsigned int i=0; i<n_options; i++){
-    daggp_options_alt[i].update_theta(theta_alt.col(i));
+    daggp_options_alt[i].update_theta(theta_alt.col(i), true);
   }
   tend = std::chrono::steady_clock::now();
   timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
@@ -427,8 +387,13 @@ inline void SpIOX::upd_theta_metrop(){
   for(unsigned int j=0; j<q; j++){
     //vecYtilde.subvec(j*n, (j+1)*n-1) = daggp_options.at(spmap(j)).H * vecYtilde.subvec(j*n, (j+1)*n-1);
     //vecYtilde_alt.subvec(j*n, (j+1)*n-1) = daggp_options_alt.at(spmap(j)).H * vecYtilde_alt.subvec(j*n, (j+1)*n-1);
-    arma::mat YXBj = Y.col(j) - X*B.col(j);
-    V_alt.col(j) = daggp_options_alt.at(spmap(j)).H_times_A(YXBj);// * (Y.col(j) - X * B.col(j));
+    arma::mat Target;
+    if(latent_model){
+      Target = W.col(j);
+    } else {
+      Target = Y.col(j) - X*B.col(j);
+    }
+    V_alt.col(j) = daggp_options_alt.at(spmap(j)).H_times_A(Target);// * (Y.col(j) - X * B.col(j));
     radgp_logdets(j) = daggp_options.at(spmap(j)).precision_logdeterminant;
     radgp_alt_logdets(j) = daggp_options_alt.at(spmap(j)).precision_logdeterminant;
   }
@@ -473,8 +438,135 @@ inline void SpIOX::upd_theta_metrop(){
   //Rcpp::Rcout << spmap.t() << endl;
 }
 
+inline void SpIOX::gibbs_w_sequential(){
+  // stuff to be moved to SpIOX class for latent model
+  arma::mat YXB = Y - X * B;
+  
+  // precompute stuff in parallel so we can do fast sequential sampling after
+  arma::mat mvnorm = arma::randn(q, n);
+  
+  arma::field<arma::mat> Hw(n);
+  arma::field<arma::mat> Rw(n);
+  
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+  for(int i=0; i<n; i++){
+    // assume all the same dag otherwise we go cray
+    arma::uvec parents = daggp_options[0].dag(i);
+    int psize = parents.n_elem; // shared dag
+    
+    Rw(i) = arma::zeros(q, q);
+    Hw(i) = arma::zeros(psize, q);// this is block diag but we only keep the blocks
+    
+    for(int r=0; r<q; r++){
+      for(int s=0; s<q; s++){
+        Rw(i)(r, s) = Q(r,s) / 
+          ( daggp_options[spmap(r)].sqrtR(i) * 
+          daggp_options[spmap(s)].sqrtR(i) );
+      }
+      if(psize > 0){
+        Hw(i).col(r) = daggp_options[spmap(r)].h(i);
+      }
+    }
+  }
+  
+  arma::field<arma::mat> Ctchol(n); //tchol of conditional covariances
+  arma::mat Di = arma::diagmat(1/Dvec);
+  
+  
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+  for(int i=0; i<n; i++){
+    arma::mat Ri = Rw(i) + Di;
+    arma::uvec children = daggp_options[0].children(i);
+    arma::uvec which_par_isit = daggp_options[0].which_par_isit(i);
+    
+    // now add children's contributions
+    for(int c=0; c<children.n_elem; c++){
+      int child = children(c);
+      int thispar = which_par_isit(c); // what # is i as a parent to child
+      Ri += arma::diagmat(Hw(child).row(thispar)) * Rw(child) * arma::diagmat(Hw(child).row(thispar));
+    }
+    // last step 
+    Ctchol(i) = arma::inv(arma::trimatl(arma::chol(Ri, "lower")));
+  }
+  
+  // visit every location and sample from latent effects 
+  // conditional on data and markov blanket
+  for(int i=0; i<n; i++){
+    
+    arma::uvec parents = daggp_options[0].dag(i);
+    int psize = parents.n_elem; // shared dag
+    arma::vec meancomp = Di * arma::trans(YXB.row(i)); 
+    if(psize > 0){
+      arma::vec par_contrib = Rw(i) * arma::trans(arma::sum(Hw(i) % W.rows(parents), 0));
+      meancomp += par_contrib;
+    }
+    // now add children's contributions
+    arma::uvec children = daggp_options[0].children(i);
+    arma::uvec which_par_isit = daggp_options[0].which_par_isit(i);
+    arma::field<arma::uvec> which_par_isnot = daggp_options[0].which_par_isnot(i);
+    for(int c=0; c<children.n_elem; c++){
+      int child = children(c);
+      int thispar = which_par_isit(c); // what # is i as a parent to child
+      
+      arma::mat Wchildpar = W.rows(daggp_options[0].dag(child));
+      arma::mat Wchildother = Wchildpar.rows(which_par_isnot(c));
+      arma::mat Hwother = Hw(child).rows(which_par_isnot(c));
+      arma::rowvec others_contrib = arma::sum(Hwother%Wchildother, 0);
+      arma::vec wminusothers = arma::trans(W.row(child) - others_contrib);
+      meancomp += arma::diagmat(Hw(child).row(thispar)) * Rw(child) * wminusothers;
+    }
+    // full conditional precision
+    W.row(i) = arma::trans( Ctchol(i).t() * (Ctchol(i) * meancomp + mvnorm.col(i) ));
+  }
+  
+}
 
-inline void SpIOX::gibbs_response(int it, int sample_precision, bool sample_mvr, bool sample_theta_gibbs, bool upd_theta_opts){
+inline void SpIOX::gibbs_w_block(){
+  
+  // stuff to be moved to SpIOX class for latent model
+  arma::mat YXB = Y - X * B;
+  
+  arma::sp_mat Hbig(q*n, q*n);
+  
+  // Offset for placing each matrix
+  arma::uword row_offset = 0;
+  arma::uword col_offset = 0;
+  
+  // Loop through each matrix and place it in the correct block
+  for (int i=0; i<q; i++) {
+    // Insert the matrix at the correct block position
+    Hbig.submat(row_offset, col_offset, row_offset + n - 1, col_offset + n - 1) = 
+      daggp_options[spmap(i)].H;
+    
+    // Update the offsets for the next block
+    row_offset += n;
+    col_offset += n;
+  }
+  
+  arma::mat In = arma::eye(n,n);
+  arma::mat Di = arma::diagmat(1/Dvec);
+  arma::mat post_prec = Hbig.t() * arma::kron(Q, In) * Hbig + arma::kron(Di, In);
+  arma::mat Ctchol = arma::inv(arma::trimatl(arma::chol(post_prec, "lower")));
+  arma::vec post_Cmean = arma::kron(Di, In)*arma::vectorise(YXB);
+  
+  arma::vec w = Ctchol.t() * (Ctchol * post_Cmean + Ctchol * arma::randn(q*n));
+  
+  W = arma::mat(w.memptr(), n, q);
+}
+
+
+inline void SpIOX::sample_Dvec(){
+  for(int i=0; i<q; i++){
+    double ssq = arma::accu(pow( Y.col(i) - X*B.col(i) - W.col(i), 2));
+    Dvec(i) = 1.0/R::rgamma(n/2 + 2, 1.0/(1 + 0.5 * ssq));
+  }
+}
+
+inline void SpIOX::gibbs(int it, int sample_precision, bool sample_mvr, bool sample_theta_gibbs, bool upd_theta_opts){
   
   if(sample_precision > 0){
     if(sample_precision == 1){
@@ -502,10 +594,10 @@ inline void SpIOX::gibbs_response(int it, int sample_precision, bool sample_mvr,
       arma::mat Q_mean_post = arma::inv_sympd(Smean);
       double df_post = n + (V.n_cols);
       
-      arma::mat Q = arma::wishrnd(Q_mean_post, df_post);
-      
+      Q = arma::wishrnd(Q_mean_post, df_post);
       Si = arma::chol(Q, "lower");
       S = arma::inv(arma::trimatl(Si));
+      Sigma = S.t() * S;
       
       timings(2) += time_count(tstart); 
     }
@@ -538,7 +630,13 @@ inline void SpIOX::gibbs_response(int it, int sample_precision, bool sample_mvr,
   }
   timings(5) += time_count(tstart);
   
-  
+  if(latent_model){
+    tstart = std::chrono::steady_clock::now();
+    gibbs_w_sequential();
+    sample_Dvec();
+    compute_V();
+    timings(6) += time_count(tstart);
+  }
 }
 
 inline double SpIOX::logdens_eval(){

@@ -12,12 +12,7 @@ class DagGP {
 public:
   int nr;
   arma::mat coords;
-  arma::uvec layers;
   arma::vec theta;
-  
-  int type; // 1=radgp, 2=nn maxmin order
-  int M;
-  double rho;
   
   double precision_logdeterminant;
   double logdens(const arma::vec& x);
@@ -26,6 +21,11 @@ public:
   void initialize_H();
   
   arma::field<arma::uvec> dag;
+  
+  // compute and store markov blanket
+  arma::field<arma::uvec> children;
+  arma::field<arma::uvec> which_par_isit;
+  arma::field<arma::field<arma::uvec> > which_par_isnot;
   
   // storing just the nonzero elements of rows of H
   arma::field<arma::uvec> ax;
@@ -43,12 +43,6 @@ public:
   
   //double ldens;
   DagGP(){};
-  
-  DagGP(const arma::mat& coords, 
-        const arma::vec& theta_in,
-        double rho, 
-    int covariance_model=1, // matern
-    int num_threads_in=1);
   
   DagGP(
     const arma::mat& coords_in, 

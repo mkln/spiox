@@ -5,16 +5,8 @@ Correlationc <- function(coordsx, coordsy, theta, covar, same) {
     .Call(`_spiox_Correlationc`, coordsx, coordsy, theta, covar, same)
 }
 
-radgp_build <- function(coords, rho, phi, sigmasq, nu, tausq, matern = FALSE, num_threads = 1L) {
-    .Call(`_spiox_radgp_build`, coords, rho, phi, sigmasq, nu, tausq, matern, num_threads)
-}
-
-daggp_build_mm <- function(A, coords, dag, phi, sigmasq, nu, tausq, matern = FALSE, num_threads = 1L) {
-    .Call(`_spiox_daggp_build_mm`, A, coords, dag, phi, sigmasq, nu, tausq, matern, num_threads)
-}
-
-radgp_logdens <- function(x, coords, rho, phi, sigmasq, nu, tausq, matern = FALSE) {
-    .Call(`_spiox_radgp_logdens`, x, coords, rho, phi, sigmasq, nu, tausq, matern)
+daggp_build <- function(coords, dag, phi, sigmasq, nu, tausq, matern = FALSE, num_threads = 1L) {
+    .Call(`_spiox_daggp_build`, coords, dag, phi, sigmasq, nu, tausq, matern, num_threads)
 }
 
 dl_update_variances <- function(theta, a, b) {
@@ -23,6 +15,10 @@ dl_update_variances <- function(theta, a, b) {
 
 iox <- function(x, y, i, j, S, theta, matern = TRUE, diag_only = FALSE, at_limit = FALSE) {
     .Call(`_spiox_iox`, x, y, i, j, S, theta, matern, diag_only, at_limit)
+}
+
+sfact <- function(dag, S, theta, matern = TRUE, n_threads = 1L) {
+    .Call(`_spiox_sfact`, dag, S, theta, matern, n_threads)
 }
 
 rvec <- function(x, i, S, theta, matern = TRUE) {
@@ -53,8 +49,8 @@ spiox_wishart <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, mvr
     .Call(`_spiox_spiox_wishart`, Y, X, coords, custom_dag, theta_opts, Sigma_start, mvreg_B_start, mcmc, print_every, sample_iwish, sample_mvr, sample_theta_gibbs, upd_theta_opts, num_threads)
 }
 
-spiox_logdens <- function(Y, X, coords, custom_dag, theta, Sigma, mvreg_B) {
-    .Call(`_spiox_spiox_logdens`, Y, X, coords, custom_dag, theta, Sigma, mvreg_B)
+spiox_latent <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, mvreg_B_start, mcmc = 1000L, print_every = 100L, sample_iwish = TRUE, sample_mvr = TRUE, sample_theta_gibbs = TRUE, upd_theta_opts = TRUE, num_threads = 1L) {
+    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, theta_opts, Sigma_start, mvreg_B_start, mcmc, print_every, sample_iwish, sample_mvr, sample_theta_gibbs, upd_theta_opts, num_threads)
 }
 
 spiox_predict <- function(X_new, coords_new, Y, X, coords, dag, B, S, theta, num_threads = 1L) {
