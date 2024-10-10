@@ -13,9 +13,6 @@ DagGP::DagGP(
   nr = coords.n_rows;
   
   dag = custom_dag;
-  children = arma::field<arma::uvec>(nr);
-  which_par_isit = arma::field<arma::uvec>(nr);
-  which_par_isnot = arma::field<arma::field<arma::uvec> >(nr);
   
   oneuv = arma::ones<arma::uvec>(1);
   
@@ -28,6 +25,7 @@ DagGP::DagGP(
   bessel_ws = (double *) R_alloc(n_threads*bessel_ws_inc, sizeof(double));
   
   //
+  mblanket = arma::field<arma::uvec>(nr);
   hrows = arma::field<arma::vec>(nr);
   ax = arma::field<arma::uvec>(nr);
   compute_comps();
@@ -40,11 +38,11 @@ double DagGP::logdens(const arma::vec& x){
   return 0.5 * ( precision_logdeterminant - loggausscore );
 }
 
-void DagGP::update_theta(const arma::vec& newtheta, bool update_H){
+void DagGP::update_theta(const arma::vec& newtheta, bool update_H, bool make_Ci){
   theta = newtheta;
-  compute_comps(update_H);
+  compute_comps(update_H, make_Ci);
 }
-void DagGP::compute_comps(bool update_H){
+void DagGP::compute_comps(bool update_H, bool make_Ci){
   // this function avoids building H since H is always used to multiply a matrix A
   sqrtR = arma::zeros(nr);
   h = arma::field<arma::vec>(nr);
@@ -73,12 +71,15 @@ void DagGP::compute_comps(bool update_H){
     hrows(i) = arma::join_vert(rowoneR, mhR);
     logdetvec(i) = -log(sqrtR(i));
     
-    if(update_H){
+    if(make_Ci | update_H){
       H(i,i) = 1.0/sqrtR(i);
       for(unsigned int j=0; j<dag(i).n_elem; j++){
         H(i, dag(i)(j)) = -h(i)(j)/sqrtR(i);
       }
     }
+  }
+  if(make_Ci){
+    Ci = H.t() * H;
   }
   precision_logdeterminant = 2 * arma::accu(logdetvec);
 }
@@ -105,32 +106,21 @@ void DagGP::initialize_H(){
     }
   }
   H = arma::sp_mat(H_locs, H_values);
+  Ci = H.t() * H;
   
-  // comp children
+  // comp markov blanket
   for(int i=0; i<nr; i++){
     int nonzeros_in_col = 0;
-    for (arma::sp_mat::const_iterator it = H.begin_col(i); it != H.end_col(i); ++it) {
+    for (arma::sp_mat::const_iterator it = Ci.begin_col(i); it != Ci.end_col(i); ++it) {
       nonzeros_in_col ++;
     }
-    children(i) = arma::zeros<arma::uvec>(nonzeros_in_col-1); // not the diagonal
+    mblanket(i) = arma::zeros<arma::uvec>(nonzeros_in_col-1); // not the diagonal
     int ix = 0;
-    for (arma::sp_mat::const_iterator it = H.begin_col(i); it != H.end_col(i); ++it) {
+    for (arma::sp_mat::const_iterator it = Ci.begin_col(i); it != Ci.end_col(i); ++it) {
       if(it.row() != i){ 
-        children(i)(ix) = it.row();
+        mblanket(i)(ix) = it.row();
         ix ++;
       }
-    }
-  }
-  
-  // comp which parent i is for its children
-  for(int i=0; i<nr; i++){
-    which_par_isit(i) = arma::zeros<arma::uvec>(children(i).n_elem);
-    which_par_isnot(i) = arma::field<arma::uvec>(children(i).n_elem);
-    for(int c=0; c<children(i).n_elem; c++){
-      int child = children(i)(c);
-      arma::uvec found = arma::find(dag(child) == i, 1, "first" );
-      which_par_isit(i)(c) = found(0);
-      which_par_isnot(i)(c) = arma::find(dag(child) != i);
     }
   }
 }
@@ -179,8 +169,6 @@ Rcpp::List daggp_build(const arma::mat& coords, const arma::field<arma::uvec>& d
   
   return Rcpp::List::create(
     Rcpp::Named("dag") = adag.dag,
-    Rcpp::Named("children") = adag.children,
-    Rcpp::Named("which_par_isit") = adag.which_par_isit,
     Rcpp::Named("H") = adag.H,
     Rcpp::Named("Cinv") = Ci,
     Rcpp::Named("Cinv_logdet") = adag.precision_logdeterminant

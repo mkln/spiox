@@ -441,12 +441,16 @@ inline void SpIOX::upd_theta_metrop(){
 inline void SpIOX::gibbs_w_sequential(){
   // stuff to be moved to SpIOX class for latent model
   arma::mat YXB = Y - X * B;
+  arma::mat Di = arma::diagmat(1/Dvec);
   
   // precompute stuff in parallel so we can do fast sequential sampling after
   arma::mat mvnorm = arma::randn(q, n);
   
   arma::field<arma::mat> Hw(n);
   arma::field<arma::mat> Rw(n);
+  arma::field<arma::mat> Ctchol(n);
+  
+  Rcpp::Rcout << "starting seq " << endl;
   
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
@@ -456,68 +460,42 @@ inline void SpIOX::gibbs_w_sequential(){
     arma::uvec parents = daggp_options[0].dag(i);
     int psize = parents.n_elem; // shared dag
     
-    Rw(i) = arma::zeros(q, q);
-    Hw(i) = arma::zeros(psize, q);// this is block diag but we only keep the blocks
+    arma::uvec mblanket = daggp_options[0].mblanket(i);
+    int mbsize = mblanket.n_elem;
     
+    Rw(i) = arma::zeros(q, q); 
+    //Hw(i) = arma::zeros(psize, q);// this is block diag but we only keep the blocks
+    arma::mat Pblank(q, q*mbsize);
     for(int r=0; r<q; r++){
       for(int s=0; s<q; s++){
-        Rw(i)(r, s) = Q(r,s) / 
-          ( daggp_options[spmap(r)].sqrtR(i) * 
-          daggp_options[spmap(s)].sqrtR(i) );
-      }
-      if(psize > 0){
-        Hw(i).col(r) = daggp_options[spmap(r)].h(i);
+        Rw(i)(r, s) = Q(r,s) * 
+          arma::accu( daggp_options[spmap(r)].H.col(i) % 
+          daggp_options[spmap(s)].H.col(i) );
+        
+        // Calculate the starting and ending column indices for Pblank
+        int startcol = s * mbsize;
+        int endcol = (s + 1) * mbsize - 1;
+        
+        // Fill the appropriate columns of Pblank
+        Pblank.submat(r, startcol, r, endcol) =
+          arma::trans(daggp_options[spmap(r)].H.col(i)) *
+          daggp_options[spmap(s)].H.cols(mblanket);
+        
       }
     }
+    Hw(i) = - arma::inv_sympd(Rw(i)) * Pblank;
+    Ctchol(i) = arma::inv(arma::trimatl(arma::chol(Rw(i) + Di, "lower")));
   }
-  arma::field<arma::mat> Ctchol(n); //tchol of conditional covariances
-  arma::mat Di = arma::diagmat(1/Dvec);
 
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-  for(int i=0; i<n; i++){
-    arma::mat Ri = Rw(i) + Di;
-    arma::uvec children = daggp_options[0].children(i);
-    arma::uvec which_par_isit = daggp_options[0].which_par_isit(i);
-    
-    // now add children's contributions
-    for(int c=0; c<children.n_elem; c++){
-      int child = children(c);
-      int thispar = which_par_isit(c); // what # is i as a parent to child
-      Ri += arma::diagmat(Hw(child).row(thispar)) * Rw(child) * arma::diagmat(Hw(child).row(thispar));
-    }
-    // last step 
-    Ctchol(i) = arma::inv(arma::trimatl(arma::chol(Ri, "lower")));
-  }
-  
+  Rcpp::Rcout << "sampling seq " << endl;
   // visit every location and sample from latent effects 
   // conditional on data and markov blanket
   for(int i=0; i<n; i++){
+    arma::uvec mblanket = daggp_options[0].mblanket(i);
+    int mbsize = mblanket.n_elem;
     
-    arma::uvec parents = daggp_options[0].dag(i);
-    int psize = parents.n_elem; // shared dag
-    arma::vec meancomp = Di * arma::trans(YXB.row(i)); 
-    if(psize > 0){
-      arma::vec par_contrib = Rw(i) * arma::trans(arma::sum(Hw(i) % W.rows(parents), 0));
-      meancomp += par_contrib;
-    }
-    // now add children's contributions
-    arma::uvec children = daggp_options[0].children(i);
-    arma::uvec which_par_isit = daggp_options[0].which_par_isit(i);
-    arma::field<arma::uvec> which_par_isnot = daggp_options[0].which_par_isnot(i);
-    for(int c=0; c<children.n_elem; c++){
-      int child = children(c);
-      int thispar = which_par_isit(c); // what # is i as a parent to child
-      
-      arma::mat Wchildpar = W.rows(daggp_options[0].dag(child));
-      arma::mat Wchildother = Wchildpar.rows(which_par_isnot(c));
-      arma::mat Hwother = Hw(child).rows(which_par_isnot(c));
-      arma::rowvec others_contrib = arma::sum(Hwother%Wchildother, 0);
-      arma::vec wminusothers = arma::trans(W.row(child) - others_contrib);
-      meancomp += arma::diagmat(Hw(child).row(thispar)) * Rw(child) * wminusothers;
-    }
-    // full conditional precision
+    arma::vec meancomp = Rw(i) * Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di * arma::trans(YXB.row(i)); 
+    
     W.row(i) = arma::trans( Ctchol(i).t() * (Ctchol(i) * meancomp + mvnorm.col(i) ));
   }
   
@@ -630,7 +608,7 @@ inline void SpIOX::gibbs(int it, int sample_precision, bool sample_mvr, bool sam
   
   if(latent_model){
     tstart = std::chrono::steady_clock::now();
-    gibbs_w_block();
+    gibbs_w_sequential();
     sample_Dvec();
     compute_V();
     timings(6) += time_count(tstart);

@@ -16,23 +16,21 @@ public:
   
   double precision_logdeterminant;
   double logdens(const arma::vec& x);
-  void update_theta(const arma::vec& newtheta, bool update_H=true);
-  arma::sp_mat H;
+  void update_theta(const arma::vec& newtheta, bool update_H=true, bool make_Ci=false);
+  arma::sp_mat H, Ci;
   void initialize_H();
   
   arma::field<arma::uvec> dag;
   
   // compute and store markov blanket
-  arma::field<arma::uvec> children;
-  arma::field<arma::uvec> which_par_isit;
-  arma::field<arma::field<arma::uvec> > which_par_isnot;
+  arma::field<arma::uvec> mblanket;
   
   // storing just the nonzero elements of rows of H
   arma::field<arma::uvec> ax;
   arma::field<arma::vec> hrows; 
   arma::vec sqrtR;
   arma::field<arma::vec> h;
-  void compute_comps(bool update_H=false);
+  void compute_comps(bool update_H=false, bool make_Ci=false);
   arma::mat H_times_A(const arma::mat& A, bool use_spmat=true);
   
   // info about covariance model:
