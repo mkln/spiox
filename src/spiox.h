@@ -450,21 +450,16 @@ inline void SpIOX::gibbs_w_sequential(){
   arma::field<arma::mat> Rw(n);
   arma::field<arma::mat> Ctchol(n);
   
-  Rcpp::Rcout << "starting seq " << endl;
-  
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
   for(int i=0; i<n; i++){
     // assume all the same dag otherwise we go cray
-    arma::uvec parents = daggp_options[0].dag(i);
-    int psize = parents.n_elem; // shared dag
-    
     arma::uvec mblanket = daggp_options[0].mblanket(i);
     int mbsize = mblanket.n_elem;
     
     Rw(i) = arma::zeros(q, q); 
-    //Hw(i) = arma::zeros(psize, q);// this is block diag but we only keep the blocks
+    
     arma::mat Pblank(q, q*mbsize);
     for(int r=0; r<q; r++){
       for(int s=0; s<q; s++){
@@ -477,24 +472,24 @@ inline void SpIOX::gibbs_w_sequential(){
         int endcol = (s + 1) * mbsize - 1;
         
         // Fill the appropriate columns of Pblank
-        Pblank.submat(r, startcol, r, endcol) =
+        Pblank.submat(r, startcol, r, endcol) = Q(r,s) * 
           arma::trans(daggp_options[spmap(r)].H.col(i)) *
           daggp_options[spmap(s)].H.cols(mblanket);
-        
       }
     }
-    Hw(i) = - arma::inv_sympd(Rw(i)) * Pblank;
+    
+    Hw(i) = - //arma::inv_sympd(Rw(i)) * 
+        Pblank;
+  
     Ctchol(i) = arma::inv(arma::trimatl(arma::chol(Rw(i) + Di, "lower")));
   }
 
-  Rcpp::Rcout << "sampling seq " << endl;
   // visit every location and sample from latent effects 
   // conditional on data and markov blanket
   for(int i=0; i<n; i++){
     arma::uvec mblanket = daggp_options[0].mblanket(i);
-    int mbsize = mblanket.n_elem;
-    
-    arma::vec meancomp = Rw(i) * Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di * arma::trans(YXB.row(i)); 
+    arma::vec meancomp = //Rw(i) * 
+        Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di * arma::trans(YXB.row(i)); 
     
     W.row(i) = arma::trans( Ctchol(i).t() * (Ctchol(i) * meancomp + mvnorm.col(i) ));
   }

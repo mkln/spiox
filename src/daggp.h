@@ -16,8 +16,8 @@ public:
   
   double precision_logdeterminant;
   double logdens(const arma::vec& x);
-  void update_theta(const arma::vec& newtheta, bool update_H=true, bool make_Ci=false);
-  arma::sp_mat H, Ci;
+  void update_theta(const arma::vec& newtheta, bool update_H=true);
+  arma::sp_mat H;
   void initialize_H();
   
   arma::field<arma::uvec> dag;
@@ -30,7 +30,7 @@ public:
   arma::field<arma::vec> hrows; 
   arma::vec sqrtR;
   arma::field<arma::vec> h;
-  void compute_comps(bool update_H=false, bool make_Ci=false);
+  void compute_comps(bool update_H=false);
   arma::mat H_times_A(const arma::mat& A, bool use_spmat=true);
   
   // info about covariance model:

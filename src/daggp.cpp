@@ -38,11 +38,11 @@ double DagGP::logdens(const arma::vec& x){
   return 0.5 * ( precision_logdeterminant - loggausscore );
 }
 
-void DagGP::update_theta(const arma::vec& newtheta, bool update_H, bool make_Ci){
+void DagGP::update_theta(const arma::vec& newtheta, bool update_H){
   theta = newtheta;
-  compute_comps(update_H, make_Ci);
+  compute_comps(update_H);
 }
-void DagGP::compute_comps(bool update_H, bool make_Ci){
+void DagGP::compute_comps(bool update_H){
   // this function avoids building H since H is always used to multiply a matrix A
   sqrtR = arma::zeros(nr);
   h = arma::field<arma::vec>(nr);
@@ -71,15 +71,12 @@ void DagGP::compute_comps(bool update_H, bool make_Ci){
     hrows(i) = arma::join_vert(rowoneR, mhR);
     logdetvec(i) = -log(sqrtR(i));
     
-    if(make_Ci | update_H){
+    if(update_H){
       H(i,i) = 1.0/sqrtR(i);
       for(unsigned int j=0; j<dag(i).n_elem; j++){
         H(i, dag(i)(j)) = -h(i)(j)/sqrtR(i);
       }
     }
-  }
-  if(make_Ci){
-    Ci = H.t() * H;
   }
   precision_logdeterminant = 2 * arma::accu(logdetvec);
 }
@@ -106,7 +103,9 @@ void DagGP::initialize_H(){
     }
   }
   H = arma::sp_mat(H_locs, H_values);
-  Ci = H.t() * H;
+  
+  // compute precision just to get the markov blanket
+  arma::sp_mat Ci = H.t() * H;
   
   // comp markov blanket
   for(int i=0; i<nr; i++){
