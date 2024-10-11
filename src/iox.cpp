@@ -1,6 +1,8 @@
 #include <RcppArmadillo.h>
 #include "covariance.h"
 #include "omp_import.h"
+#include "daggp.h"
+
 
 using namespace std;
 
@@ -61,6 +63,32 @@ arma::mat iox(const arma::mat& x, const arma::mat& y, int i, int j,
     return rhoi_xS * Li_inv.t() * Lj_inv * rhoj_yS.t() + R;
   }
 }
+
+int time_count(std::chrono::steady_clock::time_point tstart){
+  return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - tstart).count();
+}
+
+//[[Rcpp::export]]
+arma::mat sfact(const arma::field<arma::uvec>& dag, const arma::mat& S, 
+                const arma::mat& theta, bool matern=true, int n_threads=1){
+  int n = S.n_rows;
+  int q = theta.n_cols;
+  arma::mat I1 = arma::eye(n, n);
+  arma::mat result = arma::zeros(q,q);
+  
+  std::vector<DagGP> daggps(q);
+  arma::cube Hinvs(n,n,q);
+  for(int i=0; i<q; i++){
+    daggps[i] = DagGP(S, theta.col(i), dag, 1, n_threads);
+    Hinvs.slice(i) = arma::spsolve(daggps[i].H, I1, "lower");
+    for(int j=0; j<=i; j++){
+      result(i,j) = arma::accu(Hinvs.slice(i)%Hinvs.slice(j))/(n+.0);
+    }
+  }
+  
+  return(result);
+}
+
 
 //[[Rcpp::export]]
 arma::mat rvec(const arma::mat& x, int i, 
