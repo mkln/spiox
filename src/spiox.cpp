@@ -21,6 +21,7 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
                     bool upd_theta_opts=true,
                     int num_threads = 1){
   
+  Rcpp::Rcout << "GP-IOX response model." << endl;
   
 #ifdef _OPENMP
   omp_set_num_threads(num_threads);
@@ -31,7 +32,7 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
   }
 #endif
   
-  bool response = true;
+  int latent_model = 0;
   
   unsigned int q = Y.n_cols;
   unsigned int n = Y.n_rows;
@@ -52,7 +53,7 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
   }
   
   SpIOX iox_model(Y, X, coords, custom_dag, 
-                  response,
+                  latent_model,
                   theta_opts, 
                    Sigma_start,
                    mvreg_B_start,
@@ -132,8 +133,24 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           bool sample_mvr=true,
                           bool sample_theta_gibbs=true,
                           bool upd_theta_opts=true,
-                          int num_threads = 1){
+                          int num_threads = 1, 
+                          int sampling=2){
   
+  
+  if(sampling==0){
+    Rcpp::stop("Run the GP-IOX response model via spiox_wishart()");
+  }
+  
+  Rcpp::Rcout << "GP-IOX latent model, ";
+  if(sampling==1){
+    Rcpp::Rcout << "nq block sampler." << endl;
+  }
+  if(sampling==2){
+    Rcpp::Rcout << "n block, q sequential sampler." << endl;
+  }
+  if(sampling==3){
+    Rcpp::Rcout << "n sequential, q block sampler." << endl;
+  }
   
 #ifdef _OPENMP
   omp_set_num_threads(num_threads);
@@ -143,8 +160,6 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     num_threads = 1;
   }
 #endif
-  
-  bool response = false;
   
   unsigned int q = Y.n_cols;
   unsigned int n = Y.n_rows;
@@ -165,7 +180,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   }
   
   SpIOX iox_model(Y, X, coords, custom_dag, 
-                  response,
+                  sampling,
                   theta_opts, 
                   Sigma_start,
                   mvreg_B_start,
@@ -173,6 +188,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   
   // storage
   arma::cube B = arma::zeros(iox_model.p, q, mcmc);
+  arma::mat Ddiag = arma::zeros(q, mcmc);
   arma::cube W = arma::zeros(n, q, mcmc);
   arma::cube theta = arma::zeros(4, q, mcmc);
   arma::umat theta_which = arma::zeros<arma::umat>(q, mcmc);
@@ -189,6 +205,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     iox_model.gibbs(m, sample_precision, sample_mvr, sample_theta_gibbs, upd_theta_opts);
     
     B.slice(m) = iox_model.B;
+    Ddiag.col(m) = iox_model.Dvec;
     W.slice(m) = iox_model.W;
     Sigma.slice(m) = iox_model.S.t() * iox_model.S;
     
@@ -217,15 +234,10 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     }
   }
   
-  arma::field<arma::sp_mat> Hlist(q);
-  for(int i=0; i<q; i++){
-    Hlist(i) = iox_model.daggp_options[i].H;
-  }
-  
   return Rcpp::List::create(
     Rcpp::Named("B") = B,
-    Rcpp::Named("Hlist") = Hlist,
     Rcpp::Named("Sigma") = Sigma,
+    Rcpp::Named("Ddiag") = Ddiag,
     Rcpp::Named("theta") = theta,
     Rcpp::Named("W") = W,
     Rcpp::Named("theta_which") = theta_which,

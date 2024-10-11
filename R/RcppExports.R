@@ -49,8 +49,8 @@ spiox_wishart <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, mvr
     .Call(`_spiox_spiox_wishart`, Y, X, coords, custom_dag, theta_opts, Sigma_start, mvreg_B_start, mcmc, print_every, sample_iwish, sample_mvr, sample_theta_gibbs, upd_theta_opts, num_threads)
 }
 
-spiox_latent <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, mvreg_B_start, mcmc = 1000L, print_every = 100L, sample_iwish = TRUE, sample_mvr = TRUE, sample_theta_gibbs = TRUE, upd_theta_opts = TRUE, num_threads = 1L) {
-    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, theta_opts, Sigma_start, mvreg_B_start, mcmc, print_every, sample_iwish, sample_mvr, sample_theta_gibbs, upd_theta_opts, num_threads)
+spiox_latent <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, mvreg_B_start, mcmc = 1000L, print_every = 100L, sample_iwish = TRUE, sample_mvr = TRUE, sample_theta_gibbs = TRUE, upd_theta_opts = TRUE, num_threads = 1L, sampling = 2L) {
+    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, theta_opts, Sigma_start, mvreg_B_start, mcmc, print_every, sample_iwish, sample_mvr, sample_theta_gibbs, upd_theta_opts, num_threads, sampling)
 }
 
 spiox_predict <- function(X_new, coords_new, Y, X, coords, dag, B, S, theta, num_threads = 1L) {

@@ -56,9 +56,10 @@ public:
   void init_theta_adapt();
   
   // latent model 
-  bool latent_model;
+  int latent_model; // 0: response, 1: block, 2: row seq, 3: col seq
   arma::mat W;
-  void gibbs_w_sequential();
+  void gibbs_w_sequential_singlesite();
+  void gibbs_w_sequential_byoutcome();
   void gibbs_w_block();
   void sample_Dvec();
   arma::vec Dvec;
@@ -88,7 +89,7 @@ public:
         const arma::mat& _X, 
         const arma::mat& _coords,
         const arma::field<arma::uvec>& custom_dag,
-        bool response,
+        int latent_model_choice,
         const arma::mat& daggp_theta, 
         
         const arma::mat& Sigma_start,
@@ -104,8 +105,8 @@ public:
     q = Y.n_cols;
     p = X.n_cols;
     
-    latent_model = !response; // latent model? 
-    if(latent_model){
+    latent_model = latent_model_choice; // latent model? 
+    if(latent_model>0){
       W = arma::zeros(n, q);
       XtX = X.t() * X;
       Dvec = arma::ones(q)*.01;
@@ -200,7 +201,7 @@ inline void SpIOX::compute_V(){
   
   
   // whiten the residuals from spatial dependence
-  if(latent_model){
+  if(latent_model>0){
     V = W;
   } else {
     V = YXB;
@@ -216,7 +217,7 @@ inline void SpIOX::compute_V(){
 
 inline void SpIOX::sample_B(){
   
-  if(!latent_model){
+  if(latent_model==0){
     // update B via gibbs for the response model
     //Rcpp::Rcout << "+++++++++++++++++ ORIG +++++++++++++++++++" << endl;
     //S^T * S = Sigma
@@ -284,7 +285,7 @@ inline void SpIOX::sample_theta_discr(){
   arma::vec zz = arma::zeros(1);
   
   arma::mat Target;
-  if(latent_model){
+  if(latent_model>0){
     Target = W;
   } else {
     Target = YXB; // Y - XB
@@ -385,7 +386,7 @@ inline void SpIOX::upd_theta_metrop(){
     //vecYtilde.subvec(j*n, (j+1)*n-1) = daggp_options.at(spmap(j)).H * vecYtilde.subvec(j*n, (j+1)*n-1);
     //vecYtilde_alt.subvec(j*n, (j+1)*n-1) = daggp_options_alt.at(spmap(j)).H * vecYtilde_alt.subvec(j*n, (j+1)*n-1);
     arma::mat Target;
-    if(latent_model){
+    if(latent_model>0){
       Target = W.col(j);
     } else {
       Target = YXB.col(j);
@@ -435,9 +436,8 @@ inline void SpIOX::upd_theta_metrop(){
   //Rcpp::Rcout << spmap.t() << endl;
 }
 
-inline void SpIOX::gibbs_w_sequential(){
+inline void SpIOX::gibbs_w_sequential_singlesite(){
   // stuff to be moved to SpIOX class for latent model
-
   arma::mat Di = arma::diagmat(1/Dvec);
   
   // precompute stuff in parallel so we can do fast sequential sampling after
@@ -458,80 +458,150 @@ inline void SpIOX::gibbs_w_sequential(){
     int mbsize = mblanket.n_elem;
     
     Rw(i) = arma::zeros(q, q); 
-    
-    arma::mat Pblank(q, q*mbsize);
+    arma::mat Pblanket(q, q*mbsize);
     for(int r=0; r<q; r++){
       for(int s=0; s<q; s++){
-        tstart = std::chrono::steady_clock::now();
-        
         Rw(i)(r, s) = Q(r,s) * 
           arma::accu( daggp_options[spmap(r)].H.col(i) % 
           daggp_options[spmap(s)].H.col(i) );
         
-        timings(7) += time_count(tstart);
-        
-        tstart = std::chrono::steady_clock::now();
-        // Calculate the starting and ending column indices for Pblank
         int startcol = s * mbsize;
         int endcol = (s + 1) * mbsize - 1;
-        
-        // Fill the appropriate columns of Pblank
-        Pblank.submat(r, startcol, r, endcol) = Q(r,s) * 
-          arma::trans(daggp_options[spmap(r)].H.col(i)) *
-          daggp_options[spmap(s)].H.cols(mblanket);
-        
-        timings(8) += time_count(tstart);
+        for(int j = 0; j < mblanket.n_elem; j++) {
+          int col_idx = mblanket(j);
+          Pblanket(r, startcol + j) = Q(r, s) *
+            arma::accu(daggp_options[spmap(r)].H.col(i) %
+                      daggp_options[spmap(s)].H.col(col_idx));
+        }
       }
     }
   
-    Hw(i) = - //arma::inv_sympd(Rw(i)) * 
-        Pblank;
-  
+    Hw(i) = - Pblanket;
     Ctchol(i) = arma::inv(arma::trimatl(arma::chol(Rw(i) + Di, "lower")));
-    
   }
 
-  tstart = std::chrono::steady_clock::now();
   // visit every location and sample from latent effects 
   // conditional on data and markov blanket
   for(int i=0; i<n; i++){
     arma::uvec mblanket = daggp_options[0].mblanket(i);
-    arma::vec meancomp = //Rw(i) * 
-        Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di * arma::trans(YXB.row(i)); 
+    arma::vec meancomp = Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di * arma::trans(YXB.row(i)); 
     
     W.row(i) = arma::trans( Ctchol(i).t() * (Ctchol(i) * meancomp + mvnorm.col(i) ));
   }
-  timings(9) += time_count(tstart);
+}
+
+inline void SpIOX::gibbs_w_sequential_byoutcome(){
+
+  std::vector<arma::sp_mat> prior_precs(q);
+  std::vector<arma::spsolve_factoriser> factoriser(q);
+  arma::uvec statuses = arma::ones<arma::uvec>(q);
+  
+  arma::superlu_opts opts;
+  opts.symmetric  = true;
+  
+  arma::mat urands = arma::randn(n, q);
+  arma::mat vrands = arma::randn(n, q);
+  
+  arma::mat HDs = arma::zeros(n, q);
+  
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+  for(int j=0; j<q; j++){
+    // compute prior precision
+    prior_precs[j] = Q(j,j) * daggp_options[spmap(j)].H.t() * daggp_options[spmap(j)].H;
+    // compute posterior precision
+    arma::sp_mat post_precs = 
+      prior_precs[j] + 1.0/Dvec(j) * arma::speye(n,n);
+    
+    // factorise precision so we can use it for sampling
+    bool status = factoriser[j].factorise(post_precs, opts);
+    if(status == false) { statuses(j) = 0; }
+    
+    // this does not need sequential
+    HDs.col(j) = YXB.col(j)/Dvec(j) + 
+      urands.col(j)/sqrt(Dvec(j)) + 
+      sqrt(Q(j,j)) * daggp_options[spmap(j)].H.t() * vrands.col(j);
+  }
+  
+  if(arma::any(statuses==0)){ Rcpp::stop("Failed factorization for sampling w."); }
+  
+  arma::uvec r1q = arma::regspace<arma::uvec>(0,q-1);
+  for(int j=0; j<q; j++){
+    arma::vec x = arma::zeros(n);
+    arma::uvec notj = arma::find(r1q != j);
+    arma::uvec jx = arma::zeros<arma::uvec>(1) + j;
+    
+    // V is whitened W as we want
+    arma::vec Mi_m_prior = - daggp_options[spmap(j)].H.t() * V.cols(notj) * Q.submat(notj, jx);
+    arma::vec rhs = Mi_m_prior + HDs.col(j);
+    
+    arma::vec w_sampled; 
+    bool foundsol = factoriser[j].solve(w_sampled, rhs);
+    
+    W.col(j) = w_sampled;
+    V.col(j) = daggp_options.at(spmap(j)).H_times_A(w_sampled);
+  }
+  
 }
 
 inline void SpIOX::gibbs_w_block(){
   // ------------------ slow 
   
-  arma::sp_mat Hbig(q*n, q*n);
+  if(q*n > 5000){
+    Rcpp::stop("Use another sampler. This block sampler was not coded for data this size.\n");
+  }
+  
+  // precision matrix via hadamard product
+  arma::sp_mat Hvert(q*n, n);
   
   // Offset for placing each matrix
   arma::uword row_offset = 0;
   arma::uword col_offset = 0;
   
-  // Loop through each matrix and place it in the correct block
+  arma::mat Unorm = arma::randn(n,q) * Si.t();
+  
+  
   for (int i=0; i<q; i++) {
     // Insert the matrix at the correct block position
-    Hbig.submat(row_offset, col_offset, row_offset + n - 1, col_offset + n - 1) = 
-      daggp_options[spmap(i)].H;
-    
-    // Update the offsets for the next block
+    Hvert.submat(row_offset, 0, row_offset + n - 1, n - 1) = 
+      daggp_options[spmap(i)].H.t();
     row_offset += n;
-    col_offset += n;
+    
+    Unorm.col(i) = daggp_options[spmap(i)].H.t() * Unorm.col(i);
+  }
+  // U = {+Li^T} (Si %x% In) * rnorm(nq)
+  
+  arma::sp_mat post_prec = Hvert*Hvert.t();
+  for (arma::sp_mat::iterator it = post_prec.begin(); it != post_prec.end(); ++it) {
+    int r = it.row();  // Row index of the nonzero element
+    int s = it.col();  // Column index of the nonzero element
+    int i = r / n;  
+    int j = s / n;  
+    post_prec(r, s) = Q(i, j) * post_prec(r, s);
+    if(r == s){
+      post_prec(r, s) += 1/Dvec(i);
+    }
   }
   
-  arma::mat In = arma::eye(n,n);
   arma::mat Di = arma::diagmat(1/Dvec);
-  arma::mat post_prec = Hbig.t() * arma::kron(Q, In) * Hbig + arma::kron(Di, In);
-  arma::mat Ctchol = arma::inv(arma::trimatl(arma::chol(post_prec, "lower")));
-  arma::vec post_Cmean = arma::kron(Di, In)*arma::vectorise(YXB);
+  arma::vec post_Cmean = arma::vectorise(YXB * Di);
+  arma::vec vnorm = arma::vectorise( arma::randn(n, q) * arma::diagmat(sqrt(1.0/Dvec)) );
   
-  arma::vec w = Ctchol.t() * (Ctchol * post_Cmean + Ctchol * arma::randn(q*n));
+  arma::vec post_meansample = post_Cmean + arma::vectorise(Unorm) + vnorm;
   
+  arma::superlu_opts opts;
+  opts.symmetric  = true;
+  
+  arma::spsolve_factoriser factr;
+  bool okfact = factr.factorise(post_prec, opts);
+  
+  if(okfact == false){ Rcpp::stop("Failed factorization for sampling w."); }
+  
+  arma::vec w;
+  bool foundsol = factr.solve(w, post_meansample);
+  
+  if(foundsol == false)  { Rcpp::stop("Could not solve for sampling w."); }
   W = arma::mat(w.memptr(), n, q);
 }
 
@@ -605,20 +675,28 @@ inline void SpIOX::gibbs(int it, int sample_sigma, bool sample_mvr, bool sample_
   if(sample_theta_gibbs){
     sample_theta_discr();
   }
-  timings(4) += time_count(tstart);
+  timings(3) += time_count(tstart);
   
   // update atoms for theta
   tstart = std::chrono::steady_clock::now();
   if(upd_theta_opts){
     upd_theta_metrop();
   }
-  timings(5) += time_count(tstart);
+  timings(4) += time_count(tstart);
   
-  if(latent_model){
+  if(latent_model > 0){
     tstart = std::chrono::steady_clock::now();
-    gibbs_w_sequential();
+    if(latent_model == 1){
+      gibbs_w_block();
+    } 
+    if(latent_model == 2){
+      gibbs_w_sequential_singlesite();
+    }
+    if(latent_model == 3){
+      gibbs_w_sequential_byoutcome();
+    }
     sample_Dvec();
-    timings(6) += time_count(tstart);
+    timings(5) += time_count(tstart);
   }
 }
 
