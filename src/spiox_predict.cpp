@@ -12,7 +12,7 @@ Rcpp::List spiox_predict(
                    const arma::field<arma::uvec>& dag,
                    
                    const arma::cube& B,
-                   const arma::cube& S,
+                   const arma::cube& Sigma,
                    const arma::cube& theta,
                    int num_threads = 1
 ){
@@ -56,7 +56,8 @@ Rcpp::List spiox_predict(
       arma::mat theta_m = theta.slice(m);
       double theta_diff = abs(arma::accu(theta_m - theta_current));
       
-      arma::mat Sigmalchol = arma::trans(S.slice(m));
+      arma::mat Sigmam = Sigma.slice(m);
+      arma::mat Sigmauchol = arma::chol(Sigmam, "upper");
       
       //arma::mat W_out = arma::zeros(ntest, q);
       arma::mat Y_out = arma::zeros(ntest, q);
@@ -84,7 +85,7 @@ Rcpp::List spiox_predict(
         Dj(j) = sqrtR;
       }
       
-      Y_out.row(i) += arma::trans( arma::diagmat(Dj) * Sigmalchol * rndnorm_m.col(i) ); // pred uncert
+      Y_out.row(i) += arma::trans( arma::diagmat(Dj) * Sigmauchol.t() * rndnorm_m.col(i) ); // pred uncert
       Y_out_mcmc.subcube(i, 0, m, i, q-1, m) = arma::trans(Y_out.row(i));
       
       theta_current = theta_m;
@@ -99,6 +100,112 @@ Rcpp::List spiox_predict(
     Rcpp::Named("dag") = dag
   );
 }
+
+//[[Rcpp::export]]
+Rcpp::List spiox_latent_predict(
+    const arma::mat& X_new,
+    const arma::mat& coords_new,
+    
+    const arma::mat& coords,
+    
+    const arma::field<arma::uvec>& dag,
+    
+    const arma::cube& W,
+    const arma::cube& B,
+    const arma::cube& Sigma,
+    const arma::mat& Dvec,
+    const arma::cube& theta,
+    int num_threads = 1
+){
+  int q = W.n_cols;
+  int p = X_new.n_cols;
+  int mcmc = B.n_slices;
+  
+  arma::uvec oneuv = arma::ones<arma::uvec>(1);
+  
+  int bessel_ws_inc = MAT_NU_MAX;//see bessel_k.c for working space needs
+  double * bessel_ws = (double *) R_alloc(num_threads*bessel_ws_inc, sizeof(double));
+  
+  int ntrain = coords.n_rows;
+  int ntest = coords_new.n_rows;
+  
+  arma::mat cxall = arma::join_vert(coords, coords_new);
+  
+  arma::cube Y_out_mcmc = arma::zeros(ntest, q, mcmc);
+  arma::cube random_stdnormal_w = arma::randn(mcmc, q, ntest);
+  arma::cube random_stdnormal_y = arma::randn(mcmc, q, ntest);
+  
+  // loop over test locations
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+  for(int i=0; i<ntest; i++){
+    
+    arma::uvec ix = oneuv * i + ntrain;
+    arma::uvec px = dag(i);
+    
+    arma::mat theta_current = arma::zeros(4, q);
+    
+    arma::field<arma::mat> CC(q);
+    arma::field<arma::mat> CPt(q);
+    arma::field<arma::mat> PPi(q);
+    
+    for(int m=0; m<mcmc; m++){
+      
+      arma::mat xb_new = X_new * B.slice(m);
+      arma::mat W_mcmc = W.slice(m);
+      
+      arma::mat theta_m = theta.slice(m);
+      double theta_diff = abs(arma::accu(theta_m - theta_current));
+      
+      arma::mat Sigmam = Sigma.slice(m);
+      arma::mat Sigmauchol = arma::chol(Sigmam, "upper");
+      
+      arma::vec deltsqrt = sqrt(Dvec.col(m));
+      
+      arma::mat W_out = arma::zeros(ntest, q);
+      arma::mat Y_out = arma::zeros(ntest, q);
+      arma::mat rndnorm_m = random_stdnormal_w.row(m);
+      arma::mat rndnorm_y = random_stdnormal_y.row(m);
+      arma::vec Dj = arma::zeros(q);
+      
+      // loop over outcomes
+      for(int j=0; j<q; j++){
+        // predict spatially
+        arma::uvec outjx = oneuv * j;
+        
+        if(theta_diff > 1e-15){
+          CC(j) = Correlationf(cxall, ix, ix, theta_m.col(j), bessel_ws, 1, true); // 1 for matern 
+          CPt(j) = Correlationf(cxall, px, ix, theta_m.col(j), bessel_ws, 1, false);
+          PPi(j) = arma::inv_sympd( Correlationf(cxall, px, px, theta_m.col(j), bessel_ws, 1, true) );  
+        }
+        
+        arma::vec ht = PPi(j) * CPt(j);
+        double sqrtR = sqrt( abs(arma::conv_to<double>::from(
+          CC(j) - CPt(j).t() * ht )) ); // abs for numerical zeros
+        
+        W_out(i, j) = 
+          arma::conv_to<double>::from(ht.t() * W_mcmc(px, outjx)); // post mean only
+        Dj(j) = sqrtR;
+      }
+      
+      W_out.row(i) += arma::trans( arma::diagmat(Dj) * Sigmauchol.t() * rndnorm_m.col(i) ); // pred uncert
+      
+      Y_out_mcmc.subcube(i, 0, m, i, q-1, m) = 
+        xb_new.row(i) + W_out.row(i) + 
+        arma::trans(arma::diagmat(deltsqrt) * rndnorm_y.col(i));
+  
+      theta_current = theta_m;
+    }
+    
+  }
+  
+  return Rcpp::List::create(
+    Rcpp::Named("Y") = Y_out_mcmc,
+    Rcpp::Named("dag") = dag
+  );
+}
+
 
 /*
 
@@ -155,7 +262,7 @@ Rcpp::List spiox_predict(
  arma::mat yxb_old = Y - X * B.slice(m);
  
  arma::mat theta_sample = theta.slice(m);
- arma::mat Sigmalchol = arma::trans(S.slice(m));
+ arma::mat Sigmauchol = arma::trans(S.slice(m));
  
  //arma::mat W_out = arma::zeros(ntest, q);
  arma::mat Y_out = arma::zeros(ntest, q);
@@ -190,7 +297,7 @@ Rcpp::List spiox_predict(
  Dj(j) = sqrtR;
  }
  
- Y_out.row(itarget-ntrain) += arma::trans( arma::diagmat(Dj) * Sigmalchol * rndnorm_m.col(i) ); // pred uncert
+ Y_out.row(itarget-ntrain) += arma::trans( arma::diagmat(Dj) * Sigmauchol * rndnorm_m.col(i) ); // pred uncert
  Y_out_mcmc.subcube(itarget-ntrain, 0, m, itarget-ntrain, q-1, m) = arma::trans(Y_out.row(itarget-ntrain));
  }
  

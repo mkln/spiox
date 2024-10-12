@@ -76,7 +76,7 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
     iox_model.gibbs(m, sample_precision, sample_mvr, sample_theta_gibbs, upd_theta_opts);
 
     B.slice(m) = iox_model.B;
-    Sigma.slice(m) = iox_model.S.t() * iox_model.S;
+    Sigma.slice(m) = iox_model.Sigma;
     
     theta_opts_save.slice(m) = iox_model.theta_options;
     
@@ -207,7 +207,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     B.slice(m) = iox_model.B;
     Ddiag.col(m) = iox_model.Dvec;
     W.slice(m) = iox_model.W;
-    Sigma.slice(m) = iox_model.S.t() * iox_model.S;
+    Sigma.slice(m) = iox_model.Sigma;
     
     theta_opts_save.slice(m) = iox_model.theta_options;
     
@@ -237,11 +237,11 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   return Rcpp::List::create(
     Rcpp::Named("B") = B,
     Rcpp::Named("Sigma") = Sigma,
-    Rcpp::Named("Ddiag") = Ddiag,
     Rcpp::Named("theta") = theta,
-    Rcpp::Named("W") = W,
     Rcpp::Named("theta_which") = theta_which,
     Rcpp::Named("theta_opts") = theta_opts_save,
+    Rcpp::Named("W") = W,
+    Rcpp::Named("Ddiag") = Ddiag,
     Rcpp::Named("timings") = iox_model.timings
   );
   

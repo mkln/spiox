@@ -41,6 +41,14 @@ neighbor_search_testset <- function(wtrain, wtest, rho) {
     .Call(`_spiox_neighbor_search_testset`, wtrain, wtest, rho)
 }
 
+S_to_Sigma <- function(S) {
+    .Call(`_spiox_S_to_Sigma`, S)
+}
+
+S_to_Q <- function(S) {
+    .Call(`_spiox_S_to_Q`, S)
+}
+
 run_spf_model <- function(Y, n_factors, delta_gamma_shape, delta_gamma_rate, dl_dirichlet_a, Lambda_start, Delta_start, mcmc = 1000L, print_every = 1000L, seq_lambda = FALSE) {
     .Call(`_spiox_run_spf_model`, Y, n_factors, delta_gamma_shape, delta_gamma_rate, dl_dirichlet_a, Lambda_start, Delta_start, mcmc, print_every, seq_lambda)
 }
@@ -53,7 +61,11 @@ spiox_latent <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, mvre
     .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, theta_opts, Sigma_start, mvreg_B_start, mcmc, print_every, sample_iwish, sample_mvr, sample_theta_gibbs, upd_theta_opts, num_threads, sampling)
 }
 
-spiox_predict <- function(X_new, coords_new, Y, X, coords, dag, B, S, theta, num_threads = 1L) {
-    .Call(`_spiox_spiox_predict`, X_new, coords_new, Y, X, coords, dag, B, S, theta, num_threads)
+spiox_predict <- function(X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, num_threads = 1L) {
+    .Call(`_spiox_spiox_predict`, X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, num_threads)
+}
+
+spiox_latent_predict <- function(X_new, coords_new, coords, dag, W, B, Sigma, Dvec, theta, num_threads = 1L) {
+    .Call(`_spiox_spiox_latent_predict`, X_new, coords_new, coords, dag, W, B, Sigma, Dvec, theta, num_threads)
 }
 

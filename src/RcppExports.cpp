@@ -161,6 +161,28 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// S_to_Sigma
+arma::cube S_to_Sigma(const arma::cube& S);
+RcppExport SEXP _spiox_S_to_Sigma(SEXP SSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::cube& >::type S(SSEXP);
+    rcpp_result_gen = Rcpp::wrap(S_to_Sigma(S));
+    return rcpp_result_gen;
+END_RCPP
+}
+// S_to_Q
+arma::cube S_to_Q(const arma::cube& S);
+RcppExport SEXP _spiox_S_to_Q(SEXP SSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::cube& >::type S(SSEXP);
+    rcpp_result_gen = Rcpp::wrap(S_to_Q(S));
+    return rcpp_result_gen;
+END_RCPP
+}
 // run_spf_model
 Rcpp::List run_spf_model(arma::mat& Y, unsigned int n_factors, double delta_gamma_shape, double delta_gamma_rate, double dl_dirichlet_a, const arma::mat& Lambda_start, const arma::vec& Delta_start, unsigned int mcmc, int print_every, bool seq_lambda);
 RcppExport SEXP _spiox_run_spf_model(SEXP YSEXP, SEXP n_factorsSEXP, SEXP delta_gamma_shapeSEXP, SEXP delta_gamma_rateSEXP, SEXP dl_dirichlet_aSEXP, SEXP Lambda_startSEXP, SEXP Delta_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP seq_lambdaSEXP) {
@@ -231,8 +253,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // spiox_predict
-Rcpp::List spiox_predict(const arma::mat& X_new, const arma::mat& coords_new, const arma::mat& Y, const arma::mat& X, const arma::mat& coords, const arma::field<arma::uvec>& dag, const arma::cube& B, const arma::cube& S, const arma::cube& theta, int num_threads);
-RcppExport SEXP _spiox_spiox_predict(SEXP X_newSEXP, SEXP coords_newSEXP, SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP dagSEXP, SEXP BSEXP, SEXP SSEXP, SEXP thetaSEXP, SEXP num_threadsSEXP) {
+Rcpp::List spiox_predict(const arma::mat& X_new, const arma::mat& coords_new, const arma::mat& Y, const arma::mat& X, const arma::mat& coords, const arma::field<arma::uvec>& dag, const arma::cube& B, const arma::cube& Sigma, const arma::cube& theta, int num_threads);
+RcppExport SEXP _spiox_spiox_predict(SEXP X_newSEXP, SEXP coords_newSEXP, SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP dagSEXP, SEXP BSEXP, SEXP SigmaSEXP, SEXP thetaSEXP, SEXP num_threadsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -243,10 +265,30 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
     Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type dag(dagSEXP);
     Rcpp::traits::input_parameter< const arma::cube& >::type B(BSEXP);
-    Rcpp::traits::input_parameter< const arma::cube& >::type S(SSEXP);
+    Rcpp::traits::input_parameter< const arma::cube& >::type Sigma(SigmaSEXP);
     Rcpp::traits::input_parameter< const arma::cube& >::type theta(thetaSEXP);
     Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(spiox_predict(X_new, coords_new, Y, X, coords, dag, B, S, theta, num_threads));
+    rcpp_result_gen = Rcpp::wrap(spiox_predict(X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, num_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// spiox_latent_predict
+Rcpp::List spiox_latent_predict(const arma::mat& X_new, const arma::mat& coords_new, const arma::mat& coords, const arma::field<arma::uvec>& dag, const arma::cube& W, const arma::cube& B, const arma::cube& Sigma, const arma::mat& Dvec, const arma::cube& theta, int num_threads);
+RcppExport SEXP _spiox_spiox_latent_predict(SEXP X_newSEXP, SEXP coords_newSEXP, SEXP coordsSEXP, SEXP dagSEXP, SEXP WSEXP, SEXP BSEXP, SEXP SigmaSEXP, SEXP DvecSEXP, SEXP thetaSEXP, SEXP num_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X_new(X_newSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type coords_new(coords_newSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
+    Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type dag(dagSEXP);
+    Rcpp::traits::input_parameter< const arma::cube& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const arma::cube& >::type B(BSEXP);
+    Rcpp::traits::input_parameter< const arma::cube& >::type Sigma(SigmaSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Dvec(DvecSEXP);
+    Rcpp::traits::input_parameter< const arma::cube& >::type theta(thetaSEXP);
+    Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(spiox_latent_predict(X_new, coords_new, coords, dag, W, B, Sigma, Dvec, theta, num_threads));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -262,10 +304,13 @@ static const R_CallMethodDef CallEntries[] = {
     {"_spiox_iox_mat", (DL_FUNC) &_spiox_iox_mat, 6},
     {"_spiox_make_candidates", (DL_FUNC) &_spiox_make_candidates, 4},
     {"_spiox_neighbor_search_testset", (DL_FUNC) &_spiox_neighbor_search_testset, 3},
+    {"_spiox_S_to_Sigma", (DL_FUNC) &_spiox_S_to_Sigma, 1},
+    {"_spiox_S_to_Q", (DL_FUNC) &_spiox_S_to_Q, 1},
     {"_spiox_run_spf_model", (DL_FUNC) &_spiox_run_spf_model, 10},
     {"_spiox_spiox_wishart", (DL_FUNC) &_spiox_spiox_wishart, 14},
     {"_spiox_spiox_latent", (DL_FUNC) &_spiox_spiox_latent, 15},
     {"_spiox_spiox_predict", (DL_FUNC) &_spiox_spiox_predict, 10},
+    {"_spiox_spiox_latent_predict", (DL_FUNC) &_spiox_spiox_latent_predict, 10},
     {NULL, NULL, 0}
 };
 

@@ -356,27 +356,21 @@ inline void SpIOX::upd_theta_metrop(){
   }
   
   // ---------------------
-  // create proposal radgp
-  //Rcpp::Rcout << "------- builds1 ----" << endl;
+  // create proposal daggp
+  // this can run in parallel but update_theta already uses omp
+  // do not run this in parallel, will be faster this way
   tstart = std::chrono::steady_clock::now();
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
   for(unsigned int i=0; i<n_options; i++){
     daggp_options_alt[i].update_theta(theta_alt.col(i), true);
   }
   tend = std::chrono::steady_clock::now();
   timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
-  //Rcpp::Rcout << timed << endl;
-  
+
   // ----------------------
   // current density and proposal density
-  //Rcpp::Rcout << "------- builds2 ----" << endl;
   tstart = std::chrono::steady_clock::now();
   
-  //arma::vec vecYtilde = arma::vectorise(Y - X * B);
   arma::vec daggp_logdets = arma::zeros(q);
-  //arma::vec vecYtilde_alt = vecYtilde;
   arma::mat V_alt = V;
   arma::vec daggp_alt_logdets = arma::zeros(q);
 #ifdef _OPENMP
