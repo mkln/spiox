@@ -5,7 +5,7 @@ DagGP::DagGP(
   const arma::mat& coords_in,
   const arma::vec& theta_in,
   const arma::field<arma::uvec>& custom_dag,
-  int covariance_model,
+  bool covariance_matern,
   int num_threads_in){
   
   coords = coords_in;
@@ -16,7 +16,7 @@ DagGP::DagGP(
   
   oneuv = arma::ones<arma::uvec>(1);
   
-  covar = covariance_model; // pexp or matern
+  matern = covariance_matern; // pexp or matern
   
   //thread safe stuff
   n_threads = num_threads_in;
@@ -56,10 +56,10 @@ void DagGP::compute_comps(bool update_H){
     arma::uvec px = dag(i);
     
     ax(i) = arma::join_vert(ix, px);
-    arma::mat CC = Correlationf(coords, ix, ix, theta, bessel_ws, covar, true);
-    arma::mat CPt = Correlationf(coords, px, ix, theta, bessel_ws, covar, false);
+    arma::mat CC = Correlationf(coords, ix, ix, theta, bessel_ws, matern, true);
+    arma::mat CPt = Correlationf(coords, px, ix, theta, bessel_ws, matern, false);
     arma::mat PPi = arma::inv_sympd( 
-                Correlationf(coords, px, px, theta, bessel_ws, covar, true) );
+                Correlationf(coords, px, px, theta, bessel_ws, matern, true) );
     
     h(i) = PPi * CPt;
     sqrtR(i) = sqrt( arma::conv_to<double>::from(
@@ -146,7 +146,7 @@ arma::mat DagGP::H_times_A(const arma::mat& A, bool use_spmat){
 
 
 arma::mat DagGP::Corr_export(const arma::mat& these_coords, const arma::uvec& ix, const arma::uvec& jx, bool same){
-  return Correlationf(these_coords, ix, jx, theta, bessel_ws, covar, same);
+  return Correlationf(these_coords, ix, jx, theta, bessel_ws, matern, same);
 }
 
 //[[Rcpp::export]]
@@ -160,8 +160,7 @@ Rcpp::List daggp_build(const arma::mat& coords, const arma::field<arma::uvec>& d
   theta(2) = nu;
   theta(3) = tausq;
   
-  int covar = matern;
-  DagGP adag(coords, theta, dag, covar, num_threads);
+  DagGP adag(coords, theta, dag, matern, num_threads);
   adag.compute_comps();
   adag.initialize_H();
   arma::sp_mat Ci = adag.H.t() * adag.H;

@@ -30,6 +30,7 @@ void matern_inplace(arma::mat& res,
         } else {
           res(i, j) = sigmasq + nugginside;
         }
+        res(i, j) = res(i, j)/(1+nugginside);
       }
     }
     res = arma::symmatu(res);
@@ -45,6 +46,7 @@ void matern_inplace(arma::mat& res,
         } else {
           res(i, j) = sigmasq + nugginside;
         }
+        res(i, j) = res(i, j)/(1+nugginside);
       }
     }
   }
@@ -72,6 +74,7 @@ void powerexp_inplace(arma::mat& res,
           double hnuphi = pow(hh, nu) * phi;
           res(i, j) = exp(-hnuphi) * sigmasq;
         }
+        res(i, j) = res(i, j)/(1+nugg);
       }
     }
     res = arma::symmatu(res);
@@ -87,6 +90,7 @@ void powerexp_inplace(arma::mat& res,
           double hnuphi = pow(hh, nu) * phi;
           res(i, j) = exp(-hnuphi) * sigmasq;
         }
+        res(i, j) = res(i, j)/(1+nugg);
       }
     }
   }
@@ -97,21 +101,19 @@ arma::mat Correlationf(
     const arma::uvec& ix, const arma::uvec& iy,
     const arma::vec& theta,
     double * bessel_ws,
-    int covar,
+    bool matern,
     bool same){
-  // these are not actually correlation functions because they are reparametrized to have 
-  // C(0) = 1/reparam
   arma::mat res = arma::zeros(ix.n_rows, iy.n_rows);
   
   double phi = theta(0);
   double sigmasq = theta(1);
-  double nu = theta(2);
+  double nu = theta(2); // exponent in the power exponential case
   double nugg = theta(3);
   
-  if(covar==0){
-    powerexp_inplace(res, coords, ix, iy, phi, nu, sigmasq, nugg, same); 
+  if(matern){
+    matern_inplace(res, coords, ix, iy, phi, nu, sigmasq, bessel_ws, nugg, same);   
   } else {
-    matern_inplace(res, coords, ix, iy, phi, nu, sigmasq, bessel_ws, nugg, same);    
+    powerexp_inplace(res, coords, ix, iy, phi, nu, sigmasq, nugg, same); 
   }
 
   return res;
@@ -124,7 +126,7 @@ arma::mat Correlationc(
     const arma::mat& coordsx,
     const arma::mat& coordsy,
     const arma::vec& theta,
-    int covar,
+    bool matern,
     bool same){
 
   int nthreads = 1;
@@ -135,13 +137,13 @@ arma::mat Correlationc(
   if(same){
     arma::uvec ix = arma::regspace<arma::uvec>(0, coordsx.n_rows-1);
     
-    return Correlationf(coordsx, ix, ix, theta, bessel_ws, covar, same);
+    return Correlationf(coordsx, ix, ix, theta, bessel_ws, matern, same);
   } else {
     arma::mat coords = arma::join_vert(coordsx, coordsy);
     arma::uvec ix = arma::regspace<arma::uvec>(0, coordsx.n_rows-1);
     arma::uvec iy = arma::regspace<arma::uvec>(coordsx.n_rows, coords.n_rows-1);
     
-    return Correlationf(coords, ix, iy, theta, bessel_ws, covar, same);
+    return Correlationf(coords, ix, iy, theta, bessel_ws, matern, same);
   }
   
 }

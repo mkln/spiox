@@ -12,17 +12,17 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
 // Correlationc
-arma::mat Correlationc(const arma::mat& coordsx, const arma::mat& coordsy, const arma::vec& theta, int covar, bool same);
-RcppExport SEXP _spiox_Correlationc(SEXP coordsxSEXP, SEXP coordsySEXP, SEXP thetaSEXP, SEXP covarSEXP, SEXP sameSEXP) {
+arma::mat Correlationc(const arma::mat& coordsx, const arma::mat& coordsy, const arma::vec& theta, bool matern, bool same);
+RcppExport SEXP _spiox_Correlationc(SEXP coordsxSEXP, SEXP coordsySEXP, SEXP thetaSEXP, SEXP maternSEXP, SEXP sameSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type coordsx(coordsxSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type coordsy(coordsySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type theta(thetaSEXP);
-    Rcpp::traits::input_parameter< int >::type covar(covarSEXP);
+    Rcpp::traits::input_parameter< bool >::type matern(maternSEXP);
     Rcpp::traits::input_parameter< bool >::type same(sameSEXP);
-    rcpp_result_gen = Rcpp::wrap(Correlationc(coordsx, coordsy, theta, covar, same));
+    rcpp_result_gen = Rcpp::wrap(Correlationc(coordsx, coordsy, theta, matern, same));
     return rcpp_result_gen;
 END_RCPP
 }

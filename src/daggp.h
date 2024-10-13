@@ -34,9 +34,7 @@ public:
   arma::mat H_times_A(const arma::mat& A, bool use_spmat=true);
   
   // info about covariance model:
-  // 0 = power exponential
-  // anything else = matern
-  int covar;
+  bool matern;
   double * bessel_ws;
   
   //double ldens;
@@ -46,7 +44,7 @@ public:
     const arma::mat& coords_in, 
     const arma::vec& theta_in,
     const arma::field<arma::uvec>& custom_dag,
-    int covariance_model=1,
+    bool covariance_matern=1,
     int num_threads_in=1);
   
   // utils
