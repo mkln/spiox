@@ -11,4 +11,15 @@
 CXX_STD = CXX11
 
 PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS) 
-PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS) $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)  -lsuperlu
+PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS) $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS) 
+
+# Detect the operating system
+UNAME_S := $(shell uname -s)
+
+# If on macOS, set the include and library paths for SuperLU
+ifeq ($(UNAME_S), Darwin)
+    PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS) -I/opt/homebrew/opt/superlu/include
+    PKG_LIBS += -L/opt/homebrew/opt/superlu/lib 
+endif
+
+PKG_LIBS += -lsuperlu

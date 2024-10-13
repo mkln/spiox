@@ -86,8 +86,8 @@ for(s in 1:nrow(par_opts)){
     Beta <- matrix(rnorm(q * p), ncol=q)
     
     Y_regression <- X %*% Beta
-    #Error <- matrix(rnorm(nr * q),ncol=q) %*% diag(D <- runif(q, 0, 0.1))
-    Y <- as.matrix(Y_sp + Y_regression) #+ Error
+    Error <- matrix(rnorm(nr_all * q),ncol=q) %*% diag(D <- runif(q, 0, 0.1))
+    Y <- as.matrix(Y_sp + Y_regression) + Error
     
     Y_in <- Y[which_in,]
     X_in <- X[which_in,]
@@ -113,7 +113,7 @@ for(s in 1:nrow(par_opts)){
     
     set.seed(1)
     
-    theta_opts <- cbind(c(10, 1, 1, 1e-19), c(20, 1, 1, 1e-19))
+    theta_opts <- cbind(c(10, 1, 1, 1e-3), c(20, 1, 1, 1e-2))
     ##############################################
   
     m_nn <- 20
@@ -169,7 +169,7 @@ for(s in 1:nrow(par_opts)){
            list=c("spiox_out", "spiox_predicts", "estim_time", "predict_time", "total_time"))
     }
     
-    if(F){
+    if(T){
       # meshed
       library(meshed)
       
