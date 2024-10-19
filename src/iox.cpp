@@ -79,7 +79,7 @@ arma::mat sfact(const arma::field<arma::uvec>& dag, const arma::mat& S,
   std::vector<DagGP> daggps(q);
   arma::cube Hinvs(n,n,q);
   for(int i=0; i<q; i++){
-    daggps[i] = DagGP(S, theta.col(i), dag, 1, n_threads);
+    daggps[i] = DagGP(S, theta.col(i), dag, matern, n_threads);
     Hinvs.slice(i) = arma::spsolve(daggps[i].H, I1, "lower");
     for(int j=0; j<=i; j++){
       result(i,j) = arma::accu(Hinvs.slice(i)%Hinvs.slice(j))/(n+.0);

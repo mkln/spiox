@@ -107,7 +107,7 @@ for(s in 1:nrow(par_opts)){
     
     
     save(file=glue::glue("simulations/lmc/data_{sim_n}.RData"), 
-         list=c("simdata", "s", "oo", "sim_n", "simdata", "Sigma", "philist", "rhocorr"))
+         list=c("simdata", "s", "oo", "sim_n", "simdata", "D", "Sigma", "philist", "rhocorr"))
     
     ##############################
     
@@ -119,7 +119,6 @@ for(s in 1:nrow(par_opts)){
     m_nn <- 20
     mcmc <- 5000
     
-    if(F){
       custom_dag <- dag_vecchia(cx_in, m_nn)
       
       ##############################################
@@ -165,11 +164,9 @@ for(s in 1:nrow(par_opts)){
       
       total_time <- estim_time + predict_time
       
-      save(file=glue::glue("simulations/lmc/spiox_{sim_n}.RData"), 
            list=c("spiox_out", "spiox_predicts", "estim_time", "predict_time", "total_time"))
     }
     
-    if(T){
       # meshed
       library(meshed)
       

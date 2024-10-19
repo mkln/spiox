@@ -59,7 +59,9 @@ for(s in 1:nrow(par_opts)){
     
     q <- 2
     
-    Clist <- nulist %>% lapply(\(nu) spiox::Correlationc(cx_all, cx_all, c(20,1,nu,0), 1, TRUE) )
+    D <- runif(q, 0, 0.1)
+    
+    Clist <- 1:q %>% lapply(\(j) spiox::Correlationc(cx_all, cx_all, c(20,1,nulist[[j]],D[j]), 1, TRUE) )
     Llist <- Clist %>% lapply(\(C) t(chol(C)))
     Lilist <- Llist %>% lapply(\(L) solve(L))
     
@@ -84,7 +86,7 @@ for(s in 1:nrow(par_opts)){
     Beta <- matrix(rnorm(q * p), ncol=q)
     
     Y_regression <- X %*% Beta
-    Error <- matrix(rnorm(nrow(Y_regression) * q),ncol=q) %*% diag(D <- runif(q, 0, 0.1))
+    
     Y <- as.matrix(Y_sp + Y_regression) #+ Error
     
     Y_in <- Y[which_in,]
