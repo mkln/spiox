@@ -17,8 +17,9 @@ public:
   double precision_logdeterminant;
   double logdens(const arma::vec& x);
   void update_theta(const arma::vec& newtheta, bool update_H=true);
-  arma::sp_mat H;
+  arma::sp_mat H, Ci;
   void initialize_H();
+  bool use_Ci;
   
   arma::field<arma::uvec> dag;
   
@@ -44,14 +45,15 @@ public:
     const arma::mat& coords_in, 
     const arma::vec& theta_in,
     const arma::field<arma::uvec>& custom_dag,
-    bool covariance_matern=1,
+    bool covariance_matern=true,
+    bool use_Ci_in=false,
     int num_threads_in=1);
   
   // utils
   arma::uvec oneuv;
   int n_threads;
   
-  arma::mat Corr_export(const arma::mat& cx, const arma::uvec& ix, const arma::uvec& jx, bool same);
+  arma::mat Corr_export(const arma::mat& cx, const arma::uvec& ix, const arma::uvec& jx, bool matern, bool same);
 };
 
 

@@ -47,6 +47,7 @@ public:
   arma::mat V; 
   
   // -------------- utilities
+  bool matern;
   void sample_B(); // 
   void sample_Q_spf();
   void sample_Sigma_wishart();
@@ -83,8 +84,7 @@ public:
   std::chrono::steady_clock::time_point tstart;
   arma::vec timings;
   
-  // -------------- constructors
-  // for response model inverse Wishart
+  // -------------- constructor
   SpIOX(const arma::mat& _Y, 
         const arma::mat& _X, 
         const arma::mat& _coords,
@@ -94,6 +94,7 @@ public:
         
         const arma::mat& Sigma_start,
         const arma::mat& mvreg_B_start,
+        bool use_matern,
         int num_threads_in) 
   {
     num_threads = num_threads_in;
@@ -127,9 +128,12 @@ public:
     nu_sampling = arma::var(theta_options.row(2)) != 0;
     tausq_sampling = arma::var(theta_options.row(3)) != 0;
     
+    matern = use_matern;
+    
     for(unsigned int i=0; i<n_options; i++){
       daggp_options[i] = DagGP(_coords, theta_options.col(i), custom_dag, //daggp_rho, 
-                               true, //matern 
+                               matern, 
+                               latent_model==3, // with q blocks, make Ci
                                num_threads);
     }
     daggp_options_alt = daggp_options;
@@ -173,10 +177,16 @@ inline void SpIOX::init_theta_adapt(){
   int n_theta_par = n_options * which_theta_elem.n_elem;
   
   arma::mat bounds_all = arma::zeros(4, 2); // make bounds for all, then subset
-  bounds_all.row(0) = arma::rowvec({0.1, 100});
-  bounds_all.row(1) = arma::rowvec({1e-6, 100});
-  bounds_all.row(2) = arma::rowvec({0.4, 2});
-  bounds_all.row(3) = arma::rowvec({1e-6, 100});
+  bounds_all.row(0) = arma::rowvec({0.1, 100}); // phi
+  bounds_all.row(1) = arma::rowvec({1e-6, 100}); // sigma
+  if(matern){
+    bounds_all.row(2) = arma::rowvec({0.4, 2.1}); // nu  
+  } else {
+    // power exponential
+    bounds_all.row(2) = arma::rowvec({1, 2}); // nu
+  }
+  
+  bounds_all.row(3) = arma::rowvec({1e-6, 100}); // tausq
   bounds_all = bounds_all.rows(which_theta_elem);
   theta_unif_bounds = arma::zeros(0, 2);
   
@@ -410,6 +420,7 @@ inline void SpIOX::upd_theta_metrop(){
   // make move
   double jacobian  = calc_jacobian(phisig_alt, phisig_cur, theta_unif_bounds);
   double logaccept = prop_logdens - curr_logdens + jacobian;
+  
   bool accepted = do_I_accept(logaccept);
   
   if(accepted){
@@ -503,13 +514,12 @@ inline void SpIOX::gibbs_w_sequential_byoutcome(){
 #endif
   for(int j=0; j<q; j++){
     // compute prior precision
-    prior_precs[j] = Q(j,j) * daggp_options[spmap(j)].H.t() * daggp_options[spmap(j)].H;
+    arma::sp_mat post_prec = Q(j,j) * daggp_options[spmap(j)].Ci; //daggp_options[spmap(j)].H.t() * daggp_options[spmap(j)].H;
     // compute posterior precision
-    arma::sp_mat post_precs = 
-      prior_precs[j] + 1.0/Dvec(j) * arma::speye(n,n);
+    post_prec.diag() += 1.0/Dvec(j);
     
     // factorise precision so we can use it for sampling
-    bool status = factoriser[j].factorise(post_precs, opts);
+    bool status = factoriser[j].factorise(post_prec, opts);
     if(status == false) { statuses(j) = 0; }
     
     // this does not need sequential
@@ -525,7 +535,6 @@ inline void SpIOX::gibbs_w_sequential_byoutcome(){
     arma::vec x = arma::zeros(n);
     arma::uvec notj = arma::find(r1q != j);
     arma::uvec jx = arma::zeros<arma::uvec>(1) + j;
-    
     // V is whitened W as we want
     arma::vec Mi_m_prior = - daggp_options[spmap(j)].H.t() * V.cols(notj) * Q.submat(notj, jx);
     arma::vec rhs = Mi_m_prior + HDs.col(j);
@@ -602,7 +611,7 @@ inline void SpIOX::gibbs_w_block(){
 inline void SpIOX::sample_Dvec(){
   for(int i=0; i<q; i++){
     double ssq = arma::accu(pow( YXB.col(i) - W.col(i), 2));
-    Dvec(i) = 1.0/R::rgamma(n/2 + 2, 1.0/(1 + 0.5 * ssq));
+    Dvec(i) = 1.0/R::rgamma(n/2 + 1e-3, 1.0/(1e-3 + 0.5 * ssq));
   }
 }
 

@@ -6,17 +6,20 @@ DagGP::DagGP(
   const arma::vec& theta_in,
   const arma::field<arma::uvec>& custom_dag,
   bool covariance_matern,
+  bool use_Ci_in,
   int num_threads_in){
   
   coords = coords_in;
   theta = theta_in;
   nr = coords.n_rows;
   
+  use_Ci = use_Ci_in; 
+  
   dag = custom_dag;
   
   oneuv = arma::ones<arma::uvec>(1);
   
-  matern = covariance_matern; // pexp or matern
+  bool matern = covariance_matern; // pexp or matern
   
   //thread safe stuff
   n_threads = num_threads_in;
@@ -47,37 +50,50 @@ void DagGP::compute_comps(bool update_H){
   sqrtR = arma::zeros(nr);
   h = arma::field<arma::vec>(nr);
   arma::vec logdetvec(nr);
+  
+  arma::uvec errors = arma::zeros<arma::uvec>(nr);
+  
   // calculate components for H and Ci
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(n_threads)
 #endif
   for(int i=0; i<nr; i++){
-    arma::uvec ix = oneuv * i;
-    arma::uvec px = dag(i);
-    
-    ax(i) = arma::join_vert(ix, px);
-    arma::mat CC = Correlationf(coords, ix, ix, theta, bessel_ws, matern, true);
-    arma::mat CPt = Correlationf(coords, px, ix, theta, bessel_ws, matern, false);
-    arma::mat PPi = arma::inv_sympd( 
-                Correlationf(coords, px, px, theta, bessel_ws, matern, true) );
-    
-    h(i) = PPi * CPt;
-    sqrtR(i) = sqrt( arma::conv_to<double>::from(
-      CC - CPt.t() * h(i) ));
-    
-    arma::vec mhR = -h(i)/sqrtR(i);
-    arma::vec rowoneR = arma::ones(1)/sqrtR(i);
-    
-    hrows(i) = arma::join_vert(rowoneR, mhR);
-    logdetvec(i) = -log(sqrtR(i));
-    
-    if(update_H){
-      H(i,i) = 1.0/sqrtR(i);
-      for(unsigned int j=0; j<dag(i).n_elem; j++){
-        H(i, dag(i)(j)) = -h(i)(j)/sqrtR(i);
-      }
+    try {
+      arma::uvec ix = oneuv * i;
+      arma::uvec px = dag(i);
+      
+      ax(i) = arma::join_vert(ix, px);
+      arma::mat CC = Correlationf(coords, ix, ix, theta, bessel_ws, matern, true);
+      arma::mat CPt = Correlationf(coords, px, ix, theta, bessel_ws, matern, false);
+      arma::mat PPi = arma::inv_sympd( 
+        Correlationf(coords, px, px, theta, bessel_ws, matern, true) );
+      
+      h(i) = PPi * CPt;
+      sqrtR(i) = sqrt( arma::conv_to<double>::from(
+        CC - CPt.t() * h(i) ));
+      
+      arma::vec mhR = -h(i)/sqrtR(i);
+      arma::vec rowoneR = arma::ones(1)/sqrtR(i);
+      
+      hrows(i) = arma::join_vert(rowoneR, mhR);
+      logdetvec(i) = -log(sqrtR(i));
+      
+      if(update_H){
+        H(i,i) = 1.0/sqrtR(i);
+        for(unsigned int j=0; j<dag(i).n_elem; j++){
+          H(i, dag(i)(j)) = -h(i)(j)/sqrtR(i);
+        }
+      } 
+    } catch (...) {
+      errors(i) = 1;
     }
   }
+  
+  if(arma::any(errors)){
+    Rcpp::stop("Failure in building sparse DAG GP. Check coordinates/values of theta.");
+  }
+  
+  if(use_Ci){ Ci = H.t() * H; }
   precision_logdeterminant = 2 * arma::accu(logdetvec);
 }
 
@@ -105,22 +121,26 @@ void DagGP::initialize_H(){
   H = arma::sp_mat(H_locs, H_values);
   
   // compute precision just to get the markov blanket
-  arma::sp_mat Ci = H.t() * H;
+  arma::sp_mat Ci_temp = H.t() * H;
   
   // comp markov blanket
   for(int i=0; i<nr; i++){
     int nonzeros_in_col = 0;
-    for (arma::sp_mat::const_iterator it = Ci.begin_col(i); it != Ci.end_col(i); ++it) {
+    for (arma::sp_mat::const_iterator it = Ci_temp.begin_col(i); it != Ci_temp.end_col(i); ++it) {
       nonzeros_in_col ++;
     }
     mblanket(i) = arma::zeros<arma::uvec>(nonzeros_in_col-1); // not the diagonal
     int ix = 0;
-    for (arma::sp_mat::const_iterator it = Ci.begin_col(i); it != Ci.end_col(i); ++it) {
+    for (arma::sp_mat::const_iterator it = Ci_temp.begin_col(i); it != Ci_temp.end_col(i); ++it) {
       if(it.row() != i){ 
         mblanket(i)(ix) = it.row();
         ix ++;
       }
     }
+  }
+  
+  if(use_Ci){
+    Ci = Ci_temp;
   }
 }
 
@@ -145,7 +165,7 @@ arma::mat DagGP::H_times_A(const arma::mat& A, bool use_spmat){
 }
 
 
-arma::mat DagGP::Corr_export(const arma::mat& these_coords, const arma::uvec& ix, const arma::uvec& jx, bool same){
+arma::mat DagGP::Corr_export(const arma::mat& these_coords, const arma::uvec& ix, const arma::uvec& jx, bool matern, bool same){
   return Correlationf(these_coords, ix, jx, theta, bessel_ws, matern, same);
 }
 
@@ -160,7 +180,7 @@ Rcpp::List daggp_build(const arma::mat& coords, const arma::field<arma::uvec>& d
   theta(2) = nu;
   theta(3) = tausq;
   
-  DagGP adag(coords, theta, dag, matern, num_threads);
+  DagGP adag(coords, theta, dag, matern, false, num_threads);
   adag.compute_comps();
   adag.initialize_H();
   arma::sp_mat Ci = adag.H.t() * adag.H;

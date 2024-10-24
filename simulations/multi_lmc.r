@@ -47,7 +47,7 @@ for(oo in starts:ends){
   optlist <- seq(5, 50, length.out=q) #%>% sample(q, replace=T)
   
   # spatial
-  cx_in <- matrix(runif(3000*2), ncol=2) #3000
+  cx_in <- matrix(runif(2500*2), ncol=2) #3000
   colnames(cx_in) <- c("Var1","Var2")
   n_in <- nrow(cx_in)
   which_in <- 1:n_in
@@ -118,7 +118,7 @@ for(oo in starts:ends){
   m_nn <- 20
   mcmc <- 5000
   
-  if(T){
+  if(F){
     custom_dag <- dag_vecchia(cx_in, m_nn)
     
     ##############################################
@@ -184,7 +184,7 @@ for(oo in starts:ends){
     estim_time <- system.time({
       spiox_metrop_out <- spiox::spiox_wishart(Y_in, X_in, cx_in, 
                                                custom_dag = custom_dag, 
-                                               theta=theta_opts,
+                                               theta=theta_opts[,1:q],
                                                
                                                Sigma_start = diag(q),
                                                mvreg_B_start = 0*Beta,# %>% perturb(),
@@ -287,7 +287,7 @@ for(oo in starts:ends){
     rm(list=c("spiox_clust_out", "spiox_clust_predicts"))
   }
   
-  if(T){
+  if(F){
     # meshed
     library(meshed)
     

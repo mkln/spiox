@@ -14,6 +14,7 @@ Rcpp::List spiox_predict(
                    const arma::cube& B,
                    const arma::cube& Sigma,
                    const arma::cube& theta,
+                   bool matern = true,
                    int num_threads = 1
 ){
   int q = Y.n_cols;
@@ -71,9 +72,9 @@ Rcpp::List spiox_predict(
         arma::uvec outjx = oneuv * j;
 
         if(theta_diff > 1e-15){
-          CC(j) = Correlationf(cxall, ix, ix, theta_m.col(j), bessel_ws, 1, true); // 1 for matern 
-          CPt(j) = Correlationf(cxall, px, ix, theta_m.col(j), bessel_ws, 1, false);
-          PPi(j) = arma::inv_sympd( Correlationf(cxall, px, px, theta_m.col(j), bessel_ws, 1, true) );  
+          CC(j) = Correlationf(cxall, ix, ix, theta_m.col(j), bessel_ws, matern, true); // 1 for matern 
+          CPt(j) = Correlationf(cxall, px, ix, theta_m.col(j), bessel_ws, matern, false);
+          PPi(j) = arma::inv_sympd( Correlationf(cxall, px, px, theta_m.col(j), bessel_ws, matern, true) );  
         }
         
         arma::vec ht = PPi(j) * CPt(j);
@@ -115,6 +116,7 @@ Rcpp::List spiox_latent_predict(
     const arma::cube& Sigma,
     const arma::mat& Dvec,
     const arma::cube& theta,
+    bool matern = true,
     int num_threads = 1
 ){
   int q = W.n_cols;
@@ -175,9 +177,9 @@ Rcpp::List spiox_latent_predict(
         arma::uvec outjx = oneuv * j;
         
         if(theta_diff > 1e-15){
-          CC(j) = Correlationf(cxall, ix, ix, theta_m.col(j), bessel_ws, 1, true); // 1 for matern 
-          CPt(j) = Correlationf(cxall, px, ix, theta_m.col(j), bessel_ws, 1, false);
-          PPi(j) = arma::inv_sympd( Correlationf(cxall, px, px, theta_m.col(j), bessel_ws, 1, true) );  
+          CC(j) = Correlationf(cxall, ix, ix, theta_m.col(j), bessel_ws, matern, true); // 1 for matern 
+          CPt(j) = Correlationf(cxall, px, ix, theta_m.col(j), bessel_ws, matern, false);
+          PPi(j) = arma::inv_sympd( Correlationf(cxall, px, px, theta_m.col(j), bessel_ws, matern, true) );  
         }
         
         arma::vec ht = PPi(j) * CPt(j);

@@ -48,7 +48,7 @@ for(oo in starts:ends){
   optlist <- seq(0.5, 2, length.out=q) #%>% sample(q, replace=T)
   
   # spatial
-  cx_in <- matrix(runif(3000*2), ncol=2) #3000
+  cx_in <- matrix(runif(2500*2), ncol=2) #2500
   colnames(cx_in) <- c("Var1","Var2")
   n_in <- nrow(cx_in)
   which_in <- 1:n_in
@@ -80,7 +80,7 @@ for(oo in starts:ends){
   p <- 2
   X <- matrix(1, ncol=1, nrow=nr_all) %>% cbind(matrix(rnorm(nr_all*(p-1)), ncol=p-1))
   
-  Beta <- matrix(rnorm(q * p), ncol=q)
+  Beta <- 0*matrix(rnorm(q * p), ncol=q)
   
   Y_regression <- X %*% Beta
   
@@ -102,8 +102,8 @@ for(oo in starts:ends){
   simdata <- data.frame(coords=cx_all, Y_spatial=Y_sp, Y=Y, X=X)
   #ggplot(simdata, aes(coords.Var1, coords.Var2, color=Y_spatial.1)) + geom_point() + scale_color_viridis_c()
   
-  #save(file=glue::glue("simulations/spiox_m/data_{oo}.RData"), 
-  #     list=c("simdata", "oo", "simdata", "Sigma", "optlist"))
+  save(file=glue::glue("simulations/spiox_m/data_{oo}.RData"), 
+       list=c("simdata", "oo", "simdata", "Sigma", "optlist"))
   
   ##############################
   
@@ -118,7 +118,7 @@ for(oo in starts:ends){
   m_nn <- 20
   mcmc <- 5000
   
-  if(T){
+  if(F){
     custom_dag <- dag_vecchia(cx_in, m_nn)
     
     ##############################################
@@ -135,14 +135,13 @@ for(oo in starts:ends){
                                         
                                         mcmc = mcmc,
                                         print_every = 100,
-                                        
+                                        matern = TRUE,
                                         sample_iwish=T,
                                         sample_mvr=T,
                                         sample_theta_gibbs=T,
                                         upd_theta_opts=F,
                                         num_threads = nthreads)
     })
-    
     
     
     predict_dag <- dag_vecchia_predict(cx_in, cx_all[which_out,], m_nn)
@@ -155,8 +154,9 @@ for(oo in starts:ends){
                                              Y_in, X_in, cx_in, 
                                              predict_dag,
                                              spiox_gibbs_out$B %>% tail(c(NA, NA, round(mcmc/2))), 
-                                             spiox_gibbs_out$S %>% tail(c(NA, NA, round(mcmc/2))), 
+                                             spiox_gibbs_out$Sigma %>% tail(c(NA, NA, round(mcmc/2))), 
                                              spiox_gibbs_out$theta %>% tail(c(NA, NA, round(mcmc/2))), 
+                                             matern = TRUE,
                                              num_threads = nthreads)
     })
     
@@ -184,14 +184,14 @@ for(oo in starts:ends){
     estim_time <- system.time({
       spiox_metrop_out <- spiox::spiox_wishart(Y_in, X_in, cx_in, 
                                         custom_dag = custom_dag, 
-                                        theta=theta_opts,
+                                        theta=theta_opts[,1:q],
                                         
                                         Sigma_start = diag(q),
                                         mvreg_B_start = 0*Beta,# %>% perturb(),
                                         
                                         mcmc = mcmc,
                                         print_every = 100,
-                                        
+                                        matern = TRUE,
                                         sample_iwish=T,
                                         sample_mvr=T,
                                         sample_theta_gibbs=F,
@@ -211,7 +211,7 @@ for(oo in starts:ends){
                                              Y_in, X_in, cx_in, 
                                              predict_dag,
                                              spiox_metrop_out$B %>% tail(c(NA, NA, round(mcmc/2))), 
-                                             spiox_metrop_out$S %>% tail(c(NA, NA, round(mcmc/2))), 
+                                             spiox_metrop_out$Sigma %>% tail(c(NA, NA, round(mcmc/2))), 
                                              spiox_metrop_out$theta %>% tail(c(NA, NA, round(mcmc/2))), 
                                              num_threads = nthreads)
     })
@@ -248,7 +248,7 @@ for(oo in starts:ends){
                                         
                                         mcmc = mcmc,
                                         print_every = 100,
-                                        
+                                        matern = TRUE,
                                         sample_iwish=T,
                                         sample_mvr=T,
                                         sample_theta_gibbs=T,
@@ -287,7 +287,7 @@ for(oo in starts:ends){
     rm(list=c("spiox_clust_out", "spiox_clust_predicts"))
   }
   
-  if(T){
+  if(F){
     # meshed
     library(meshed)
     

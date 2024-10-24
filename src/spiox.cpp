@@ -13,12 +13,13 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
                     const arma::mat& Sigma_start,
                     const arma::mat& mvreg_B_start,
                     
-                    int mcmc=1000,
-                    int print_every=100,
-                    bool sample_iwish=true,
-                    bool sample_mvr=true,
-                    bool sample_theta_gibbs=true,
-                    bool upd_theta_opts=true,
+                    int mcmc = 1000,
+                    int print_every = 100,
+                    bool matern = true,
+                    bool sample_iwish = true,
+                    bool sample_mvr = true,
+                    bool sample_theta_gibbs = true,
+                    bool upd_theta_opts = true,
                     int num_threads = 1){
   
   Rcpp::Rcout << "GP-IOX response model." << endl;
@@ -57,6 +58,7 @@ Rcpp::List spiox_wishart(const arma::mat& Y,
                   theta_opts, 
                    Sigma_start,
                    mvreg_B_start,
+                   matern,
                    num_threads);
   
   // storage
@@ -129,6 +131,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           
                           int mcmc=1000,
                           int print_every=100,
+                          bool matern = true,
                           bool sample_iwish=true,
                           bool sample_mvr=true,
                           bool sample_theta_gibbs=true,
@@ -184,6 +187,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                   theta_opts, 
                   Sigma_start,
                   mvreg_B_start,
+                  matern,
                   num_threads);
   
   // storage

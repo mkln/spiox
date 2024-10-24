@@ -119,6 +119,7 @@ for(s in 1:nrow(par_opts)){
     m_nn <- 20
     mcmc <- 5000
     
+    if(T){
       custom_dag <- dag_vecchia(cx_in, m_nn)
       
       ##############################################
@@ -133,7 +134,7 @@ for(s in 1:nrow(par_opts)){
                                           
                                           mcmc = mcmc,
                                           print_every = 100,
-                                          
+                                          matern = TRUE,
                                           sample_iwish=T,
                                           sample_mvr=T,
                                           sample_theta_gibbs=F,
@@ -153,6 +154,7 @@ for(s in 1:nrow(par_opts)){
                                                spiox_out$B %>% tail(c(NA, NA, round(mcmc/2))), 
                                                spiox_out$Sigma %>% tail(c(NA, NA, round(mcmc/2))), 
                                                spiox_out$theta %>% tail(c(NA, NA, round(mcmc/2))), 
+                                               matern = TRUE,
                                                num_threads = 16)
       })
       
@@ -164,9 +166,11 @@ for(s in 1:nrow(par_opts)){
       
       total_time <- estim_time + predict_time
       
+      save(file=glue::glue("simulations/lmc_nugg/spiox_{sim_n}.RData"), 
            list=c("spiox_out", "spiox_predicts", "estim_time", "predict_time", "total_time"))
     }
     
+    if(F){
       # meshed
       library(meshed)
       

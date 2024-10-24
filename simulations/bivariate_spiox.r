@@ -1,4 +1,10 @@
-rm(list=ls())
+args <- commandArgs(TRUE)
+
+starts <- args[1]
+ends <- args[2]
+
+cat("Simulations ", starts:ends, "\n")
+
 library(tidyverse)
 library(magrittr)
 library(Matrix)
@@ -32,7 +38,7 @@ s <- 2
 oo <- 1
 
 
-for(s in 1:nrow(par_opts)){
+for(s in starts:ends){
   for(oo in 1:nsim){
     
     sim_n <- (s-1) * nsim + oo
@@ -104,9 +110,9 @@ for(s in 1:nrow(par_opts)){
     
     simdata <- data.frame(coords=cx_all, Y_spatial=Y_sp, Y=Y, X=X)
     
-    save(file=glue::glue("simulations/spiox/data_{sim_n}.RData"), 
-         list=c("simdata", "s", "oo", "sim_n", "simdata",
-                "D", "Sigma", "nulist", "rhocorr"))
+    #save(file=glue::glue("simulations/spiox/data_{sim_n}.RData"), 
+    #     list=c("simdata", "s", "oo", "sim_n", "simdata",
+    #            "D", "Sigma", "nulist", "rhocorr"))
     
     ##############################
     
@@ -119,7 +125,7 @@ for(s in 1:nrow(par_opts)){
     m_nn <- 20
     mcmc <- 5000
     
-    if(T){
+    if(F){
       custom_dag <- dag_vecchia(cx_in, m_nn)
       
       ##############################################
@@ -134,7 +140,7 @@ for(s in 1:nrow(par_opts)){
                                           
                                           mcmc = mcmc,
                                           print_every = 100,
-                                          
+                                          matern = TRUE,
                                           sample_iwish=T,
                                           sample_mvr=T,
                                           sample_theta_gibbs=F,
@@ -155,15 +161,15 @@ for(s in 1:nrow(par_opts)){
                                                spiox_out$B %>% tail(c(NA, NA, round(mcmc/2))), 
                                                spiox_out$Sigma %>% tail(c(NA, NA, round(mcmc/2))), 
                                                spiox_out$theta %>% tail(c(NA, NA, round(mcmc/2))), 
+                                               matern = TRUE,
                                                num_threads = 16)
       })
       
       total_time <- estim_time + predict_time
       
-      save(file=glue::glue("simulations/spiox/spiox_{sim_n}.RData"), 
+      save(file=glue::glue("simulations/spiox_nugg/spiox_{sim_n}.RData"), 
            list=c("spiox_out", "spiox_predicts", "estim_time", "predict_time", "total_time"))
     }
-    
     
     if(T){
       custom_dag <- dag_vecchia(cx_in, m_nn)
@@ -175,18 +181,18 @@ for(s in 1:nrow(par_opts)){
                                           custom_dag = custom_dag, 
                                           theta=theta_opts_latent,
                                           
-                                          Sigma_start = diag(q),#Sigma,
-                                          mvreg_B_start = matrix(0, p, q),#Beta,# %>% perturb(),
+                                          Sigma_start = diag(q),
+                                          mvreg_B_start = 0*Beta,# %>% perturb(),
                                           
                                           mcmc = mcmc,
                                           print_every = 100,
-                                          
+                                          matern = TRUE,
                                           sample_iwish=T,
                                           sample_mvr=T,
                                           sample_theta_gibbs=F,
                                           upd_theta_opts=T,
-                                          num_threads = 16, 
-                                          sampling = 2)
+                                          num_threads = 5, 
+                                          sampling = 3)
       })
       
       predict_dag <- dag_vecchia_predict(cx_in, cx_all[which_out,], m_nn)
@@ -204,7 +210,8 @@ for(s in 1:nrow(par_opts)){
                                                B %>% tail(c(NA, NA, round(mcmc/2))), 
                                                Sigma %>% tail(c(NA, NA, round(mcmc/2))), 
                                                Ddiag %>% tail(c(NA, round(mcmc/2))),
-                                               theta %>% tail(c(NA, NA, round(mcmc/2))), 
+                                               theta %>% tail(c(NA, NA, round(mcmc/2))),
+                                               matern = TRUE,
                                                num_threads = 16) )
       })
       
@@ -214,14 +221,14 @@ for(s in 1:nrow(par_opts)){
       
       spiox_latent_predicts %>% with(Y[,1,]+Y[,2,]) %>% apply(1, mean) %>% cbind(Ytrue[,1]+Ytrue[,2]) %>% cor
       
-      latent_total_time <- estim_time + predict_time
+      latent_total_time <- latent_estim_time + latent_predict_time
       
-      save(file=glue::glue("simulations/spiox/spioxlat_{sim_n}.RData"), 
+      save(file=glue::glue("simulations/spiox_nugg/spioxlat_{sim_n}.RData"), 
            list=c("spiox_latent_out", "spiox_latent_predicts", 
                   "latent_estim_time", "latent_predict_time", "latent_total_time"))
     }
     
-    if(T){
+    if(F){
       # nngp
       library(spNNGP)
       
@@ -264,7 +271,7 @@ for(s in 1:nrow(par_opts)){
                                coords=cx_out, n.omp.threads=16)
       })
       
-      save(file=glue::glue("simulations/spiox/nngp_{sim_n}.RData"), 
+      save(file=glue::glue("simulations/spiox_nugg/nngp_{sim_n}.RData"), 
            list=c("burnin", "m.s.1", "nngp_pred.1", "m.s.2", "nngp_pred.2", "nngp_time"))
       
       
