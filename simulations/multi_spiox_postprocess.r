@@ -44,18 +44,16 @@ for(i in 1:20){
   Y_out <- Y %>% tail(400)
   Y_out_arr <- 1:2500 %>% lapply(\(i) Y_out) %>% abind::abind(along=3)
   coords_all <- simdata %>% dplyr::select(contains("coords")) 
-  cx_S <- coords_all %>% head(3000) %>% sample_n(300, replace=F) %>% as.matrix()
-  testx <- coords_all %>% tail(400) %>% as.matrix()
   
+  cx_S <- coords_all %>% head(2500) %>% sample_n(300, replace=F) %>% as.matrix()
   theta_all <- rbind(20, 1, optlist, 1e-5)
   Sfact <- matrix(0, q, q)
   for(r in 1:q){
     cat("\n", r, "\n")
     for(j in 1:q){
       cat(j, " ")
-      theta1 <- theta_all[,r]
-      theta2 <- theta_all[,j]
-      Sfact[r,j] <- scaling_factor_at_zero(testx, cx_S, theta1, theta2)
+      thetamat <- theta_all[,c(r,j)]
+      Sfact[r,j] <- scaling_factor_at_zero(cx_S, thetamat)[2,1]
     }
   }
   Cov_at_zero <- Sigma * Sfact
@@ -95,8 +93,8 @@ for(i in 1:20){
   perf_spiox_clust <- calc_performance(spiox_clust_predicts)
   
   
-  meshed_outdata <- simdata %>% mutate(sample = c(rep("insample", 3000), rep("outsample", 400))) %>% 
-    left_join(spmeshed_out$coordsdata %>% mutate(ix=1:3400), by=c("coords.Var1"="Var1", "coords.Var2"="Var2"))
+  meshed_outdata <- simdata %>% mutate(sample = c(rep("insample", 2500), rep("outsample", 400))) %>% 
+    left_join(spmeshed_out$coordsdata %>% mutate(ix=1:2900), by=c("coords.Var1"="Var1", "coords.Var2"="Var2"))
   
   meshed_outsample <- meshed_outdata %>%
     dplyr::filter(sample=="outsample") %$% ix
