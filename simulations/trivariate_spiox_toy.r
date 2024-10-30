@@ -116,8 +116,8 @@ if(T){
        list=c("simdata", 
               "Beta", "D", "Y_in", "X_in", "which_in", "which_out",
               "Y_regression", #"Error", 
-              "Y", "X", "W", "Lparmat",
-              "nu1", "nu2", "nu3", "phi", "Sigma"))
+              "Y", "X", 
+              "nulist", "phi", "Sigma"))
 } else {
   load("simulations/trivariate_spiox_toy/data.RData")
 }
