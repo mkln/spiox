@@ -110,6 +110,10 @@ inline double beta_logdens(const double& x, const double& a, const double& b, co
   // unnormalized
   return (a-1.0)*log(x) + (b-1.0)*log(c-x);
 }
+inline double expon_logdens(const double& x, const double& a){
+  // pdf a * exp(-a*x)
+  return - a * x;
+}
 
 inline double calc_jacobian(const arma::vec& new_param, const arma::vec& param, 
                             const arma::mat& set_unif_bounds){

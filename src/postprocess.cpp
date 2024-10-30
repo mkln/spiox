@@ -23,3 +23,23 @@ arma::cube S_to_Q(const arma::cube& S){
   }
   return Q;
 }
+
+
+//[[Rcpp::export]]
+arma::cube Sigma_to_correl(const arma::cube& Sigma){
+  int q = Sigma.n_rows;
+  int k = Sigma.n_cols;
+  int m = Sigma.n_slices;
+  
+  arma::cube Omega = arma::zeros(arma::size(Sigma));
+#ifdef _OPENMP
+#pragma omp parallel for 
+#endif
+  for(int i=0; i<m; i++){
+    arma::mat dllt = arma::diagmat(1.0/sqrt( Sigma.slice(i).diag() ));
+    Omega.slice(i) = dllt * Sigma.slice(i) * dllt;
+  }
+  return Omega;
+}
+
+

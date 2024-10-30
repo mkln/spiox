@@ -183,6 +183,17 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// Sigma_to_correl
+arma::cube Sigma_to_correl(const arma::cube& Sigma);
+RcppExport SEXP _spiox_Sigma_to_correl(SEXP SigmaSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::cube& >::type Sigma(SigmaSEXP);
+    rcpp_result_gen = Rcpp::wrap(Sigma_to_correl(Sigma));
+    return rcpp_result_gen;
+END_RCPP
+}
 // run_spf_model
 Rcpp::List run_spf_model(arma::mat& Y, unsigned int n_factors, double delta_gamma_shape, double delta_gamma_rate, double dl_dirichlet_a, const arma::mat& Lambda_start, const arma::vec& Delta_start, unsigned int mcmc, int print_every, bool seq_lambda);
 RcppExport SEXP _spiox_run_spf_model(SEXP YSEXP, SEXP n_factorsSEXP, SEXP delta_gamma_shapeSEXP, SEXP delta_gamma_rateSEXP, SEXP dl_dirichlet_aSEXP, SEXP Lambda_startSEXP, SEXP Delta_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP seq_lambdaSEXP) {
@@ -310,6 +321,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_spiox_neighbor_search_testset", (DL_FUNC) &_spiox_neighbor_search_testset, 3},
     {"_spiox_S_to_Sigma", (DL_FUNC) &_spiox_S_to_Sigma, 1},
     {"_spiox_S_to_Q", (DL_FUNC) &_spiox_S_to_Q, 1},
+    {"_spiox_Sigma_to_correl", (DL_FUNC) &_spiox_Sigma_to_correl, 1},
     {"_spiox_run_spf_model", (DL_FUNC) &_spiox_run_spf_model, 10},
     {"_spiox_spiox_wishart", (DL_FUNC) &_spiox_spiox_wishart, 15},
     {"_spiox_spiox_latent", (DL_FUNC) &_spiox_spiox_latent, 16},

@@ -19,7 +19,7 @@ DagGP::DagGP(
   
   oneuv = arma::ones<arma::uvec>(1);
   
-  bool matern = covariance_matern; // pexp or matern
+  matern = covariance_matern; // pexp or matern
   
   //thread safe stuff
   n_threads = num_threads_in;

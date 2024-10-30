@@ -67,7 +67,7 @@ public:
   arma::mat XtX;
   //
   
-  bool phi_sampling, nu_sampling, tausq_sampling;
+  bool phi_sampling, sigmasq_sampling, nu_sampling, tausq_sampling;
   // adaptive metropolis to update theta atoms
   int theta_mcmc_counter;
   arma::uvec which_theta_elem;
@@ -125,6 +125,7 @@ public:
     // if multiple nu options, interpret as wanting to sample smoothness for matern
     // otherwise, power exponential with fixed exponent.
     phi_sampling = arma::var(theta_options.row(0)) != 0;
+    sigmasq_sampling = arma::var(theta_options.row(1)) != 0;
     nu_sampling = arma::var(theta_options.row(2)) != 0;
     tausq_sampling = arma::var(theta_options.row(3)) != 0;
     
@@ -167,6 +168,9 @@ inline void SpIOX::init_theta_adapt(){
   if(phi_sampling){
     which_theta_elem = arma::join_vert(which_theta_elem, 0*oneuv);
   }
+  if(sigmasq_sampling){
+    which_theta_elem = arma::join_vert(which_theta_elem, 1*oneuv);
+  }
   if(nu_sampling){
     which_theta_elem = arma::join_vert(which_theta_elem, 2*oneuv);
   }
@@ -177,7 +181,7 @@ inline void SpIOX::init_theta_adapt(){
   int n_theta_par = n_options * which_theta_elem.n_elem;
   
   arma::mat bounds_all = arma::zeros(4, 2); // make bounds for all, then subset
-  bounds_all.row(0) = arma::rowvec({0.1, 100}); // phi
+  bounds_all.row(0) = arma::rowvec({3, 100}); // phi
   bounds_all.row(1) = arma::rowvec({1e-6, 100}); // sigma
   if(matern){
     bounds_all.row(2) = arma::rowvec({0.4, 2.1}); // nu  
@@ -416,10 +420,21 @@ inline void SpIOX::upd_theta_metrop(){
   timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
   //Rcpp::Rcout << timed << endl;
   
+  // priors
+  double logpriors = 0;
+  for(unsigned int j=0; j<q; j++){
+    if(sigmasq_sampling){
+      logpriors += invgamma_logdens(theta_alt(1,j), 2, 2) - invgamma_logdens(theta_options(1,j), 2, 2);
+    }
+    if(tausq_sampling){
+      logpriors += expon_logdens(theta_alt(3,j), 25) - expon_logdens(theta_options(3,j), 25);
+    }
+  }
+  
   // ------------------
   // make move
   double jacobian  = calc_jacobian(phisig_alt, phisig_cur, theta_unif_bounds);
-  double logaccept = prop_logdens - curr_logdens + jacobian;
+  double logaccept = prop_logdens - curr_logdens + jacobian + logpriors;
   
   bool accepted = do_I_accept(logaccept);
   
@@ -493,6 +508,10 @@ inline void SpIOX::gibbs_w_sequential_singlesite(){
     
     W.row(i) = arma::trans( Ctchol(i).t() * (Ctchol(i) * meancomp + mvnorm.col(i) ));
   }
+  
+  for(unsigned int i=0; i<q; i++){
+    W.col(i) = W.col(i) - arma::mean(W.col(i));
+  }
 }
 
 inline void SpIOX::gibbs_w_sequential_byoutcome(){
@@ -542,8 +561,7 @@ inline void SpIOX::gibbs_w_sequential_byoutcome(){
     arma::vec w_sampled; 
     bool foundsol = factoriser[j].solve(w_sampled, rhs);
     
-    W.col(j) = w_sampled;
-    V.col(j) = daggp_options.at(spmap(j)).H_times_A(w_sampled);
+    W.col(j) = w_sampled - arma::mean(w_sampled);
   }
   
 }
@@ -606,12 +624,16 @@ inline void SpIOX::gibbs_w_block(){
   
   if(foundsol == false)  { Rcpp::stop("Could not solve for sampling w."); }
   W = arma::mat(w.memptr(), n, q);
+  
+  for(unsigned int i=0; i<q; i++){
+    W.col(i) = W.col(i) - arma::mean(W.col(i));
+  }
 }
 
 inline void SpIOX::sample_Dvec(){
   for(int i=0; i<q; i++){
     double ssq = arma::accu(pow( YXB.col(i) - W.col(i), 2));
-    Dvec(i) = 1.0/R::rgamma(n/2 + 1e-3, 1.0/(1e-3 + 0.5 * ssq));
+    Dvec(i) = 1.0/R::rgamma(n/2 + 1, 1.0/(.1 + 0.5 * ssq));
   }
 }
 
@@ -698,6 +720,7 @@ inline void SpIOX::gibbs(int it, int sample_sigma, bool sample_mvr, bool sample_
     if(latent_model == 3){
       gibbs_w_sequential_byoutcome();
     }
+    compute_V();
     sample_Dvec();
     timings(5) += time_count(tstart);
   }

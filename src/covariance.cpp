@@ -28,9 +28,8 @@ void matern_inplace(arma::mat& res,
           res(i, j) = pow(hphi, nu) * pow2_nu1_gammanu_sigmasq *
             R::bessel_k_ex(hphi, nu, 1.0, &bessel_ws[threadid*MAT_NU_MAX]);
         } else {
-          res(i, j) = sigmasq + nugginside;
+          res(i, j) = (sigmasq + nugginside);
         }
-        res(i, j) = res(i, j)/(1+nugginside);
       }
     }
     res = arma::symmatu(res);
@@ -44,9 +43,8 @@ void matern_inplace(arma::mat& res,
           res(i, j) = pow(hphi, nu) * pow2_nu1_gammanu_sigmasq *
             R::bessel_k_ex(hphi, nu, 1.0, &bessel_ws[threadid*MAT_NU_MAX]);
         } else {
-          res(i, j) = sigmasq + nugginside;
+          res(i, j) = (sigmasq + nugginside);
         }
-        res(i, j) = res(i, j)/(1+nugginside);
       }
     }
   }
@@ -74,7 +72,7 @@ void powerexp_inplace(arma::mat& res,
           double hnuphi = pow(hh, nu) * phi;
           res(i, j) = exp(-hnuphi) * sigmasq;
         }
-        res(i, j) = res(i, j)/(1+nugg);
+        res(i, j) = res(i, j)/(sigmasq + nugg);
       }
     }
     res = arma::symmatu(res);
@@ -90,7 +88,7 @@ void powerexp_inplace(arma::mat& res,
           double hnuphi = pow(hh, nu) * phi;
           res(i, j) = exp(-hnuphi) * sigmasq;
         }
-        res(i, j) = res(i, j)/(1+nugg);
+        res(i, j) = res(i, j)/(sigmasq + nugg);
       }
     }
   }

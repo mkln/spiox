@@ -149,10 +149,10 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     Rcpp::Rcout << "nq block sampler." << endl;
   }
   if(sampling==2){
-    Rcpp::Rcout << "n block, q sequential sampler." << endl;
+    Rcpp::Rcout << "n sequential, q block sampler." << endl;
   }
   if(sampling==3){
-    Rcpp::Rcout << "n sequential, q block sampler." << endl;
+    Rcpp::Rcout << "n block, q sequential sampler." << endl;
   }
   
 #ifdef _OPENMP

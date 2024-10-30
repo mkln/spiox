@@ -49,6 +49,10 @@ S_to_Q <- function(S) {
     .Call(`_spiox_S_to_Q`, S)
 }
 
+Sigma_to_correl <- function(Sigma) {
+    .Call(`_spiox_Sigma_to_correl`, Sigma)
+}
+
 run_spf_model <- function(Y, n_factors, delta_gamma_shape, delta_gamma_rate, dl_dirichlet_a, Lambda_start, Delta_start, mcmc = 1000L, print_every = 1000L, seq_lambda = FALSE) {
     .Call(`_spiox_run_spf_model`, Y, n_factors, delta_gamma_shape, delta_gamma_rate, dl_dirichlet_a, Lambda_start, Delta_start, mcmc, print_every, seq_lambda)
 }
