@@ -12,7 +12,7 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
 // Correlationc
-arma::mat Correlationc(const arma::mat& coordsx, const arma::mat& coordsy, const arma::vec& theta, bool matern, bool same);
+arma::mat Correlationc(const arma::mat& coordsx, const arma::mat& coordsy, const arma::vec& theta, int matern, bool same);
 RcppExport SEXP _spiox_Correlationc(SEXP coordsxSEXP, SEXP coordsySEXP, SEXP thetaSEXP, SEXP maternSEXP, SEXP sameSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
@@ -20,14 +20,14 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::mat& >::type coordsx(coordsxSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type coordsy(coordsySEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type theta(thetaSEXP);
-    Rcpp::traits::input_parameter< bool >::type matern(maternSEXP);
+    Rcpp::traits::input_parameter< int >::type matern(maternSEXP);
     Rcpp::traits::input_parameter< bool >::type same(sameSEXP);
     rcpp_result_gen = Rcpp::wrap(Correlationc(coordsx, coordsy, theta, matern, same));
     return rcpp_result_gen;
 END_RCPP
 }
 // daggp_build
-Rcpp::List daggp_build(const arma::mat& coords, const arma::field<arma::uvec>& dag, double phi, double sigmasq, double nu, double tausq, bool matern, int num_threads);
+Rcpp::List daggp_build(const arma::mat& coords, const arma::field<arma::uvec>& dag, double phi, double sigmasq, double nu, double tausq, int matern, int num_threads);
 RcppExport SEXP _spiox_daggp_build(SEXP coordsSEXP, SEXP dagSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP, SEXP num_threadsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
@@ -38,7 +38,7 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type sigmasq(sigmasqSEXP);
     Rcpp::traits::input_parameter< double >::type nu(nuSEXP);
     Rcpp::traits::input_parameter< double >::type tausq(tausqSEXP);
-    Rcpp::traits::input_parameter< bool >::type matern(maternSEXP);
+    Rcpp::traits::input_parameter< int >::type matern(maternSEXP);
     Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
     rcpp_result_gen = Rcpp::wrap(daggp_build(coords, dag, phi, sigmasq, nu, tausq, matern, num_threads));
     return rcpp_result_gen;

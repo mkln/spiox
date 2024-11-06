@@ -5,7 +5,7 @@ Correlationc <- function(coordsx, coordsy, theta, matern, same) {
     .Call(`_spiox_Correlationc`, coordsx, coordsy, theta, matern, same)
 }
 
-daggp_build <- function(coords, dag, phi, sigmasq, nu, tausq, matern = FALSE, num_threads = 1L) {
+daggp_build <- function(coords, dag, phi, sigmasq, nu, tausq, matern = 1L, num_threads = 1L) {
     .Call(`_spiox_daggp_build`, coords, dag, phi, sigmasq, nu, tausq, matern, num_threads)
 }
 

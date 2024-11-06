@@ -33,11 +33,9 @@ set.seed(1)
 
 q <- 3
 
-theta_mat <- matrix(1, ncol=q, nrow=4)
-theta_mat[1,] <- c(phi <- 20, phi, phi)
-theta_mat[2,] <- c(1, 1, 1)
-theta_mat[3,] <- c(nu1 <- 0.5, nu2 <- .8, nu3 <- 1.2)
-theta_mat[4,] <- rep(1e-13, q)
+nu1 <- 0.5
+nu2 <- .8
+nu3 <- 1.2
 
 sds <- c(1, 1, 1)
 Omega <- matrix(c(1,-.9,0.7,-.9,1,-.5,0.7,-.5,1), ncol=3)
@@ -87,66 +85,6 @@ sigma12 <- V[2,1] * matern_scaling_factors[1,2]
 sigma13 <- V[3,1] * matern_scaling_factors[1,3]
 sigma23 <- V[3,2] * matern_scaling_factors[2,3]
 
-if(F){
-  # parsimonious multi matern
-  Cparmat <- GpGpm::matern_multi(c(sigma11, sigma12, sigma22, sigma13, sigma23, sigma33, 
-                                   1/phi, 1/phi, 1/phi, 1/phi, 1/phi, 1/phi, 
-                                   nu1, nu1/2+nu2/2, nu2, nu1/2+nu3/2, nu2/2+nu3/2, nu3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3), cx_12)
-  
-  Lparmat <- t(chol(Cparmat))
-  
-  wvec <- Lparmat %*% rnorm(nr_all*q)
-  W <- matrix(wvec, ncol=q)
-  
-  # matern
-  Y_sp <- W 
-  
-  # regression
-  p <- 1
-  X <- matrix(1, ncol=1, nrow=nr_all) #%>% cbind(matrix(rnorm(nr_all*(p-1)), ncol=p-1))
-  
-  Beta <- matrix(rnorm(q * p), ncol=q)
-  
-  Y_regression <- X %*% Beta
-  #Error <- matrix(rnorm(nrow(Y_regression) * q),ncol=q) %*% diag(D <- runif(q, 0, 0.1))
-  Y <- as.matrix(Y_sp + Y_regression) # + Error
-  
-  Y_in <- Y[which_in,]
-  X_in <- X[which_in,,drop=F]
-  
-  if(F){
-    df <- data.frame(cx_out, y=as.matrix(Y_sp[which_out,])) %>% 
-      pivot_longer(cols=-c(Var1, Var2))
-    ggplot(df, 
-           aes(Var1, Var2, fill=value)) +
-      geom_raster() +
-      scale_fill_viridis_c() +
-      facet_wrap(~name, ncol=5)
-  }
-  
-  simdata <- data.frame(coords=cx_all, Y_spatial=Y_sp, Y=Y, X=X)
-  #ggplot(simdata, aes(coords.Var1, coords.Var2, color=Y_spatial.1)) + geom_point() + scale_color_viridis_c()
-  
-  save(file=glue::glue("simulations/trivariate_matern_toy/data.RData"), 
-       list=c("simdata", 
-              "Beta", "D", "Y_in", "X_in", "which_in", "which_out",
-              "Y_regression", #"Error", 
-              "Y", "X", "W", "Lparmat",
-              "nu1", "nu2", "nu3", "phi", "Sigma"))
-} else {
-  load("simulations/trivariate_matern_toy/data.RData")
-}
-##############################
-
-simdata %>% tail(2500) %>% 
-  dplyr::select(contains("coords"), contains("Y_")) %>% 
-  pivot_longer(cols=-c(coords.Var1, coords.Var2)) %>% 
-  ggplot(aes(coords.Var1, coords.Var2, fill=value)) + 
-  geom_raster() + 
-  scale_fill_viridis_c() + 
-  facet_grid(~name) + 
-  theme_minimal()
-
 
 
 set.seed(1)
@@ -156,24 +94,16 @@ theta_opts <- cbind(c(10, 2, nu1, 1e-1), c(20, 1, nu2, 1e-2), c(20, 1, 0.5, 1e-2
 ##############################################
 
 m_nn <- 20
-mcmc <- 20000
+mcmc <- 10000
 RhpcBLASctl::blas_set_num_threads(1)
 RhpcBLASctl::omp_set_num_threads(1)
 
-# "spiox_out", "spiox_predicts", "estim_time", "predict_time", "total_time"
-load("simulations/trivariate_matern_toy/spiox.RData")
-
-# "spiox_latentq_out", "spiox_latentq_predicts", "latentq_estim_time", "latentq_predict_time"
-load("simulations/trivariate_matern_toy/spiox_latentq.RData")
-
-# "spiox_latentn_out", "spiox_latentn_predicts", "latentn_estim_time", "latentn_predict_time"
-load("simulations/trivariate_matern_toy/spiox_latentn.RData")
-
-# "spmeshed_out", "Ymesh_out", "meshed_time"
-load("simulations/trivariate_matern_toy/meshed.RData")
-
-# "fit2", "gpgpm"
-load("simulations/trivariate_matern_toy/gpgpm.RData")
+Sigbuild <- function(spiox_out){
+  return(
+    1:mcmc %>% sapply(\(i) with(spiox_out, sqrt(diag(theta[2,,i])) %*% Sigma[,,i] %*% sqrt(diag(theta[2,,i]))  )) %>%
+      array(dim=c(q,q,mcmc))
+  )
+}
 
 spiox_dens_plotter <- function(spiox_out, which_var, bw=.6){
   
@@ -191,26 +121,116 @@ spiox_dens_plotter <- function(spiox_out, which_var, bw=.6){
 
 spiox_cov_at_zero <- function(spiox_out){
   spiox_theta <- spiox_out$theta
+  
+  Sigbuild <- function(spiox_out){
+    return(
+      1:mcmc %>% sapply(\(i) with(spiox_out, sqrt(diag(theta[2,,i])) %*% Sigma[,,i] %*% sqrt(diag(theta[2,,i]))  )) %>%
+        array(dim=c(q,q,mcmc))
+    )
+  }
+  Sig <- Sigbuild(spiox_out)
+  
   spiox_theta[2,,] <- 1
   spiox_scaling_factors <- scaling_factor_at_zero(cx_in, spiox_theta %>% tail(c(NA, NA, 5000)) %>% apply(1:2, mean))
   spiox_scaling_factors[upper.tri(spiox_scaling_factors)] <- spiox_scaling_factors[lower.tri(spiox_scaling_factors)]
 
   return(
-    spiox_out$Sigma %>% apply(3, \(s) cov2cor(s * spiox_scaling_factors)) %>% array(dim=c(q,q,mcmc)) )
+    Sig %>% apply(3, \(s) cov2cor(s * spiox_scaling_factors)) %>% array(dim=c(q,q,mcmc)) )
 }
 
 # cov at zero
-V * matern_scaling_factors # true
-spiox_out %>% spiox_cov_at_zero() %>% apply(1:2, mean)
-spiox_latentq_out %>% spiox_cov_at_zero() %>% apply(1:2, mean)
-spiox_latentn_out %>% spiox_cov_at_zero() %>% apply(1:2, mean)
-spmeshed_out$lambda_mcmc %>% meshed:::cube_correl_from_lambda() %>% apply(1:2, mean)
+SS <- V * matern_scaling_factors # true
 
 
+est_results <- list()
+
+for( rr in 1:60 ){
+  cat(rr, "\n")
+  
+  # "spiox_out", "spiox_predicts", "estim_time", "predict_time", "total_time"
+  load(glue::glue("simulations/trivariate_matern_toy_reps/spiox_{rr}.RData"))
+  
+  # "spiox_latentq_out", "spiox_latentq_predicts", "latentq_estim_time", "latentq_predict_time"
+  load(glue::glue("simulations/trivariate_matern_toy_reps/spiox_latentq_{rr}.RData"))
+  
+  # "spiox_latentn_out", "spiox_latentn_predicts", "latentn_estim_time", "latentn_predict_time"
+  load(glue::glue("simulations/trivariate_matern_toy_reps/spiox_latentn_{rr}.RData"))
+  
+  # "spmeshed_out", "Ymesh_out", "meshed_time"
+  load(glue::glue("simulations/trivariate_matern_toy_reps/meshed_{rr}.RData"))
+  
+  # "fit2", "gpgpm"
+  load(glue::glue("simulations/trivariate_matern_toy_reps/gpgpm_{rr}.RData"))
+  
+  est_phi <- list( spiox_resp = spiox_out$theta %>% stail(5000) %>% `[`(1,,) %>% apply(1, mean),
+                   spiox_latn = spiox_latentn_out$theta %>% stail(5000) %>% `[`(1,,) %>% apply(1, mean),
+                   spiox_latq = spiox_latentq_out$theta %>% stail(5000) %>% `[`(1,,) %>% apply(1, mean),
+                   meshed = spmeshed_out$theta_mcmc %>% `[`(1,,) %>% apply(1, mean),
+                   gpgpm = diag(gpgpm$phi) )
+  
+  est_nu <- list( spiox_resp = spiox_out$theta %>% stail(5000) %>% `[`(3,,) %>% apply(1, mean),
+                  spiox_latn = spiox_latentn_out$theta %>% stail(5000) %>% `[`(3,,) %>% apply(1, mean),
+                  spiox_latq = spiox_latentq_out$theta %>% stail(5000) %>% `[`(3,,) %>% apply(1, mean),
+                  meshed = spmeshed_out$theta_mcmc %>% `[`(2,,) %>% apply(1, mean),
+                  gpgpm = diag(gpgpm$nu) )
+  
+  
+  est_tsq <- list( spiox_resp = spiox_out$theta %>% stail(5000) %>% `[`(4,,) %>% apply(1, mean),
+                   spiox_latn = spiox_latentn_out$Ddiag %>% ctail(5000) %>% apply(1, mean),
+                   spiox_latq = spiox_latentq_out$Ddiag %>% ctail(5000) %>% apply(1, mean),
+                   meshed = spmeshed_out$tausq_mcmc %>% apply(1, mean),
+                   gpgpm = diag(gpgpm$tausq) )
+  
+  spiox_cor_at_zero <- function(spiox_out){
+    spiox_theta <- spiox_out$theta
+    
+    Sigbuild <- function(spiox_out, mcmc=10000){
+      return(
+        1:mcmc %>% sapply(\(i) with(spiox_out, sqrt(diag(theta[2,,i])) %*% Sigma[,,i] %*% sqrt(diag(theta[2,,i]))  )) %>%
+          array(dim=c(q,q,mcmc))
+      )
+    }
+    Sig <- Sigbuild(spiox_out)
+    
+    spiox_theta[2,,] <- 1
+    spiox_scaling_factors <- scaling_factor_at_zero(cx_in, spiox_theta %>% tail(c(NA, NA, 5000)) %>% apply(1:2, mean))
+    spiox_scaling_factors[upper.tri(spiox_scaling_factors)] <- spiox_scaling_factors[lower.tri(spiox_scaling_factors)]
+    
+    return(
+      Sig %>% apply(3, \(s) cov2cor(s * spiox_scaling_factors)) %>% array(dim=c(q,q,mcmc)) )
+  }
+  
+  # covariance at zero: estimated
+  spiox_SS_resp <- spiox_out %>% spiox_cor_at_zero() %>% stail(5000) %>% apply(1:2, mean)
+  spiox_SS_latq <- spiox_latentq_out %>% spiox_cor_at_zero() %>% stail(5000) %>% apply(1:2, mean)
+  spiox_SS_latn <- spiox_latentn_out %>% spiox_cor_at_zero() %>% stail(5000) %>% apply(1:2, mean)
+  
+  meshed_SS <- spmeshed_out$lambda_mcmc %>% meshed:::cube_correl_from_lambda() %>% stail(5000) %>% apply(1:2, mean)
+  gpgpm_SS <- cov2cor(gpgpm$Sigma)
+  
+  
+  est_Corr0 <- list( spiox_resp = spiox_SS_resp[lower.tri(spiox_SS_resp)],
+                     spiox_latn = spiox_SS_latn[lower.tri(spiox_SS_latn)],
+                     spiox_latq = spiox_SS_latq[lower.tri(spiox_SS_latq)],
+                     meshed = meshed_SS[lower.tri(meshed_SS)], 
+                     gpgpm = gpgpm_SS[lower.tri(gpgpm_SS)] ) %>% as.data.frame() %>% 
+    mutate(parameter = c("corr21", "corr31", "corr32"))
+  
+  
+  est_results[[rr]] <- bind_rows(
+    as.data.frame(est_phi) %>% mutate(parameter = paste0("phi", 1:n())),
+    as.data.frame(est_nu) %>% mutate(parameter = paste0("nu", 1:n())),
+    as.data.frame(est_tsq) %>% mutate(parameter = paste0("tausq", 1:n())),
+    est_Corr0
+  ) %>% mutate(rep = rr) %>% pivot_longer(cols=-c(parameter, rep), names_to = "model")
+  
+  
+}
 
 
+save(file="simulations/trivariate_matern_toy_reps/estimation_results_all.RData", list="est_results")
 
-
+est_results %>% bind_rows() %>% group_by(model, parameter) %>% summarise_all(mean) %>% pivot_wider(id_cols=model, names_from = parameter)
 
 
 

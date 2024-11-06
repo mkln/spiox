@@ -5,7 +5,7 @@ DagGP::DagGP(
   const arma::mat& coords_in,
   const arma::vec& theta_in,
   const arma::field<arma::uvec>& custom_dag,
-  bool covariance_matern,
+  int covariance_matern,
   bool use_Ci_in,
   int num_threads_in){
   
@@ -19,7 +19,7 @@ DagGP::DagGP(
   
   oneuv = arma::ones<arma::uvec>(1);
   
-  matern = covariance_matern; // pexp or matern
+  matern = covariance_matern; // 0 pexp or 1 matern or 2 wave
   
   //thread safe stuff
   n_threads = num_threads_in;
@@ -165,14 +165,16 @@ arma::mat DagGP::H_times_A(const arma::mat& A, bool use_spmat){
 }
 
 
-arma::mat DagGP::Corr_export(const arma::mat& these_coords, const arma::uvec& ix, const arma::uvec& jx, bool matern, bool same){
+arma::mat DagGP::Corr_export(const arma::mat& these_coords, 
+                             const arma::uvec& ix, const arma::uvec& jx, 
+                             int matern, bool same){
   return Correlationf(these_coords, ix, jx, theta, bessel_ws, matern, same);
 }
 
 //[[Rcpp::export]]
 Rcpp::List daggp_build(const arma::mat& coords, const arma::field<arma::uvec>& dag,
                        double phi, double sigmasq, double nu, double tausq,
-                       bool matern=false, int num_threads=1){
+                       int matern=1, int num_threads=1){
   
   arma::vec theta(4);
   theta(0) = phi;

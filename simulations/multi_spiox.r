@@ -32,20 +32,25 @@ stail <- \(x, nt){
 }
 stailh <- \(x){ stail(x, round(dim(x)[3]/2)) }
 
-perturb <- function(x, sd=1){
-  return(x + matrix(rnorm(prod(dim(x)), sd), ncol=ncol(x)))
+perturb <- function(x, sd=1, symm=F){
+  pert <- matrix(rnorm(prod(dim(x)), sd), ncol=ncol(x))
+  if(symm){
+    pert <- crossprod(pert)
+  }
+  
+  return(x + pert)
 }
 
 q <- 24
 
-nthreads <- 8
+nthreads <- 7
 oo <- 1
 
 for(oo in starts:ends){
   set.seed(oo)
   cat(oo, "\n") 
   
-  optlist <- seq(0.5, 2, length.out=q) #%>% sample(q, replace=T)
+  optlist <- seq(0.5, 2, length.out=q) %>% sample(q, replace=T)
   
   # spatial
   cx_in <- matrix(runif(2500*2), ncol=2) #2500
@@ -62,7 +67,7 @@ for(oo in starts:ends){
   cx_all <- rbind(cx_in, cx_out)
   nr_all <- nrow(cx_all)
   
-  Clist <- optlist %>% lapply(\(nu) spiox::Correlationc(cx_all, cx_all, c(20,1,nu,1e-5), 1, TRUE) )
+  Clist <- optlist %>% lapply(\(nu) spiox::Correlationc(cx_all, cx_all, c(30,1,nu,1e-3), 1, TRUE) )
   Llist <- Clist %>% lapply(\(C) t(chol(C)))
   
   Q <- rWishart(1, q+1, 1/2 * diag(q))[,,1] #
@@ -112,13 +117,17 @@ for(oo in starts:ends){
   nutsq <- expand.grid(nu <- seq(0.5, 2, length.out=20),
                        tsq <- c(2*1e-6, 1e-5, 1e-4))
   
-  theta_opts <- rbind(20, 1, nutsq$Var1, nutsq$Var2)
+  theta_opts <- rbind(30, 1, nutsq$Var1, nutsq$Var2)
+  
+  theta_opts_metrop <- theta_opts[,1:q]
+  theta_opts_metrop[2,1] <- 2
+  
   ##############################################
   
   m_nn <- 20
-  mcmc <- 5000
+  mcmc <- 10000
   
-  if(F){
+  if(T){
     custom_dag <- dag_vecchia(cx_in, m_nn)
     
     ##############################################
@@ -130,8 +139,8 @@ for(oo in starts:ends){
                                         custom_dag = custom_dag, 
                                         theta=theta_opts,
                                         
-                                        Sigma_start = diag(q),
-                                        mvreg_B_start = 0*Beta,# %>% perturb(),
+                                        Sigma_start = Sigma %>% perturb(.1, T),
+                                        mvreg_B_start = Beta %>% perturb(.1),
                                         
                                         mcmc = mcmc,
                                         print_every = 100,
@@ -142,7 +151,6 @@ for(oo in starts:ends){
                                         upd_theta_opts=F,
                                         num_threads = nthreads)
     })
-    
     
     predict_dag <- dag_vecchia_predict(cx_in, cx_all[which_out,], m_nn)
     
@@ -181,13 +189,14 @@ for(oo in starts:ends){
     set.seed(1) 
     RhpcBLASctl::omp_set_num_threads(1)
     RhpcBLASctl::blas_set_num_threads(1)
+    
     estim_time <- system.time({
       spiox_metrop_out <- spiox::spiox_wishart(Y_in, X_in, cx_in, 
                                         custom_dag = custom_dag, 
-                                        theta=theta_opts[,1:q],
+                                        theta=theta_opts_metrop,
                                         
-                                        Sigma_start = diag(q),
-                                        mvreg_B_start = 0*Beta,# %>% perturb(),
+                                        Sigma_start = Sigma %>% perturb(.1, T),
+                                        mvreg_B_start = Beta %>% perturb(.1),
                                         
                                         mcmc = mcmc,
                                         print_every = 100,
@@ -241,18 +250,18 @@ for(oo in starts:ends){
     estim_time <- system.time({
       spiox_clust_out <- spiox::spiox_wishart(Y_in, X_in, cx_in, 
                                         custom_dag = custom_dag, 
-                                        theta=theta_opts[,1:6],
+                                        theta=theta_opts_metrop[,1:6],
                                         
-                                        Sigma_start = diag(q),
-                                        mvreg_B_start = 0*Beta,# %>% perturb(),
+                                        Sigma_start = Sigma %>% perturb(.1, T),
+                                        mvreg_B_start = Beta %>% perturb(.1),
                                         
                                         mcmc = mcmc,
                                         print_every = 100,
                                         matern = TRUE,
-                                        sample_iwish=T,
-                                        sample_mvr=T,
-                                        sample_theta_gibbs=T,
-                                        upd_theta_opts=T,
+                                        sample_iwish = F,
+                                        sample_mvr = F,
+                                        sample_theta_gibbs = T,
+                                        upd_theta_opts = T,
                                         num_threads = nthreads)
     })
     
@@ -287,7 +296,7 @@ for(oo in starts:ends){
     rm(list=c("spiox_clust_out", "spiox_clust_predicts"))
   }
   
-  if(F){
+  if(T){
     # meshed
     library(meshed)
     
@@ -300,7 +309,7 @@ for(oo in starts:ends){
                                        n_samples = round(mcmc/2), n_thin = 1, n_burn = round(mcmc/2), 
                                        n_threads = nthreads, verbose = 10,
                                        predict_everywhere = T, 
-                                       prior = list(phi=c(.1, 50), tausq=c(1e-4,1e-4), nu=c(.5, 2)))
+                                       prior = list(phi=c(10, 50), tausq=c(1e-4,1e-4), nu=c(.5, 2)))
     })
     
     m_order <- order(spmeshed_out$savedata$coords_blocking$ix)

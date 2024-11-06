@@ -72,7 +72,6 @@ void powerexp_inplace(arma::mat& res,
           double hnuphi = pow(hh, nu) * phi;
           res(i, j) = exp(-hnuphi) * sigmasq;
         }
-        res(i, j) = res(i, j)/(sigmasq + nugg);
       }
     }
     res = arma::symmatu(res);
@@ -88,18 +87,62 @@ void powerexp_inplace(arma::mat& res,
           double hnuphi = pow(hh, nu) * phi;
           res(i, j) = exp(-hnuphi) * sigmasq;
         }
-        res(i, j) = res(i, j)/(sigmasq + nugg);
       }
     }
   }
 }
+
+// powered exponential nu<2
+void wave_inplace(arma::mat& res, 
+                      const arma::mat& coords,
+                      const arma::uvec& ix, const arma::uvec& iy, 
+                      const double& phi, const double& nu, 
+                      const double& sigmasq, const double& nugg,
+                      bool same){
+  
+  // exp(-phi * d) cos(nu * d),  phi >= nu
+
+  if(same){
+    for(unsigned int i=0; i<ix.n_rows; i++){
+      arma::rowvec cri = coords.row(ix(i));
+      for(unsigned int j=i; j<iy.n_rows; j++){
+        arma::rowvec delta = cri - coords.row(iy(j));
+        double hh = arma::norm(delta);
+        if(hh==0){
+          res(i, j) = sigmasq + nugg;
+        } else {
+          double hphi = hh * phi;
+          double hnu = hh * nu;
+          res(i, j) = exp(-hphi) * cos(hnu) * sigmasq;
+        }
+      }
+    }
+    res = arma::symmatu(res);
+  } else {
+    for(unsigned int i=0; i<ix.n_rows; i++){
+      arma::rowvec cri = coords.row(ix(i));
+      for(unsigned int j=0; j<iy.n_rows; j++){
+        arma::rowvec delta = cri - coords.row(iy(j));
+        double hh = arma::norm(delta);
+        if(hh==0){
+          res(i, j) = sigmasq + nugg;
+        } else {
+          double hphi = hh * phi;
+          double hnu = hh * nu;
+          res(i, j) = exp(-hphi) * cos(hnu) * sigmasq;
+        }
+      }
+    }
+  }
+}
+
 
 arma::mat Correlationf(
     const arma::mat& coords,
     const arma::uvec& ix, const arma::uvec& iy,
     const arma::vec& theta,
     double * bessel_ws,
-    bool matern,
+    int matern,
     bool same){
   arma::mat res = arma::zeros(ix.n_rows, iy.n_rows);
   
@@ -108,10 +151,12 @@ arma::mat Correlationf(
   double nu = theta(2); // exponent in the power exponential case
   double nugg = theta(3);
   
-  if(matern){
+  if(matern == 1){
     matern_inplace(res, coords, ix, iy, phi, nu, sigmasq, bessel_ws, nugg, same);   
-  } else {
+  } else if(matern == 0) {
     powerexp_inplace(res, coords, ix, iy, phi, nu, sigmasq, nugg, same); 
+  } else if(matern == 2) { 
+    wave_inplace(res, coords, ix, iy, phi, nu, sigmasq, nugg, same);
   }
 
   return res;
@@ -124,7 +169,7 @@ arma::mat Correlationc(
     const arma::mat& coordsx,
     const arma::mat& coordsy,
     const arma::vec& theta,
-    bool matern,
+    int matern,
     bool same){
 
   int nthreads = 1;

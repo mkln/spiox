@@ -108,7 +108,7 @@ public:
     
     latent_model = latent_model_choice; // latent model? 
     if(latent_model>0){
-      W = arma::zeros(n, q);
+      W = Y;
       XtX = X.t() * X;
       Dvec = arma::ones(q)*.01;
     }
@@ -116,7 +116,7 @@ public:
     B = mvreg_B_start;
     YXB = Y - X * B;
     
-    B_Var = arma::ones(arma::size(B));
+    B_Var = 1000 * arma::ones(arma::size(B));
     
     theta_options = daggp_theta;
     n_options = theta_options.n_cols;
@@ -157,7 +157,6 @@ public:
     
     timings = arma::zeros(10);
   }
-
 };
 
 inline void SpIOX::init_theta_adapt(){
@@ -422,9 +421,9 @@ inline void SpIOX::upd_theta_metrop(){
   
   // priors
   double logpriors = 0;
-  for(unsigned int j=0; j<q; j++){
+  for(unsigned int j=0; j<n_options; j++){
     if(sigmasq_sampling){
-      logpriors += invgamma_logdens(theta_alt(1,j), 2, 2) - invgamma_logdens(theta_options(1,j), 2, 2);
+      logpriors += invgamma_logdens(theta_alt(1,j), 2, 1) - invgamma_logdens(theta_options(1,j), 2, 1);
     }
     if(tausq_sampling){
       logpriors += expon_logdens(theta_alt(3,j), 25) - expon_logdens(theta_options(3,j), 25);
@@ -562,6 +561,8 @@ inline void SpIOX::gibbs_w_sequential_byoutcome(){
     bool foundsol = factoriser[j].solve(w_sampled, rhs);
     
     W.col(j) = w_sampled - arma::mean(w_sampled);
+    
+    V.col(j) = daggp_options.at(spmap(j)).H_times_A(W.col(j));
   }
   
 }
@@ -633,7 +634,7 @@ inline void SpIOX::gibbs_w_block(){
 inline void SpIOX::sample_Dvec(){
   for(int i=0; i<q; i++){
     double ssq = arma::accu(pow( YXB.col(i) - W.col(i), 2));
-    Dvec(i) = 1.0/R::rgamma(n/2 + 1, 1.0/(.1 + 0.5 * ssq));
+    Dvec(i) = 1.0/R::rgamma(n/2 + 1e-5, 1.0/(1e-5 + 0.5 * ssq));
   }
 }
 
@@ -713,14 +714,15 @@ inline void SpIOX::gibbs(int it, int sample_sigma, bool sample_mvr, bool sample_
     tstart = std::chrono::steady_clock::now();
     if(latent_model == 1){
       gibbs_w_block();
+      compute_V();
     } 
     if(latent_model == 2){
       gibbs_w_sequential_singlesite();
+      compute_V();
     }
     if(latent_model == 3){
       gibbs_w_sequential_byoutcome();
     }
-    compute_V();
     sample_Dvec();
     timings(5) += time_count(tstart);
   }

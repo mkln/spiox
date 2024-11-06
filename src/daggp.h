@@ -35,7 +35,7 @@ public:
   arma::mat H_times_A(const arma::mat& A, bool use_spmat=true);
   
   // info about covariance model:
-  bool matern;
+  int matern; // 0: pexp; 1: matern; 2: wave
   double * bessel_ws;
   
   //double ldens;
@@ -45,7 +45,7 @@ public:
     const arma::mat& coords_in, 
     const arma::vec& theta_in,
     const arma::field<arma::uvec>& custom_dag,
-    bool covariance_matern=true,
+    int covariance_matern=1,
     bool use_Ci_in=false,
     int num_threads_in=1);
   
@@ -53,7 +53,7 @@ public:
   arma::uvec oneuv;
   int n_threads;
   
-  arma::mat Corr_export(const arma::mat& cx, const arma::uvec& ix, const arma::uvec& jx, bool matern, bool same);
+  arma::mat Corr_export(const arma::mat& cx, const arma::uvec& ix, const arma::uvec& jx, int matern, bool same);
 };
 
 
