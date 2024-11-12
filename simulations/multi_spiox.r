@@ -3,6 +3,7 @@ args <- commandArgs(TRUE)
 starts <- args[1]
 ends <- args[2]
 
+
 cat("Simulations ", starts:ends, "\n")
 
 library(tidyverse)
@@ -43,14 +44,14 @@ perturb <- function(x, sd=1, symm=F){
 
 q <- 24
 
-nthreads <- 7
+nthreads <- 14
 oo <- 1
 
 for(oo in starts:ends){
   set.seed(oo)
   cat(oo, "\n") 
   
-  optlist <- seq(0.5, 2, length.out=q) %>% sample(q, replace=T)
+  optlist <- seq(0.5, 2, length.out=6) %>% sample(q, replace=T)
   
   # spatial
   cx_in <- matrix(runif(2500*2), ncol=2) #2500
@@ -107,24 +108,22 @@ for(oo in starts:ends){
   simdata <- data.frame(coords=cx_all, Y_spatial=Y_sp, Y=Y, X=X)
   #ggplot(simdata, aes(coords.Var1, coords.Var2, color=Y_spatial.1)) + geom_point() + scale_color_viridis_c()
   
-  save(file=glue::glue("simulations/spiox_m/data_{oo}.RData"), 
-       list=c("simdata", "oo", "simdata", "Sigma", "optlist"))
+  if(T){
+    save(file=glue::glue("simulations/spiox_m/data_{oo}.RData"), 
+              list=c("simdata", "oo", "Sigma", "optlist"))
+  }
   
   ##############################
-  
   set.seed(1)
   
-  nutsq <- expand.grid(nu <- seq(0.5, 2, length.out=20),
-                       tsq <- c(2*1e-6, 1e-5, 1e-4))
+  theta_opts <- rbind(30, 1, seq(0.5, 2, length.out=30), 1e-3)
   
-  theta_opts <- rbind(30, 1, nutsq$Var1, nutsq$Var2)
-  
-  theta_opts_metrop <- theta_opts[,1:q]
+  theta_opts_metrop <- rbind(30, 1, seq(0.5, 2, length.out=q), 1e-3)
   theta_opts_metrop[2,1] <- 2
   
   ##############################################
   
-  m_nn <- 20
+  m_nn <- 15
   mcmc <- 10000
   
   if(T){
@@ -133,14 +132,14 @@ for(oo in starts:ends){
     ##############################################
     set.seed(1) 
     RhpcBLASctl::omp_set_num_threads(1)
-    RhpcBLASctl::blas_set_num_threads(16)
+    RhpcBLASctl::blas_set_num_threads(1)
     estim_time <- system.time({
       spiox_gibbs_out <- spiox::spiox_wishart(Y_in, X_in, cx_in, 
                                         custom_dag = custom_dag, 
                                         theta=theta_opts,
                                         
-                                        Sigma_start = Sigma %>% perturb(.1, T),
-                                        mvreg_B_start = Beta %>% perturb(.1),
+                                        Sigma_start = Sigma,
+                                        mvreg_B_start = Beta,
                                         
                                         mcmc = mcmc,
                                         print_every = 100,
@@ -182,7 +181,7 @@ for(oo in starts:ends){
     rm(list=c("spiox_gibbs_out", "spiox_gibbs_predicts"))
   }
   
-  if(T){
+  if(F){
     custom_dag <- dag_vecchia(cx_in, m_nn)
     
     ##############################################
@@ -252,20 +251,18 @@ for(oo in starts:ends){
                                         custom_dag = custom_dag, 
                                         theta=theta_opts_metrop[,1:6],
                                         
-                                        Sigma_start = Sigma %>% perturb(.1, T),
-                                        mvreg_B_start = Beta %>% perturb(.1),
+                                        Sigma_start = Sigma,
+                                        mvreg_B_start = Beta,
                                         
                                         mcmc = mcmc,
                                         print_every = 100,
                                         matern = TRUE,
-                                        sample_iwish = F,
-                                        sample_mvr = F,
+                                        sample_iwish = T,
+                                        sample_mvr = T,
                                         sample_theta_gibbs = T,
                                         upd_theta_opts = T,
                                         num_threads = nthreads)
     })
-    
-    
     
     predict_dag <- dag_vecchia_predict(cx_in, cx_all[which_out,], m_nn)
     
@@ -325,6 +322,53 @@ for(oo in starts:ends){
     
   }
 
+  if(T){
+    # nngp
+    library(spNNGP)
+    
+    nngp_time <- system.time({
+      
+      starting <- list("phi"=30, "sigma.sq"=1, "tau.sq"=1e-19, "nu"=1)
+      tuning <- list("phi"=0, "sigma.sq"=0.1, "tau.sq"=0.1, "nu"=0.1)
+      priors.1 <- list("beta.Norm"=list(rep(0,ncol(X_in)), diag(1e3,ncol(X_in))),
+                       "phi.Unif"=c(10, 60), "sigma.sq.IG"=c(2, 1),
+                       "nu.Unif"=c(0.4, 2),
+                       "tau.sq.IG"=c(2, 1))
+      
+      verbose <- TRUE
+      n.neighbors <- 15
+      mcmc_nngp <- 10000
+      burnin <- 1:round(mcmc_nngp/2)
+      
+      nngp_results <- list()
+      for(j in 1:q){
+        cat("NNGP ", j, "\n")
+        m.s.1 <- spNNGP::spNNGP(Y_in[,j] ~ X_in - 1, 
+                                coords=cx_in, 
+                                starting=starting, method="response", 
+                                n.neighbors=n.neighbors,
+                                tuning=tuning, priors=priors.1, cov.model="matern", 
+                                n.samples=mcmc_nngp, n.omp.threads=nthreads)
+        
+        m.s.1$p.beta.samples %<>% `[`(-burnin,,drop=F)
+        m.s.1$p.theta.samples %<>% `[`(-burnin,,drop=F)
+        
+        nngp_pred.1 <- predict(m.s.1, X[which_out,,drop=F], 
+                               coords=cx_all[which_out,], n.omp.threads=nthreads)
+        
+        nngp_results[[j]] <- list(i=j, 
+                                  fitmodel = m.s.1,
+                                  predicts = nngp_pred.1)
+        
+      }
+      
+    })
+    
+    save(file=glue::glue("simulations/spiox_m/nngp_{oo}.RData"), 
+         list=c("burnin", "nngp_results", "nngp_time"))
+    
+    
+  }
 }
 
 

@@ -106,8 +106,10 @@ for(oo in starts:ends){
   simdata <- data.frame(coords=cx_all, Y_spatial=Y_sp, Y=Y, X=X)
   #ggplot(simdata, aes(coords.Var1, coords.Var2, color=Y_spatial.1)) + geom_point() + scale_color_viridis_c()
   
-  save(file=glue::glue("simulations/lmc_m/data_{oo}.RData"), 
-       list=c("simdata", "oo", "simdata", "Sigma", "optlist"))
+  if(F){
+    save(file=glue::glue("simulations/lmc_m/data_{oo}.RData"), 
+         list=c("simdata", "oo", "simdata", "Sigma", "optlist"))
+  }
   
   ##############################
   
@@ -125,7 +127,7 @@ for(oo in starts:ends){
   m_nn <- 20
   mcmc <- 10000
   
-  if(T){
+  if(F){
     custom_dag <- dag_vecchia(cx_in, m_nn)
     
     ##############################################
@@ -181,7 +183,7 @@ for(oo in starts:ends){
     rm(list=c("spiox_gibbs_out", "spiox_gibbs_predicts"))
   }
   
-  if(T){
+  if(F){
     custom_dag <- dag_vecchia(cx_in, m_nn)
     
     ##############################################
@@ -239,7 +241,7 @@ for(oo in starts:ends){
     rm(list=c("spiox_metrop_out", "spiox_metrop_predicts"))
   }
   
-  if(T){
+  if(F){
     custom_dag <- dag_vecchia(cx_in, m_nn)
     
     ##############################################
@@ -295,7 +297,7 @@ for(oo in starts:ends){
     rm(list=c("spiox_clust_out", "spiox_clust_predicts"))
   }
   
-  if(T){
+  if(F){
     # meshed
     library(meshed)
     
@@ -319,6 +321,53 @@ for(oo in starts:ends){
     
   }
   
+  if(T){
+    # nngp
+    library(spNNGP)
+    
+    nngp_time <- system.time({
+        
+      starting <- list("phi"=20, "sigma.sq"=1, "tau.sq"=1e-19, "nu"=1)
+      tuning <- list("phi"=0.1, "sigma.sq"=0.1, "tau.sq"=0.1, "nu"=0)
+      priors.1 <- list("beta.Norm"=list(rep(0,ncol(X_in)), diag(1e3,ncol(X_in))),
+                       "phi.Unif"=c(10, 60), "sigma.sq.IG"=c(2, 1),
+                       "nu.Unif"=c(0.999, 1.001),
+                       "tau.sq.IG"=c(1e-3, 1e-3))
+      
+      verbose <- TRUE
+      n.neighbors <- 10
+      mcmc_nngp <- 10000
+      burnin <- 1:round(mcmc_nngp/2)
+    
+      nngp_results <- list()
+      for(j in 1:q){
+        cat("NNGP ", j, "\n")
+        m.s.1 <- spNNGP::spNNGP(Y_in[,j] ~ X_in - 1, 
+                                coords=cx_in, 
+                                starting=starting, method="response", 
+                                n.neighbors=n.neighbors,
+                                tuning=tuning, priors=priors.1, cov.model="matern", 
+                                n.samples=mcmc_nngp, n.omp.threads=nthreads)
+        
+        m.s.1$p.beta.samples %<>% `[`(-burnin,,drop=F)
+        m.s.1$p.theta.samples %<>% `[`(-burnin,,drop=F)
+        
+        nngp_pred.1 <- predict(m.s.1, X[which_out,,drop=F], 
+                               coords=cx_all[which_out,], n.omp.threads=nthreads)
+        
+        nngp_results[[j]] <- list(i=j, 
+                                  fitmodel = m.s.1,
+                                  predicts = nngp_pred.1)
+        
+      }
+    
+    })
+    
+    save(file=glue::glue("simulations/lmc_m/nngp_{oo}.RData"), 
+         list=c("burnin", "nngp_results", "nngp_time"))
+    
+    
+  }
 }
 
 
