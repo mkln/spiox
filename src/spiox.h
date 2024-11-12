@@ -54,6 +54,7 @@ public:
   void compute_V(); // whitened
   void sample_theta_discr(); // gibbs for each outcome choosing from options
   void upd_theta_metrop();
+  void upd_theta_metrop_conditional();
   void init_theta_adapt();
   
   // latent model 
@@ -68,14 +69,22 @@ public:
   //
   
   bool phi_sampling, sigmasq_sampling, nu_sampling, tausq_sampling;
+  
   // adaptive metropolis to update theta atoms
   int theta_mcmc_counter;
   arma::uvec which_theta_elem;
   arma::mat theta_unif_bounds;
-  arma::mat theta_metrop_sd;
+  //arma::mat theta_metrop_sd;
   RAMAdapt theta_adapt;
   bool theta_adapt_active;
   // --------
+  
+  // adaptive metropolis (conditional update) to update theta atoms
+  // assume shared covariance functions and unknown parameters across variables
+  arma::mat c_theta_unif_bounds;
+  std::vector<RAMAdapt> c_theta_adapt;
+  // --------
+  
   
   // -------------- run 1 gibbs iteration based on current values
   void gibbs(int it, int sample_sigma, bool sample_mvr, bool sample_theta_gibbs, bool upd_theta_opts);
@@ -197,9 +206,18 @@ inline void SpIOX::init_theta_adapt(){
     theta_unif_bounds = arma::join_vert(theta_unif_bounds, bounds_all);
   }
   
-  theta_metrop_sd = 0.05 * arma::eye(n_theta_par, n_theta_par);
+  arma::mat theta_metrop_sd = 0.05 * arma::eye(n_theta_par, n_theta_par);
   theta_adapt = RAMAdapt(n_theta_par, theta_metrop_sd, 0.24);
   theta_adapt_active = true;
+  
+  // conditional update
+  c_theta_unif_bounds = bounds_all;
+  int c_theta_par = which_theta_elem.n_elem;
+  arma::mat c_theta_metrop_sd = 0.05 * arma::eye(c_theta_par, c_theta_par);
+  c_theta_adapt.reserve(n_options);
+  for(int j=0; j<n_options; j++){
+    c_theta_adapt[j] = RAMAdapt(c_theta_par, c_theta_metrop_sd, 0.24);
+  }
   // ---
 }
 
@@ -453,6 +471,61 @@ inline void SpIOX::upd_theta_metrop(){
   
   //Rcpp::Rcout << theta_options.row(0) << endl;
   //Rcpp::Rcout << spmap.t() << endl;
+}
+
+inline void SpIOX::upd_theta_metrop_conditional(){
+  
+  arma::uvec oneuv = arma::ones<arma::uvec>(1);
+  
+  for(int j=0; j<n_options; j++){
+    c_theta_adapt[j].count_proposal();
+    
+    arma::vec phisig_cur = theta_options(which_theta_elem, oneuv*j);
+    
+    Rcpp::RNGScope scope;
+    arma::vec U_update = arma::randn(phisig_cur.n_elem);
+    
+    arma::vec phisig_alt = par_huvtransf_back(par_huvtransf_fwd(
+      phisig_cur, theta_unif_bounds) + 
+        c_theta_adapt[j].paramsd * U_update, theta_unif_bounds);
+    
+    // proposal for theta matrix
+    arma::mat theta_alt = theta_options;
+    theta_alt(which_theta_elem, oneuv*j) = phisig_alt; 
+    
+    if(!theta_alt.is_finite()){
+      Rcpp::stop("Some value of theta outside of MCMC search limits.\n");
+    }
+    
+    // ---------------------
+    // create proposal daggp
+    daggp_options_alt[j].update_theta(theta_alt.col(j), true);
+    
+    // conditional density of Y_j | Y_-j (or W depending on target)
+    arma::mat Target;
+    arma::mat V_alt = V;
+    if(latent_model>0){
+      Target = W.col(j);
+    } else {
+      Target = YXB.col(j);
+    }
+    V_alt.col(j) = daggp_options_alt.at(spmap(j)).H_times_A(Target);// * (Y.col(j) - X * B.col(j));
+    
+    double c_daggp_logdet = daggp_options.at(spmap(j)).precision_logdeterminant;
+    double c_daggp_alt_logdet = daggp_options_alt.at(spmap(j)).precision_logdeterminant;
+    
+    
+    arma::spsolve_factoriser factoriser;
+    bool status = factoriser.factorise(daggp_options.at(spmap(j)).H);
+    arma::vec rhs = arma::zeros(n);
+    for
+    bool foundsol = factoriser.solve(solution, x);
+    
+    
+    arma::vec mj = - solve()
+    
+  }
+  
 }
 
 inline void SpIOX::gibbs_w_sequential_singlesite(){
