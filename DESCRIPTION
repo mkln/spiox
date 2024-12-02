@@ -1,11 +1,11 @@
 Package: spiox
 Type: Package
-Title: Inside-Out Cross-covariance for spatial multivariate data
-Version: 0.3
-Date: 2024-10-11
+Title: Inside-out cross-covariance (IOX) for spatial multivariate data
+Version: 0.5
+Date: 2024-12-02
 Author: Michele Peruzzi
 Maintainer: Michele Peruzzi <peruzzi@umich.edu>
-Description: Fits Bayesian models for multivariate spatial data using Inside-Out Cross-covariance and Vecchia approximations of GPs.
+Description: Fits Bayesian models for multivariate spatial data using IOX and Vecchia approximations of GPs.
 License: GPL (>= 2)
 Encoding: UTF-8
 RoxygenNote: 7.3.1

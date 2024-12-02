@@ -2,7 +2,7 @@
 #include "interrupt.h"
 
 //[[Rcpp::export]]
-Rcpp::List spiox_wishart(const arma::mat& Y, 
+Rcpp::List spiox_response(const arma::mat& Y, 
                     const arma::mat& X, 
                     const arma::mat& coords,
                     
@@ -141,7 +141,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   
   
   if(sampling==0){
-    Rcpp::stop("Run the GP-IOX response model via spiox_wishart()");
+    Rcpp::stop("Run the GP-IOX response model via spiox_response()");
   }
   
   Rcpp::Rcout << "GP-IOX latent model, ";

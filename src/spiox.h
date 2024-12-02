@@ -1,8 +1,6 @@
 #include "omp_import.h"
 #include "daggp.h"
 #include "ramadapt.h"
-#include "spf.h"
-#include "cholesky_lrupd.h"
 
 using namespace std;
 
@@ -31,10 +29,7 @@ public:
   arma::mat B;
   arma::mat YXB;
   arma::mat B_Var; // prior variance on B, element by element
-  double B_a_dl; // dirichlet-laplace parameter for vec(B)
   
-  // SPF for sparse latent precision
-  SparsePrecisionFactor spf;
   arma::mat S, Si, Sigma, Q; // S^T * S = Sigma = Q^-1 = (Lambda*Lambda^T + Delta)^-1 = (Si * Si^T)^-1
   
   // RadGP for spatial dependence
@@ -48,7 +43,6 @@ public:
   // -------------- utilities
   int matern;
   void sample_B(); // 
-  void sample_Q_spf();
   void sample_Sigma_wishart();
   void compute_V(); // whitened
   void sample_theta_discr(); // gibbs for each outcome choosing from options
@@ -747,26 +741,6 @@ inline void SpIOX::sample_Dvec(){
   }
 }
 
-inline void SpIOX::sample_Q_spf(){
-  spf.replace_Y(&V);
-  spf.fc_sample_uv();
-  spf.fc_sample_Lambda();
-  spf.fc_sample_Delta();
-  spf.fc_sample_dl();
-  
-  // compute other stuff
-  
-  // cholesky low rank update function
-  arma::mat U = arma::diagmat(sqrt(spf.Delta));
-  uchol_update(U, spf.Lambda);
-  
-  Si = U.t();
-  S = arma::inv(arma::trimatl(Si));
-  
-  Sigma = S.t() * S;
-  Q = Si * Si.t();
-}
-
 inline void SpIOX::sample_Sigma_wishart(){
   arma::mat Smean = n * arma::cov(V) + arma::eye(V.n_cols, V.n_cols);
   arma::mat Q_mean_post = arma::inv_sympd(Smean);
@@ -781,15 +755,9 @@ inline void SpIOX::sample_Sigma_wishart(){
 inline void SpIOX::gibbs(int it, int sample_sigma, bool sample_mvr, bool sample_theta_gibbs, bool upd_theta_opts){
   
   if(sample_sigma > 0){
-    if(sample_sigma == 1){
-      tstart = std::chrono::steady_clock::now();
-      sample_Q_spf();
-      timings(2) += time_count(tstart); 
-    } else {
-      tstart = std::chrono::steady_clock::now();
-      sample_Sigma_wishart();
-      timings(2) += time_count(tstart); 
-    }
+    tstart = std::chrono::steady_clock::now();
+    sample_Sigma_wishart();
+    timings(2) += time_count(tstart); 
   }
   
   if(sample_mvr){
