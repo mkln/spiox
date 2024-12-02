@@ -22,7 +22,6 @@ public:
   // matrix of predictors dim n, p
   arma::mat X;
   
-  
   // metadata
   unsigned int n, q, p;
   int num_threads;
@@ -47,7 +46,7 @@ public:
   arma::mat V; 
   
   // -------------- utilities
-  bool matern;
+  int matern;
   void sample_B(); // 
   void sample_Q_spf();
   void sample_Sigma_wishart();
@@ -103,7 +102,7 @@ public:
         
         const arma::mat& Sigma_start,
         const arma::mat& mvreg_B_start,
-        bool use_matern,
+        int cov_model_matern,
         int num_threads_in) 
   {
     num_threads = num_threads_in;
@@ -138,7 +137,8 @@ public:
     nu_sampling = arma::var(theta_options.row(2)) != 0;
     tausq_sampling = arma::var(theta_options.row(3)) != 0;
     
-    matern = use_matern;
+    matern = cov_model_matern;
+    //Rcpp::Rcout << "Covariance choice: " << matern << endl;
     
     for(unsigned int i=0; i<n_options; i++){
       daggp_options[i] = DagGP(_coords, theta_options.col(i), custom_dag, //daggp_rho, 
@@ -173,6 +173,11 @@ inline void SpIOX::init_theta_adapt(){
   theta_mcmc_counter = 0;
   which_theta_elem = arma::zeros<arma::uvec>(0);
   arma::uvec oneuv = arma::ones<arma::uvec>(1);
+  
+  if(q == 1) { 
+    nu_sampling = true;
+  }
+  
   if(phi_sampling){
     which_theta_elem = arma::join_vert(which_theta_elem, 0*oneuv);
   }
@@ -185,7 +190,7 @@ inline void SpIOX::init_theta_adapt(){
   if(tausq_sampling){
     which_theta_elem = arma::join_vert(which_theta_elem, 3*oneuv);
   }
-  
+
   int n_theta_par = n_options * which_theta_elem.n_elem;
   
   arma::mat bounds_all = arma::zeros(4, 2); // make bounds for all, then subset
@@ -210,15 +215,18 @@ inline void SpIOX::init_theta_adapt(){
   theta_adapt = RAMAdapt(n_theta_par, theta_metrop_sd, 0.24);
   theta_adapt_active = true;
   
-  // conditional update
-  c_theta_unif_bounds = bounds_all;
-  int c_theta_par = which_theta_elem.n_elem;
-  arma::mat c_theta_metrop_sd = 0.05 * arma::eye(c_theta_par, c_theta_par);
-  c_theta_adapt.reserve(n_options);
-  for(int j=0; j<n_options; j++){
-    c_theta_adapt[j] = RAMAdapt(c_theta_par, c_theta_metrop_sd, 0.24);
+  if(n_options == q){
+    // conditional update
+    c_theta_unif_bounds = bounds_all;
+    int c_theta_par = which_theta_elem.n_elem;
+    arma::mat c_theta_metrop_sd = 0.05 * arma::eye(c_theta_par, c_theta_par);
+    c_theta_adapt = std::vector<RAMAdapt>(n_options);
+    for(int j=0; j<n_options; j++){
+      c_theta_adapt[j] = RAMAdapt(c_theta_par, c_theta_metrop_sd, 0.24);
+    }
+    // ---  
   }
-  // ---
+  
 }
 
 inline void SpIOX::compute_V(){ 
@@ -474,14 +482,13 @@ inline void SpIOX::upd_theta_metrop(){
 }
 
 inline void SpIOX::upd_theta_metrop_conditional(){
-  
+
   arma::uvec oneuv = arma::ones<arma::uvec>(1);
-  
-  for(int j=0; j<n_options; j++){
+  for(int j=0; j<q; j++){
     c_theta_adapt[j].count_proposal();
     
     arma::vec phisig_cur = theta_options(which_theta_elem, oneuv*j);
-    
+
     Rcpp::RNGScope scope;
     arma::vec U_update = arma::randn(phisig_cur.n_elem);
     
@@ -515,15 +522,13 @@ inline void SpIOX::upd_theta_metrop_conditional(){
     arma::vec Vjc = arma::zeros(n);
     arma::vec Vjc_alt = arma::zeros(n);
     for(int jc=0; jc<q; jc++){
-      if(jc != j){
-        Vjc += Q(j, jc)/Q(j,j) * V.col(jc);
-        Vjc_alt += Q(j, jc)/Q(j,j) * V_alt.col(jc);
-      }
+      Vjc += Q(j, jc)/Q(j,j) * V.col(jc);
+      Vjc_alt += Q(j, jc)/Q(j,j) * V_alt.col(jc);
     }
-    double core_alt = arma::accu(pow(V_alt.col(j) + Vjc_alt, 2.0)); 
-    double core = arma::accu(pow(V.col(j) + Vjc, 2.0)); 
-    double prop_logdens = 0.5 * c_daggp_alt_logdet - 0.5 * core_alt;
-    double curr_logdens = 0.5 * c_daggp_logdet - 0.5 * core;
+    double core_alt = arma::accu(pow(Vjc_alt, 2.0)); 
+    double core = arma::accu(pow(Vjc, 2.0)); 
+    double prop_logdens = 0.5 * c_daggp_alt_logdet - Q(j,j)/2.0 * core_alt;
+    double curr_logdens = 0.5 * c_daggp_logdet - Q(j,j)/2.0 * core;
     
     // priors
     double logpriors = 0;
@@ -543,8 +548,9 @@ inline void SpIOX::upd_theta_metrop_conditional(){
     
     if(accepted){
       theta_options = theta_alt;
-      std::swap(daggp_options, daggp_options_alt);
-      std::swap(V, V_alt);
+      std::swap(daggp_options.at(j), daggp_options_alt.at(j));
+      //std::swap(V, V_alt);
+      V.col(j) = V_alt.col(j);
     } 
     
     c_theta_adapt[j].update_ratios();
@@ -554,8 +560,6 @@ inline void SpIOX::upd_theta_metrop_conditional(){
     }
     
     theta_mcmc_counter++;
-    
-    
   }
   
 }
@@ -811,7 +815,7 @@ inline void SpIOX::gibbs(int it, int sample_sigma, bool sample_mvr, bool sample_
   // update atoms for theta
   tstart = std::chrono::steady_clock::now();
   if(upd_theta_opts){
-    if(n_options == q){
+    if( !sample_theta_gibbs & (q>3) & (n_options == q) ){
       upd_theta_metrop_conditional();
     } else {
       upd_theta_metrop();
