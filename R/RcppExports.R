@@ -57,19 +57,23 @@ run_spf_model <- function(Y, n_factors, delta_gamma_shape, delta_gamma_rate, dl_
     .Call(`_spiox_run_spf_model`, Y, n_factors, delta_gamma_shape, delta_gamma_rate, dl_dirichlet_a, Lambda_start, Delta_start, mcmc, print_every, seq_lambda)
 }
 
-spiox_wishart <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, mvreg_B_start, mcmc = 1000L, print_every = 100L, matern = TRUE, sample_iwish = TRUE, sample_mvr = TRUE, sample_theta_gibbs = TRUE, upd_theta_opts = TRUE, num_threads = 1L) {
+spiox_wishart <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, mvreg_B_start, mcmc = 1000L, print_every = 100L, matern = 1L, sample_iwish = TRUE, sample_mvr = TRUE, sample_theta_gibbs = TRUE, upd_theta_opts = TRUE, num_threads = 1L) {
     .Call(`_spiox_spiox_wishart`, Y, X, coords, custom_dag, theta_opts, Sigma_start, mvreg_B_start, mcmc, print_every, matern, sample_iwish, sample_mvr, sample_theta_gibbs, upd_theta_opts, num_threads)
 }
 
-spiox_latent <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, mvreg_B_start, mcmc = 1000L, print_every = 100L, matern = TRUE, sample_iwish = TRUE, sample_mvr = TRUE, sample_theta_gibbs = TRUE, upd_theta_opts = TRUE, num_threads = 1L, sampling = 2L) {
+spiox_latent <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, mvreg_B_start, mcmc = 1000L, print_every = 100L, matern = 1L, sample_iwish = TRUE, sample_mvr = TRUE, sample_theta_gibbs = TRUE, upd_theta_opts = TRUE, num_threads = 1L, sampling = 2L) {
     .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, theta_opts, Sigma_start, mvreg_B_start, mcmc, print_every, matern, sample_iwish, sample_mvr, sample_theta_gibbs, upd_theta_opts, num_threads, sampling)
 }
 
-spiox_predict <- function(X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, matern = TRUE, num_threads = 1L) {
+spiox_predict <- function(X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, matern = 1L, num_threads = 1L) {
     .Call(`_spiox_spiox_predict`, X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, matern, num_threads)
 }
 
-spiox_latent_predict <- function(X_new, coords_new, coords, dag, W, B, Sigma, Dvec, theta, matern = TRUE, num_threads = 1L) {
+spiox_predict_part <- function(Y_new, X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, matern = 1L, num_threads = 1L) {
+    .Call(`_spiox_spiox_predict_part`, Y_new, X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, matern, num_threads)
+}
+
+spiox_latent_predict <- function(X_new, coords_new, coords, dag, W, B, Sigma, Dvec, theta, matern = 1L, num_threads = 1L) {
     .Call(`_spiox_spiox_latent_predict`, X_new, coords_new, coords, dag, W, B, Sigma, Dvec, theta, matern, num_threads)
 }
 

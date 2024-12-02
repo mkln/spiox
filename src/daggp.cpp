@@ -20,7 +20,7 @@ DagGP::DagGP(
   oneuv = arma::ones<arma::uvec>(1);
   
   matern = covariance_matern; // 0 pexp or 1 matern or 2 wave
-  
+  //Rcpp::Rcout << "DagGP covariance choice " << matern << endl;
   //thread safe stuff
   n_threads = num_threads_in;
   
