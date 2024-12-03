@@ -3,7 +3,7 @@
 
 #include <RcppArmadillo.h>
 
-#include "nnsearch.h"
+//#include "nnsearch.h"
 #include "covariance.h"
 
 using namespace std;

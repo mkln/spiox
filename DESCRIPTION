@@ -8,6 +8,6 @@ Maintainer: Michele Peruzzi <peruzzi@umich.edu>
 Description: Fits Bayesian models for multivariate spatial data using IOX and Vecchia approximations of GPs.
 License: GPL (>= 2)
 Encoding: UTF-8
-RoxygenNote: 7.3.1
+RoxygenNote: 7.3.2
 Imports: Rcpp (>= 1.0.12)
 LinkingTo: Rcpp, RcppArmadillo

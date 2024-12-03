@@ -6,8 +6,6 @@
 
 using namespace std;
 
-//const double Pi = 3.14159265358979323846264338327950288419716939937510582097494459230781640628620899;
-
 //[[Rcpp::export]]
 arma::mat iox(const arma::mat& x, const arma::mat& y, int i, int j,
                    const arma::mat& S, 
@@ -68,9 +66,24 @@ int time_count(std::chrono::steady_clock::time_point tstart){
   return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - tstart).count();
 }
 
-//[[Rcpp::export]]
+//' @title Scaling factor of IOX.
+//' @description This function computes the scaling factor used to compute the cross-covariance at zero distance for IOX.
+//'
+//' @param dag an object returned from `spiox::dag_vecchia` or similar
+//' @param S a matrix of reference coordinates
+//' @param theta a matrix of dimension (4,q) where each column are the marginal covariance parameters of the corresponding variable
+//' @param matern an integer. Options are 0: power exponential, 1: matern, 2: wave
+//' @param n_threads integer number of threads for multi-threaded operations
+//'
+//' @return A matrix of dimension (q,q) filled in its lower-triangular portion. The (i,j) element is the scaling factor for \eqn{C_{ij}}.
+//' The IOX cross-covariance at zero distance will be \eqn{Sigma_{ij}} multiplied by this scaling factor.
+//'
+//' @details The function is designed for computing the IOX scaling factor used to compute the cross-covariances \eqn{C_{ij}}.
+//'
+//' @export
+// [[Rcpp::export]]
 arma::mat sfact(const arma::field<arma::uvec>& dag, const arma::mat& S, 
-                const arma::mat& theta, bool matern=true, int n_threads=1){
+                const arma::mat& theta, int matern=1, int n_threads=1){
   int n = S.n_rows;
   int q = theta.n_cols;
   arma::mat I1 = arma::eye(n, n);
@@ -90,7 +103,6 @@ arma::mat sfact(const arma::field<arma::uvec>& dag, const arma::mat& S,
 }
 
 
-//[[Rcpp::export]]
 arma::mat rvec(const arma::mat& x, int i, 
                       const arma::mat& S, 
                       const arma::mat& theta, 
@@ -169,6 +181,7 @@ arma::uvec make_ix(int q, int n){
   return arma::regspace<arma::uvec>(0, n, n*q-1);
 }
 
+// IOX cross-covariance matrix function
 //[[Rcpp::export]]
 arma::mat iox_mat(const arma::mat& x, const arma::mat& y, 
                   const arma::mat& S, const arma::mat& theta, 

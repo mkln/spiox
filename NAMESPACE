@@ -2,4 +2,9 @@ useDynLib(spiox, .registration=TRUE)
 importFrom(Rcpp, evalCpp)
 ## export all regularly named functions
 ## (but allow for private functions whose name starts with a dot).name <- function(...)
-exportPattern("^[[:alpha:]]+")
+#exportPattern("^[[:alpha:]]+")
+
+export("spiox_response", "spiox_predict", "spiox_predict_part",
+       "spiox_latent", "spiox_latent_predict",
+       "scaling_factor_at_zero", 
+       "dag_vecchia", "dag_vecchia_predict")
