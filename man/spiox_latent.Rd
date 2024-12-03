@@ -87,4 +87,10 @@ multivariate GP with Inside-Out Cross-Covariance (IOX) prior for the latent effe
 \details{
 The function is designed for scalable inference on spatial multivariate data using GP-IOX. 
 Use multi-threading (`num_threads > 1`) for faster computation on large datasets.
+How to set up `theta_opts`. Each column of theta has 4 elements. 1=phi, spatial decay parameter. 2=spatial variance. 3=smoothness or exponent. 4=nugget.
+MCMC will sample the jth parameter a posteriori (j=1,2,3,4) ONLY if `var(theta_opts[j,])>0`. 
+In other words, posterior sampling is DISABLED for parameter j if the entire jth row of `theta_opts` is set to the same value (which will be the fixed value of that parameter).
+for "IOX Full", `theta_opts` should have \eqn{q} columns. For "IOX Cluster", `theta_opts` should have as many columns as the number of clusters (choose it smaller than \eqn{q}).
+For "IOX Grid", `theta_opts` should have as many columns as the number of elements in the grid. Tested with up to 200 columns.
+Beware that each column corresponds to a Vecchia-GP with `m` neighbors, so the memory footprint increases linearly with the number of columns of `theta_opts`.
 }

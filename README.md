@@ -1,4 +1,6 @@
-# Inside-out cross-covariance for multivariate Gaussian processes
+# Inside-out cross-covariance for multivariate GPs
+
+This package implements Bayesian hierarchical models for fitting GPs with IOX cross-covariance. 
 
 ![Simulated data from IOX](https://github.com/mkln/spiox-paper/figures/prior_sample_3.png)
 

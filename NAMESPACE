@@ -4,7 +4,11 @@ importFrom(Rcpp, evalCpp)
 ## (but allow for private functions whose name starts with a dot).name <- function(...)
 #exportPattern("^[[:alpha:]]+")
 
+importFrom(fields, "rdist")
+importFrom(FNN, "get.knnx")
+
 export("spiox_response", "spiox_predict", "spiox_predict_part",
        "spiox_latent", "spiox_latent_predict",
        "scaling_factor_at_zero", 
-       "dag_vecchia", "dag_vecchia_predict")
+       "dag_vecchia", "dag_vecchia_predict",
+       "Correlationc")

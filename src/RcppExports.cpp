@@ -106,6 +106,17 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// MaxMincpp
+IntegerVector MaxMincpp(NumericMatrix locations);
+RcppExport SEXP _spiox_MaxMincpp(SEXP locationsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericMatrix >::type locations(locationsSEXP);
+    rcpp_result_gen = Rcpp::wrap(MaxMincpp(locations));
+    return rcpp_result_gen;
+END_RCPP
+}
 // S_to_Sigma
 arma::cube S_to_Sigma(const arma::cube& S);
 RcppExport SEXP _spiox_S_to_Sigma(SEXP SSEXP) {
@@ -262,6 +273,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_spiox_sfact", (DL_FUNC) &_spiox_sfact, 5},
     {"_spiox_make_ix", (DL_FUNC) &_spiox_make_ix, 2},
     {"_spiox_iox_mat", (DL_FUNC) &_spiox_iox_mat, 6},
+    {"_spiox_MaxMincpp", (DL_FUNC) &_spiox_MaxMincpp, 1},
     {"_spiox_S_to_Sigma", (DL_FUNC) &_spiox_S_to_Sigma, 1},
     {"_spiox_S_to_Q", (DL_FUNC) &_spiox_S_to_Q, 1},
     {"_spiox_Sigma_to_correl", (DL_FUNC) &_spiox_Sigma_to_correl, 1},
