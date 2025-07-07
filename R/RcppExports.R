@@ -56,6 +56,10 @@ Sigma_to_correl <- function(Sigma) {
     .Call(`_spiox_Sigma_to_correl`, Sigma)
 }
 
+Sigma_identify <- function(Sigma, theta) {
+    .Call(`_spiox_Sigma_identify`, Sigma, theta)
+}
+
 #' @title Spatial Response Model using Gaussian Processes with IOX.
 #' @description This function performs Bayesian inference for a spatial response model using a 
 #' multivariate GP with Inside-Out Cross-Covariance (IOX). 

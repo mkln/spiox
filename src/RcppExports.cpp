@@ -150,6 +150,18 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// Sigma_identify
+arma::cube Sigma_identify(const arma::cube& Sigma, const arma::cube& theta);
+RcppExport SEXP _spiox_Sigma_identify(SEXP SigmaSEXP, SEXP thetaSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::cube& >::type Sigma(SigmaSEXP);
+    Rcpp::traits::input_parameter< const arma::cube& >::type theta(thetaSEXP);
+    rcpp_result_gen = Rcpp::wrap(Sigma_identify(Sigma, theta));
+    return rcpp_result_gen;
+END_RCPP
+}
 // spiox_response
 Rcpp::List spiox_response(const arma::mat& Y, const arma::mat& X, const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, arma::mat theta_opts, const arma::mat& Sigma_start, const arma::mat& Beta_start, int mcmc, int print_every, int matern, bool sample_iwish, bool sample_mvr, bool sample_theta_gibbs, bool upd_theta_opts, int num_threads);
 RcppExport SEXP _spiox_spiox_response(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP theta_optsSEXP, SEXP Sigma_startSEXP, SEXP Beta_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP maternSEXP, SEXP sample_iwishSEXP, SEXP sample_mvrSEXP, SEXP sample_theta_gibbsSEXP, SEXP upd_theta_optsSEXP, SEXP num_threadsSEXP) {
@@ -277,6 +289,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_spiox_S_to_Sigma", (DL_FUNC) &_spiox_S_to_Sigma, 1},
     {"_spiox_S_to_Q", (DL_FUNC) &_spiox_S_to_Q, 1},
     {"_spiox_Sigma_to_correl", (DL_FUNC) &_spiox_Sigma_to_correl, 1},
+    {"_spiox_Sigma_identify", (DL_FUNC) &_spiox_Sigma_identify, 2},
     {"_spiox_spiox_response", (DL_FUNC) &_spiox_spiox_response, 15},
     {"_spiox_spiox_latent", (DL_FUNC) &_spiox_spiox_latent, 16},
     {"_spiox_spiox_predict", (DL_FUNC) &_spiox_spiox_predict, 11},

@@ -62,9 +62,6 @@ arma::mat iox(const arma::mat& x, const arma::mat& y, int i, int j,
   }
 }
 
-int time_count(std::chrono::steady_clock::time_point tstart){
-  return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - tstart).count();
-}
 
 //' @title Scaling factor of IOX.
 //' @description This function computes the scaling factor used to compute the cross-covariance at zero distance for IOX.
@@ -181,7 +178,7 @@ arma::uvec make_ix(int q, int n){
   return arma::regspace<arma::uvec>(0, n, n*q-1);
 }
 
-// IOX cross-covariance matrix function
+// IOX cross-covariance matrix function core
 //[[Rcpp::export]]
 arma::mat iox_mat(const arma::mat& x, const arma::mat& y, 
                   const arma::mat& S, const arma::mat& theta, 

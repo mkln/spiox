@@ -24,7 +24,6 @@ arma::cube S_to_Q(const arma::cube& S){
   return Q;
 }
 
-
 //[[Rcpp::export]]
 arma::cube Sigma_to_correl(const arma::cube& Sigma){
   int q = Sigma.n_rows;
@@ -42,4 +41,16 @@ arma::cube Sigma_to_correl(const arma::cube& Sigma){
   return Omega;
 }
 
-
+//[[Rcpp::export]]
+arma::cube Sigma_identify(const arma::cube& Sigma, const arma::cube& theta){
+  
+  arma::cube Sigma_id = arma::cube(arma::size(Sigma));
+  for(unsigned int m = 0; m<Sigma.n_slices; m++){
+    
+    arma::mat theta_local = theta.slice(m);
+    arma::mat Ider = arma::diagmat(sqrt(theta_local.row(1)));
+    
+    Sigma_id.slice(m) = Ider * Sigma.slice(m) * Ider;
+  }
+  return Sigma_id;
+}
