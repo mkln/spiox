@@ -48,6 +48,8 @@ Rcpp::List spiox_predict(
     arma::field<arma::mat> CC(q);
     arma::field<arma::mat> CPt(q);
     arma::field<arma::mat> PPi(q);
+    arma::field<arma::mat> ht(q);
+    arma::field<arma::mat> CPh(q);
     
     for(int m=0; m<mcmc; m++){
       
@@ -65,6 +67,7 @@ Rcpp::List spiox_predict(
       arma::mat rndnorm_m = random_stdnormal.row(m);
     
       arma::vec Dj = arma::zeros(q);
+      arma::vec Yspat = arma::zeros(q);
       
       // loop over outcomes
       for(int j=0; j<q; j++){
@@ -75,15 +78,14 @@ Rcpp::List spiox_predict(
           CC(j) = Correlationf(cxall, ix, ix, theta_m.col(j), bessel_ws, matern, true); // 1 for matern 
           CPt(j) = Correlationf(cxall, px, ix, theta_m.col(j), bessel_ws, matern, false);
           PPi(j) = arma::inv_sympd( Correlationf(cxall, px, px, theta_m.col(j), bessel_ws, matern, true) );  
+          ht(j) = PPi(j) * CPt(j);
+          CPh(j) = CPt(j).t() * ht(j);
+          Dj(j) = sqrt( abs(arma::conv_to<double>::from(
+            CC(j) - CPh(j) )) ); // abs for numerical zeros
+          Yspat(j) = arma::conv_to<double>::from(ht(j).t() * yxb_old(px, outjx)); 
         }
         
-        arma::vec ht = PPi(j) * CPt(j);
-        double sqrtR = sqrt( abs(arma::conv_to<double>::from(
-          CC(j) - CPt(j).t() * ht )) ); // abs for numerical zeros
-        
-        Y_out(j) = xb_new(j) + 
-          arma::conv_to<double>::from(ht.t() * yxb_old(px, outjx)); // post mean only
-        Dj(j) = sqrtR;
+        Y_out(j) = xb_new(j) + Yspat(j); // post mean only
       }
       
       Y_out += arma::diagmat(Dj) * Sigmauchol.t() * rndnorm_m.col(i) ; // pred uncert

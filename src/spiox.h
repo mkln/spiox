@@ -79,6 +79,8 @@ public:
   
   // -------------- run 1 gibbs iteration based on current values
   void gibbs(int it, int sample_sigma, bool sample_mvr, bool sample_theta_gibbs, bool upd_theta_opts);
+  void vi();
+  void map();
   double logdens_eval();
   
   std::chrono::steady_clock::time_point tstart;

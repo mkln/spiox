@@ -213,6 +213,46 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// spiox_response_vi
+Rcpp::List spiox_response_vi(const arma::mat& Y, const arma::mat& X, const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, arma::mat theta_opts, const arma::mat& Sigma_start, const arma::mat& Beta_start, int verbose, int matern, int num_threads);
+RcppExport SEXP _spiox_spiox_response_vi(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP theta_optsSEXP, SEXP Sigma_startSEXP, SEXP Beta_startSEXP, SEXP verboseSEXP, SEXP maternSEXP, SEXP num_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Y(YSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
+    Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type custom_dag(custom_dagSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type theta_opts(theta_optsSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Sigma_start(Sigma_startSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Beta_start(Beta_startSEXP);
+    Rcpp::traits::input_parameter< int >::type verbose(verboseSEXP);
+    Rcpp::traits::input_parameter< int >::type matern(maternSEXP);
+    Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(spiox_response_vi(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, verbose, matern, num_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// spiox_response_map
+Rcpp::List spiox_response_map(const arma::mat& Y, const arma::mat& X, const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, arma::mat theta_opts, const arma::mat& Sigma_start, const arma::mat& Beta_start, int verbose, int matern, int num_threads);
+RcppExport SEXP _spiox_spiox_response_map(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP theta_optsSEXP, SEXP Sigma_startSEXP, SEXP Beta_startSEXP, SEXP verboseSEXP, SEXP maternSEXP, SEXP num_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Y(YSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
+    Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type custom_dag(custom_dagSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type theta_opts(theta_optsSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Sigma_start(Sigma_startSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Beta_start(Beta_startSEXP);
+    Rcpp::traits::input_parameter< int >::type verbose(verboseSEXP);
+    Rcpp::traits::input_parameter< int >::type matern(maternSEXP);
+    Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(spiox_response_map(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, verbose, matern, num_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
 // spiox_predict
 Rcpp::List spiox_predict(const arma::mat& X_new, const arma::mat& coords_new, const arma::mat& Y, const arma::mat& X, const arma::mat& coords, const arma::field<arma::uvec>& dag, const arma::cube& B, const arma::cube& Sigma, const arma::cube& theta, int matern, int num_threads);
 RcppExport SEXP _spiox_spiox_predict(SEXP X_newSEXP, SEXP coords_newSEXP, SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP dagSEXP, SEXP BSEXP, SEXP SigmaSEXP, SEXP thetaSEXP, SEXP maternSEXP, SEXP num_threadsSEXP) {
@@ -292,6 +332,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_spiox_Sigma_identify", (DL_FUNC) &_spiox_Sigma_identify, 2},
     {"_spiox_spiox_response", (DL_FUNC) &_spiox_spiox_response, 15},
     {"_spiox_spiox_latent", (DL_FUNC) &_spiox_spiox_latent, 16},
+    {"_spiox_spiox_response_vi", (DL_FUNC) &_spiox_spiox_response_vi, 10},
+    {"_spiox_spiox_response_map", (DL_FUNC) &_spiox_spiox_response_map, 10},
     {"_spiox_spiox_predict", (DL_FUNC) &_spiox_spiox_predict, 11},
     {"_spiox_spiox_predict_part", (DL_FUNC) &_spiox_spiox_predict_part, 12},
     {"_spiox_spiox_latent_predict", (DL_FUNC) &_spiox_spiox_latent_predict, 11},

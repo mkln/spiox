@@ -170,6 +170,14 @@ spiox_latent <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta
     .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc, print_every, matern, sample_iwish, sample_mvr, sample_theta_gibbs, upd_theta_opts, num_threads, sampling)
 }
 
+spiox_response_vi <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, verbose = 0L, matern = 1L, num_threads = 1L) {
+    .Call(`_spiox_spiox_response_vi`, Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, verbose, matern, num_threads)
+}
+
+spiox_response_map <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, verbose = 0L, matern = 1L, num_threads = 1L) {
+    .Call(`_spiox_spiox_response_map`, Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, verbose, matern, num_threads)
+}
+
 spiox_predict <- function(X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, matern = 1L, num_threads = 1L) {
     .Call(`_spiox_spiox_predict`, X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, matern, num_threads)
 }

@@ -351,3 +351,198 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   );
   
 }
+
+
+// [[Rcpp::export]]
+Rcpp::List spiox_response_vi(const arma::mat& Y, 
+                          const arma::mat& X, 
+                          const arma::mat& coords,
+                          
+                          const arma::field<arma::uvec>& custom_dag,
+                          
+                          arma::mat theta_opts, 
+                          
+                          const arma::mat& Sigma_start,
+                          const arma::mat& Beta_start,
+                          
+                          int verbose = 0,
+                          int matern = 1,
+                          int num_threads = 1){
+  
+  double tol = 1e-5;
+  int min_iter = 1;
+  int max_iter = 500;
+  
+  Rcpp::Rcout << "GP-IOX response model." << endl;
+  
+#ifdef _OPENMP
+  omp_set_num_threads(num_threads);
+#else
+  if(num_threads > 1){
+    Rcpp::warning("num_threads > 1, but source not compiled with OpenMP support.");
+    num_threads = 1;
+  }
+#endif
+  
+  int latent_model = 0;
+  
+  unsigned int q = Y.n_cols;
+  unsigned int n = Y.n_rows;
+  
+  if(verbose > 0){
+    Rcpp::Rcout << "Preparing..." << endl;
+  }
+  
+  SpIOX iox_model(Y, X, coords, custom_dag, 
+                  latent_model,
+                  theta_opts, 
+                  Sigma_start,
+                  Beta_start,
+                  matern,
+                  num_threads);
+  
+  // storage
+  arma::mat Beta = arma::zeros(iox_model.p, q);
+  arma::mat theta = arma::zeros(4, q);
+  
+  arma::mat Sigma = arma::zeros(q, q);
+  
+  bool stop=false;
+  int i=0;
+  while(!stop){
+    i ++;
+    
+    arma::mat Beta_pre = Beta;
+    arma::mat Sigma_pre = Sigma;
+    
+    iox_model.vi();
+    
+    Beta = iox_model.B;
+    Sigma = iox_model.Sigma;
+    
+    double rel_mu_change = arma::norm(Beta - Beta_pre, 2) / arma::norm(Beta_pre, 2);
+    double rel_sigma_change = arma::norm(Sigma - Sigma_pre, "fro") / arma::norm(Sigma_pre, "fro");
+    
+    if (rel_mu_change < tol && rel_sigma_change < tol && i > min_iter) {
+      stop=true;
+    }
+    
+    bool print_condition = (verbose>0);
+    if(print_condition){
+      Rcpp::Rcout << "Iteration: " <<  i << endl;
+    };
+    
+    
+    
+    
+    
+    bool interrupted = checkInterrupt();
+    if(interrupted){
+      Rcpp::stop("Interrupted by the user.");
+    }
+  }
+  
+  return Rcpp::List::create(
+    Rcpp::Named("Beta") = Beta,
+    Rcpp::Named("Sigma") = Sigma
+  );
+  
+}
+
+
+// [[Rcpp::export]]
+Rcpp::List spiox_response_map(const arma::mat& Y, 
+                             const arma::mat& X, 
+                             const arma::mat& coords,
+                             
+                             const arma::field<arma::uvec>& custom_dag,
+                             
+                             arma::mat theta_opts, 
+                             
+                             const arma::mat& Sigma_start,
+                             const arma::mat& Beta_start,
+                             
+                             int verbose = 0,
+                             int matern = 1,
+                             int num_threads = 1){
+  
+  double tol = 1e-5;
+  int min_iter = 1;
+  int max_iter = 500;
+  
+  Rcpp::Rcout << "GP-IOX response model." << endl;
+  
+#ifdef _OPENMP
+  omp_set_num_threads(num_threads);
+#else
+  if(num_threads > 1){
+    Rcpp::warning("num_threads > 1, but source not compiled with OpenMP support.");
+    num_threads = 1;
+  }
+#endif
+  
+  int latent_model = 0;
+  
+  unsigned int q = Y.n_cols;
+  unsigned int n = Y.n_rows;
+  
+  if(verbose > 0){
+    Rcpp::Rcout << "Preparing..." << endl;
+  }
+  
+  SpIOX iox_model(Y, X, coords, custom_dag, 
+                  latent_model,
+                  theta_opts, 
+                  Sigma_start,
+                  Beta_start,
+                  matern,
+                  num_threads);
+  
+  // storage
+  arma::mat Beta = arma::zeros(iox_model.p, q);
+  arma::mat theta = arma::zeros(4, q);
+  
+  arma::mat Sigma = arma::zeros(q, q);
+  
+  bool stop=false;
+  int i=0;
+  while(!stop){
+    i ++;
+    
+    arma::mat Beta_pre = Beta;
+    arma::mat Sigma_pre = Sigma;
+    
+    iox_model.map();
+    
+    Beta = iox_model.B;
+    Sigma = iox_model.Sigma;
+    
+    double rel_mu_change = arma::norm(Beta - Beta_pre, 2) / arma::norm(Beta_pre, 2);
+    double rel_sigma_change = arma::norm(Sigma - Sigma_pre, "fro") / arma::norm(Sigma_pre, "fro");
+    
+    if (rel_mu_change < tol && rel_sigma_change < tol && i > min_iter) {
+      stop=true;
+    }
+    
+    bool print_condition = (verbose>0);
+    if(print_condition){
+      Rcpp::Rcout << "Iteration: " <<  i << endl;
+    };
+    
+    
+    
+    
+    
+    bool interrupted = checkInterrupt();
+    if(interrupted){
+      Rcpp::stop("Interrupted by the user.");
+    }
+  }
+  
+  return Rcpp::List::create(
+    Rcpp::Named("Beta") = Beta,
+    Rcpp::Named("Sigma") = Sigma
+  );
+  
+}
+

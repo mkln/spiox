@@ -28,6 +28,7 @@ arma::mat iox(const arma::mat& x, const arma::mat& y, int i, int j,
   arma::mat rhoj_yS = Correlationc(y, S, thetaj, matern, false);
   
   arma::mat R = arma::zeros(x.n_rows, y.n_rows);
+  arma::vec Rdiag = arma::zeros(x.n_rows);
   
   if(!at_limit){
     arma::mat fixcoord = arma::zeros(1, 2);
@@ -35,9 +36,27 @@ arma::mat iox(const arma::mat& x, const arma::mat& y, int i, int j,
     double atZerodistj = Correlationc(fixcoord, fixcoord, thetaj, matern, true)(0,0);
     
     for(unsigned int r=0; r<x.n_rows; r++){
-      bool Ri_computed = false; // avoid computing until we actually need 
-      double Ri = 0;
-      for(unsigned int c=0; c<y.n_rows; c++){
+      if(!diag_only){
+        bool Ri_computed = false; // avoid computing until we actually need 
+        double Ri = 0;
+        for(unsigned int c=0; c<y.n_rows; c++){
+          double dist = arma::accu(abs( x.row(r) - y.row(c) ));
+          if(dist == 0){
+            if(!Ri_computed){ // compute Ri 
+              Ri = atZerodisti - arma::conv_to<double>::from(
+                rhoi_xS.row(r) * Ki_inv * arma::trans(rhoi_xS.row(r)) );
+              if(Ri < 0){ Ri = 0; } // numerical zero, coord is in S
+            }
+            double Rj = atZerodistj - arma::conv_to<double>::from(
+              rhoj_yS.row(c) * Kj_inv * arma::trans(rhoj_yS.row(c)) );
+            if(Rj < 0){ Rj = 0; } // numerical zero, coord is in S
+            R(r,c) = sqrt(Ri * Rj);
+          }
+        }
+      } else {
+        bool Ri_computed = false; // avoid computing until we actually need 
+        double Ri = 0;
+        int c=r; 
         double dist = arma::accu(abs( x.row(r) - y.row(c) ));
         if(dist == 0){
           if(!Ri_computed){ // compute Ri 
@@ -48,15 +67,16 @@ arma::mat iox(const arma::mat& x, const arma::mat& y, int i, int j,
           double Rj = atZerodistj - arma::conv_to<double>::from(
             rhoj_yS.row(c) * Kj_inv * arma::trans(rhoj_yS.row(c)) );
           if(Rj < 0){ Rj = 0; } // numerical zero, coord is in S
-          R(r,c) = sqrt(Ri * Rj);
-        }
+          Rdiag(r) = sqrt(Ri * Rj);
+        } 
       }
+      
     } 
   }
   
-  
   if(diag_only){
-    return arma::sum((rhoi_xS * Li_inv.t())%(rhoj_yS * Lj_inv.t()), 1) + R.diag();
+    arma::mat maincomp = arma::sum((rhoi_xS * Li_inv.t())%(rhoj_yS * Lj_inv.t()), 1);
+    return maincomp + Rdiag;//R.diag();
   } else {
     return rhoi_xS * Li_inv.t() * Lj_inv * rhoj_yS.t() + R;
   }

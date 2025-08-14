@@ -1,6 +1,5 @@
 #include "spiox.h"
 
-
 using namespace std;
 
 int time_count(std::chrono::steady_clock::time_point tstart){
@@ -38,7 +37,7 @@ void SpIOX::init_theta_adapt(){
     bounds_all.row(2) = arma::rowvec({1, 2}); // nu
   }
   
-  bounds_all.row(3) = arma::rowvec({1e-6, 100}); // tausq
+  bounds_all.row(3) = arma::rowvec({1e-16, 100}); // tausq
   bounds_all = bounds_all.rows(which_theta_elem);
   theta_unif_bounds = arma::zeros(0, 2);
   
@@ -239,7 +238,7 @@ void SpIOX::upd_theta_metrop(){
   }
   tend = std::chrono::steady_clock::now();
   timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
-  
+  //Rcpp::Rcout << "update dag proposal: " << timed << endl;
   // ----------------------
   // current density and proposal density
   tstart = std::chrono::steady_clock::now();
@@ -263,7 +262,11 @@ void SpIOX::upd_theta_metrop(){
     daggp_logdets(j) = daggp_options.at(spmap(j)).precision_logdeterminant;
     daggp_alt_logdets(j) = daggp_options_alt.at(spmap(j)).precision_logdeterminant;
   }
+  tend = std::chrono::steady_clock::now();
+  timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
+  //Rcpp::Rcout << "computing V: " << timed << endl;
   
+  tstart = std::chrono::steady_clock::now();
   // current
   //arma::mat Ytildemat = arma::mat(vecYtilde.memptr(), n, q, false, true);
   //arma::vec ytilde = arma::vectorise(V * Si);
@@ -278,7 +281,7 @@ void SpIOX::upd_theta_metrop(){
   
   tend = std::chrono::steady_clock::now();
   timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
-  //Rcpp::Rcout << timed << endl;
+  //Rcpp::Rcout << "computing VSi: " << timed << endl;
   
   // priors
   double logpriors = 0;
@@ -649,6 +652,116 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_mvr, bool sample_theta_g
     timings(5) += time_count(tstart);
   }
 }
+
+
+void SpIOX::vi(){
+  arma::mat Ytilde = Y;
+  arma::mat Xtilde = arma::zeros(n*q, p*q);
+  
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+  for(unsigned int j=0; j<q; j++){
+    Ytilde.col(j) = daggp_options.at(spmap(j)).H_times_A(Y.col(j)); // whitening
+    arma::mat HX = daggp_options.at(spmap(j)).H_times_A(X);         // whitened X
+    for(unsigned int i=0; i<q; i++){
+      Xtilde.submat(i * n,       j * p,
+                    (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX;
+    }
+  }
+  
+  arma::vec ytilde = arma::vectorise(Ytilde * Si); // vec(Y^* Σ^{-1})
+  
+  // prior precision (diagonal)
+  arma::vec vecB_Var = arma::vectorise(B_Var);
+  arma::mat prior_prec = arma::diagmat(1.0 / vecB_Var);
+  
+  // posterior precision Λ_b = X̃ᵗ X̃ + prior precision
+  arma::mat post_precision = prior_prec + Xtilde.t() * Xtilde;
+  
+  // posterior mean μ_b = Λ_b^{-1} X̃ᵗ ỹ
+  arma::vec mu_b = arma::solve(post_precision, Xtilde.t() * ytilde);
+  
+  // store the mean and optionally the covariance (if needed for ELBO or sampling)
+  B = arma::mat(mu_b.memptr(), p, q);  // reshape to matrix for consistency
+  
+  arma::mat B_post_cov = arma::inv_sympd(post_precision);
+  
+  // V = whitened Y-XB or W
+  compute_V();
+  
+  // trace terms
+  arma::mat E2 = arma::zeros(q, q);
+  for (unsigned int i = 0; i < q; ++i){
+    arma::mat Xi = Xtilde.rows(i * n, (i+1) * n - 1);
+    for (unsigned int j = 0; j < q; ++j){
+      arma::mat Xj = Xtilde.rows(j * n, (j+1) * n - 1);
+      E2(i,j) = arma::trace(Xi * B_post_cov * Xj.t());
+    }
+  }
+  
+  arma::mat S_post = arma::eye(q,q) + V.t()*V + E2;
+  double df_post = q + n;
+  
+  Sigma = S_post / (df_post - q - 1);         // Mean of IW
+  Q = arma::inv_sympd(Sigma);         // Expectation of Σ⁻¹
+  Si = arma::chol(Q, "lower");        // For B update
+
+
+}
+
+
+void SpIOX::map(){
+  arma::mat Ytilde = Y;
+  arma::mat Xtilde = arma::zeros(n*q, p*q);
+  
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+  for(unsigned int j=0; j<q; j++){
+    Ytilde.col(j) = daggp_options.at(spmap(j)).H_times_A(Y.col(j)); // whitening
+    arma::mat HX = daggp_options.at(spmap(j)).H_times_A(X);         // whitened X
+    for(unsigned int i=0; i<q; i++){
+      Xtilde.submat(i * n,       j * p,
+                    (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX;
+    }
+  }
+  
+  arma::vec ytilde = arma::vectorise(Ytilde * Si); // vec(Y^* Σ^{-1})
+  
+  arma::vec vecB_Var = arma::vectorise(B_Var);
+  arma::mat prior_prec = arma::diagmat(1.0 / vecB_Var);
+  
+  arma::mat post_precision = prior_prec + Xtilde.t() * Xtilde;
+  arma::vec mu_b = arma::solve(post_precision, Xtilde.t() * ytilde);
+  
+  // store the mean and optionally the covariance (if needed for ELBO or sampling)
+  B = arma::mat(mu_b.memptr(), p, q);  // reshape to matrix for consistency
+  
+  arma::mat B_post_cov = arma::inv_sympd(post_precision);
+  
+  // V = whitened Y-XB or W
+  compute_V();
+  
+  // trace terms
+  arma::mat E2 = arma::zeros(q, q);
+  for (unsigned int i = 0; i < q; ++i){
+    arma::mat Xi = Xtilde.rows(i * n, (i+1) * n - 1);
+    for (unsigned int j = 0; j < q; ++j){
+      arma::mat Xj = Xtilde.rows(j * n, (j+1) * n - 1);
+      E2(i,j) = arma::trace(Xi * B_post_cov * Xj.t());
+    }
+  }
+  
+  arma::mat S_post = arma::eye(q,q) + V.t()*V + E2;
+  double df_post = q + n;
+  
+  Sigma = S_post / (df_post + q + 1); // mode of IW
+  Q = arma::inv_sympd(Sigma);         
+  Si = arma::chol(Q, "lower");       
+
+}
+
 
 double SpIOX::logdens_eval(){
   arma::vec vecYtilde = arma::vectorise(Y - X * B);
