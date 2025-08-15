@@ -5,8 +5,12 @@ Correlationc <- function(coordsx, coordsy, theta, matern, same) {
     .Call(`_spiox_Correlationc`, coordsx, coordsy, theta, matern, same)
 }
 
-daggp_build <- function(coords, dag, phi, sigmasq, nu, tausq, matern = 1L, num_threads = 1L) {
-    .Call(`_spiox_daggp_build`, coords, dag, phi, sigmasq, nu, tausq, matern, num_threads)
+dag_for_gridded_cols <- function(coords, m = 20L) {
+    .Call(`_spiox_dag_for_gridded_cols`, coords, m)
+}
+
+daggp_build <- function(coords, dag, phi, sigmasq, nu, tausq, matern = 1L, num_threads = 1L, prune_dag = FALSE) {
+    .Call(`_spiox_daggp_build`, coords, dag, phi, sigmasq, nu, tausq, matern, num_threads, prune_dag)
 }
 
 iox <- function(x, y, i, j, S, theta, matern = TRUE, diag_only = FALSE, at_limit = FALSE) {
@@ -108,8 +112,8 @@ Sigma_identify <- function(Sigma, theta) {
 #' Beware that each column corresponds to a Vecchia-GP with `m` neighbors, so the memory footprint increases linearly with the number of columns of `theta_opts`.
 #'
 #' @export
-spiox_response <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc = 1000L, print_every = 100L, matern = 1L, sample_iwish = TRUE, sample_mvr = TRUE, sample_theta_gibbs = FALSE, upd_theta_opts = TRUE, num_threads = 1L) {
-    .Call(`_spiox_spiox_response`, Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc, print_every, matern, sample_iwish, sample_mvr, sample_theta_gibbs, upd_theta_opts, num_threads)
+spiox_response <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_iwish = TRUE, sample_mvr = TRUE, sample_theta_gibbs = FALSE, upd_theta_opts = TRUE, num_threads = 1L) {
+    .Call(`_spiox_spiox_response`, Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc, print_every, matern, dag_opts, sample_iwish, sample_mvr, sample_theta_gibbs, upd_theta_opts, num_threads)
 }
 
 #' @title Spatial Latent Model using Gaussian Processes with IOX as prior for latent effects.
@@ -166,16 +170,16 @@ spiox_response <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Be
 #' Beware that each column corresponds to a Vecchia-GP with `m` neighbors, so the memory footprint increases linearly with the number of columns of `theta_opts`.
 #'
 #' @export
-spiox_latent <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc = 1000L, print_every = 100L, matern = 1L, sample_iwish = TRUE, sample_mvr = TRUE, sample_theta_gibbs = TRUE, upd_theta_opts = TRUE, num_threads = 1L, sampling = 2L) {
-    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc, print_every, matern, sample_iwish, sample_mvr, sample_theta_gibbs, upd_theta_opts, num_threads, sampling)
+spiox_latent <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_iwish = TRUE, sample_mvr = TRUE, sample_theta_gibbs = TRUE, upd_theta_opts = TRUE, num_threads = 1L, sampling = 2L) {
+    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc, print_every, matern, dag_opts, sample_iwish, sample_mvr, sample_theta_gibbs, upd_theta_opts, num_threads, sampling)
 }
 
-spiox_response_vi <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, verbose = 0L, matern = 1L, num_threads = 1L) {
-    .Call(`_spiox_spiox_response_vi`, Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, verbose, matern, num_threads)
+spiox_response_vi <- function(Y, X, coords, custom_dag, dag_opts, theta_opts, Sigma_start, Beta_start, verbose = 0L, matern = 1L, num_threads = 1L) {
+    .Call(`_spiox_spiox_response_vi`, Y, X, coords, custom_dag, dag_opts, theta_opts, Sigma_start, Beta_start, verbose, matern, num_threads)
 }
 
-spiox_response_map <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, verbose = 0L, matern = 1L, num_threads = 1L) {
-    .Call(`_spiox_spiox_response_map`, Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, verbose, matern, num_threads)
+spiox_response_map <- function(Y, X, coords, custom_dag, dag_opts, theta_opts, Sigma_start, Beta_start, verbose = 0L, matern = 1L, num_threads = 1L) {
+    .Call(`_spiox_spiox_response_map`, Y, X, coords, custom_dag, dag_opts, theta_opts, Sigma_start, Beta_start, verbose, matern, num_threads)
 }
 
 spiox_predict <- function(X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, matern = 1L, num_threads = 1L) {

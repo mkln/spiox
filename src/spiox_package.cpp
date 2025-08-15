@@ -64,6 +64,7 @@ Rcpp::List spiox_response(const arma::mat& Y,
                     int mcmc = 1000,
                     int print_every = 100,
                     int matern = 1,
+                    int dag_opts = 0,
                     bool sample_iwish = true,
                     bool sample_mvr = true,
                     bool sample_theta_gibbs = false,
@@ -101,7 +102,7 @@ Rcpp::List spiox_response(const arma::mat& Y,
     Rcpp::Rcout << "Preparing..." << endl;
   }
   
-  SpIOX iox_model(Y, X, coords, custom_dag, 
+  SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   latent_model,
                   theta_opts, 
                    Sigma_start,
@@ -159,7 +160,8 @@ Rcpp::List spiox_response(const arma::mat& Y,
     Rcpp::Named("theta") = theta,
     Rcpp::Named("theta_which") = theta_which,
     Rcpp::Named("theta_opts") = theta_opts_save,
-    Rcpp::Named("timings") = iox_model.timings
+    Rcpp::Named("timings") = iox_model.timings,
+    Rcpp::Named("dag_cache") = iox_model.daggp_options[0].dag_cache
   );
   
 }
@@ -233,6 +235,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           int mcmc=1000,
                           int print_every=100,
                           int matern = 1,
+                          int dag_opts = 0,
                           bool sample_iwish=true,
                           bool sample_mvr=true,
                           bool sample_theta_gibbs=true,
@@ -283,7 +286,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     Rcpp::Rcout << "Preparing..." << endl;
   }
   
-  SpIOX iox_model(Y, X, coords, custom_dag, 
+  SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   sampling,
                   theta_opts, 
                   Sigma_start,
@@ -359,7 +362,7 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
                           const arma::mat& coords,
                           
                           const arma::field<arma::uvec>& custom_dag,
-                          
+                          int dag_opts,
                           arma::mat theta_opts, 
                           
                           const arma::mat& Sigma_start,
@@ -393,7 +396,7 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
     Rcpp::Rcout << "Preparing..." << endl;
   }
   
-  SpIOX iox_model(Y, X, coords, custom_dag, 
+  SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   latent_model,
                   theta_opts, 
                   Sigma_start,
@@ -456,7 +459,7 @@ Rcpp::List spiox_response_map(const arma::mat& Y,
                              const arma::mat& coords,
                              
                              const arma::field<arma::uvec>& custom_dag,
-                             
+                             int dag_opts,
                              arma::mat theta_opts, 
                              
                              const arma::mat& Sigma_start,
@@ -490,7 +493,7 @@ Rcpp::List spiox_response_map(const arma::mat& Y,
     Rcpp::Rcout << "Preparing..." << endl;
   }
   
-  SpIOX iox_model(Y, X, coords, custom_dag, 
+  SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   latent_model,
                   theta_opts, 
                   Sigma_start,

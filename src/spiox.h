@@ -91,9 +91,9 @@ public:
         const arma::mat& _X, 
         const arma::mat& _coords,
         const arma::field<arma::uvec>& custom_dag,
+        int dag_opts,
         int latent_model_choice,
         const arma::mat& daggp_theta, 
-        
         const arma::mat& Sigma_start,
         const arma::mat& mvreg_B_start,
         int cov_model_matern,
@@ -135,7 +135,9 @@ public:
     //Rcpp::Rcout << "Covariance choice: " << matern << endl;
     
     for(unsigned int i=0; i<n_options; i++){
-      daggp_options[i] = DagGP(_coords, theta_options.col(i), custom_dag, //daggp_rho, 
+      daggp_options[i] = DagGP(_coords, theta_options.col(i), custom_dag, 
+                               dag_opts,
+                               //daggp_rho, 
                                matern, 
                                latent_model==3, // with q blocks, make Ci
                                num_threads);
