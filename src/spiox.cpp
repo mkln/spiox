@@ -331,8 +331,8 @@ void SpIOX::upd_theta_metrop_conditional(){
     arma::vec U_update = arma::randn(phisig_cur.n_elem);
     
     arma::vec phisig_alt = par_huvtransf_back(par_huvtransf_fwd(
-      phisig_cur, theta_unif_bounds) + 
-        c_theta_adapt[j].paramsd * U_update, theta_unif_bounds);
+      phisig_cur, c_theta_unif_bounds) + 
+        c_theta_adapt[j].paramsd * U_update, c_theta_unif_bounds);
     
     // proposal for theta matrix
     arma::mat theta_alt = theta_options;
@@ -379,7 +379,7 @@ void SpIOX::upd_theta_metrop_conditional(){
     
     // ------------------
     // make move
-    double jacobian  = calc_jacobian(phisig_alt, phisig_cur, theta_unif_bounds);
+    double jacobian  = calc_jacobian(phisig_alt, phisig_cur, c_theta_unif_bounds);
     double logaccept = prop_logdens - curr_logdens + jacobian + logpriors;
     
     bool accepted = do_I_accept(logaccept);
