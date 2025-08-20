@@ -586,7 +586,7 @@ void SpIOX::sample_Dvec(){
 }
 
 void SpIOX::sample_Sigma_wishart(){
-  arma::mat Smean = n * arma::cov(V) + arma::eye(V.n_cols, V.n_cols);
+  arma::mat Smean = V.t() * V + arma::eye(V.n_cols, V.n_cols);
   arma::mat Q_mean_post = arma::inv_sympd(Smean);
   double df_post = n + (V.n_cols);
   

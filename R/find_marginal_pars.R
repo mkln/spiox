@@ -1,7 +1,9 @@
-find_marginal_pars <- function(Y, X, coords, m_nn = 20,
-                               ncores = parallel::detectCores(logical = FALSE)-1) {
+find_marginal_pars <- function(Y, X, coords, m_nn = 20) {
   
-  fitter <- function(j) {
+  q <- ncol(Y)
+  theta <- matrix(0, nrow=4, ncol=q)
+  for(j in seq_len(q)){
+    cat(j, "\n")
     y_j  <- Y[, j]
     out  <- GpGp::fit_model(y = y_j, locs = coords,
                             X = X, m_seq = m_nn, silent = TRUE)
@@ -11,13 +13,9 @@ find_marginal_pars <- function(Y, X, coords, m_nn = 20,
     phi     <- 1 / out$covparms[2]
     nu      <- out$covparms[3]
     
-    c(phi, sigmasq, nu, tausq)
+    theta[,j] <- c(phi, sigmasq, nu, tausq)
   }
   
-  res_list <- parallel::mclapply(X = seq_len(ncol(Y)), FUN = fitter,
-    mc.cores  = ncores, mc.preschedule = TRUE)
-  
-  theta <- do.call(cbind, res_list)
   rownames(theta) <- c("phi", "sigmasq", "nu", "tausq")
   return(theta)
 }
