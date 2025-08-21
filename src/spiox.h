@@ -15,6 +15,7 @@ public:
   
   // matrix of outcomes dim n, q 
   arma::mat Y;
+  arma::field<arma::uvec> avail_by_outcome;
   // matrix of predictors dim n, p
   arma::mat X;
   
@@ -31,21 +32,18 @@ public:
   arma::mat S, Si, Sigma, Q; // S^T * S = Sigma = Q^-1 = (Lambda*Lambda^T + Delta)^-1 = (Si * Si^T)^-1
   
   // RadGP for spatial dependence
-  std::vector<DagGP> daggp_options, daggp_options_alt;
-  arma::mat theta_options; // each column is one alternative value for theta
-  unsigned int n_options;
-  arma::uvec spmap; // qx1 vector spmap(i) = which element of daggp_options for factor i
+  std::vector<DagGP> daggps, daggps_alt;
+  arma::mat theta; // each column is one alternative value for theta
   
   arma::mat V; 
   
   // -------------- utilities
   int matern;
   void sample_B(); // 
-  void sample_Sigma_wishart();
-  void compute_V(); // whitened
-  void sample_theta_discr(); // gibbs for each outcome choosing from options
+  void sample_Sigma_iwishart();
+  void compute_V(); 
   void upd_theta_metrop();
-  void upd_theta_metrop_conditional(); // n_options == q
+  void upd_theta_metrop_conditional();
   void init_theta_adapt();
   
   // latent model 
@@ -78,7 +76,7 @@ public:
   
   
   // -------------- run 1 gibbs iteration based on current values
-  void gibbs(int it, int sample_sigma, bool sample_mvr, bool sample_theta_gibbs, bool upd_theta_opts);
+  void gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta);
   void vi();
   void map();
   double logdens_eval();
@@ -109,8 +107,22 @@ public:
     p = X.n_cols;
     
     latent_model = latent_model_choice; // latent model? 
+    
+    // managing misalignment, i.e. not all outcomes observed at all locations
+    // indices of non-NAs 
+    avail_by_outcome = arma::field<arma::uvec>(q);
+    //miss_by_outcome = arma::field<arma::uvec>(q);
+    for(int j=0; j<q; j++){
+      avail_by_outcome(j) = arma::find_finite(Y.col(j));
+     // miss_by_outcome(j) = arma::find_nonfinite(Y.col(j));
+    }
+    if(Y.has_nonfinite() & latent_model!=2){
+      Rcpp::stop("nq block and single outcome samplers not implemented for misaligned data.\n");
+    }
+    
     if(latent_model>0){
       W = Y;
+      W(arma::find_nonfinite(W)).fill(0);
       XtX = X.t() * X;
       Dvec = arma::ones(q)*.01;
     }
@@ -120,36 +132,27 @@ public:
     
     B_Var = 1000 * arma::ones(arma::size(B));
     
-    theta_options = daggp_theta;
-    n_options = theta_options.n_cols;
-    daggp_options = std::vector<DagGP>(n_options);//.reserve(n_options);
+    theta = daggp_theta;
+    daggps = std::vector<DagGP>(q);
     
     // if multiple nu options, interpret as wanting to sample smoothness for matern
     // otherwise, power exponential with fixed exponent.
-    phi_sampling = (q == 1) | (arma::var(theta_options.row(0)) != 0);
-    sigmasq_sampling = (q == 1) | (arma::var(theta_options.row(1)) != 0);
-    nu_sampling = (q == 1) | (arma::var(theta_options.row(2)) != 0);
-    tausq_sampling = (q == 1) | (arma::var(theta_options.row(3)) != 0);
+    phi_sampling = (q == 1) | (arma::var(theta.row(0)) != 0);
+    sigmasq_sampling = (q == 1) | (arma::var(theta.row(1)) != 0);
+    nu_sampling = (q == 1) | (arma::var(theta.row(2)) != 0);
+    tausq_sampling = (q == 1) | (arma::var(theta.row(3)) != 0);
     
     matern = cov_model_matern;
     //Rcpp::Rcout << "Covariance choice: " << matern << endl;
     
-    for(unsigned int i=0; i<n_options; i++){
-      daggp_options[i] = DagGP(_coords, theta_options.col(i), custom_dag, 
+    for(unsigned int i=0; i<q; i++){
+      daggps[i] = DagGP(_coords, theta.col(i), custom_dag, 
                                dag_opts,
-                               //daggp_rho, 
                                matern, 
                                latent_model==3, // with q blocks, make Ci
                                num_threads);
     }
-    daggp_options_alt = daggp_options;
-    if(n_options < q){
-      // will need update from discrete
-      spmap = arma::zeros<arma::uvec>(q);
-    } else { 
-      // 
-      spmap = arma::regspace<arma::uvec>(0, q-1);
-    }
+    daggps_alt = daggps;
     
     init_theta_adapt();
     

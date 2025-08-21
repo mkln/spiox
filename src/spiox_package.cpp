@@ -20,13 +20,11 @@
 //' @param print_every An integer specifying the frequency of progress updates during MCMC iterations. Default is 100.
 //' @param matern An integer flag for enabling Matérn correlation functions for spatial dependence modeling. Default is 1.
 //' Other options: 0=power exponential, 2=wave.
-//' @param sample_iwish A logical value indicating whether to sample the covariance matrix (\eqn{\Sigma}) 
+//' @param sample_sigma A logical value indicating whether to sample the covariance matrix (\eqn{\Sigma}) 
 //' via Gibbs update from an Inverse Wishart prior. Default is TRUE. 
-//' @param sample_mvr A logical value indicating whether to sample multivariate regression coefficients 
+//' @param sample_beta A logical value indicating whether to sample multivariate regression coefficients 
 //' via Gibbs update from a Normal prior. Default is TRUE.
-//' @param sample_theta_gibbs A logical value indicating whether to enable Gibbs sampling for the correlation 
-//' parameters (\eqn{\theta}). This should be set to TRUE to run "IOX Grid" or "IOX Cluster" from the paper, otherwise FALSE.
-//' @param upd_theta_opts A logical value indicating whether to update the correlation parameter options (\eqn{\theta}) 
+//' @param update_theta A logical value indicating whether to update the correlation parameter options (\eqn{\theta}) 
 //' adaptively during MCMC iterations. This should be set to TRUE to run "IOX Full" or "IOX Cluster" from the paper, otherwise FALSE.
 //' The update is performed jointly for the whole vector if q=3 or less; conditionally in blocks if q>3.
 //' @param num_threads An integer specifying the number of threads for parallel computation. Default is 1.
@@ -65,10 +63,9 @@ Rcpp::List spiox_response(const arma::mat& Y,
                     int print_every = 100,
                     int matern = 1,
                     int dag_opts = 0,
-                    bool sample_iwish = true,
-                    bool sample_mvr = true,
-                    bool sample_theta_gibbs = false,
-                    bool upd_theta_opts = true,
+                    bool sample_sigma = true,
+                    bool sample_beta = true,
+                    bool update_theta = false,
                     int num_threads = 1){
   
   Rcpp::Rcout << "GP-IOX response model." << endl;
@@ -87,16 +84,7 @@ Rcpp::List spiox_response(const arma::mat& Y,
   unsigned int q = Y.n_cols;
   unsigned int n = Y.n_rows;
   
-  if(upd_theta_opts){
-    unsigned int n_opts = theta_opts.n_cols;
-    if(n_opts > q){
-      theta_opts = theta_opts.head_cols(q);
-      Rcpp::warning("Limiting theta options to = number of outcomes.\n"
-                    "(More options provided for theta than number of outcomes & updating via Metropolis) ");
-    }
-  }
-  
-  int sample_precision = 2 * sample_iwish;
+  int sample_precision = 2 * sample_sigma;
   
   if(print_every > 0){
     Rcpp::Rcout << "Preparing..." << endl;
@@ -112,11 +100,8 @@ Rcpp::List spiox_response(const arma::mat& Y,
   
   // storage
   arma::cube Beta = arma::zeros(iox_model.p, q, mcmc);
-  arma::cube theta = arma::zeros(4, q, mcmc);
-  arma::umat theta_which = arma::zeros<arma::umat>(q, mcmc);
-  arma::cube theta_opts_save = arma::zeros(theta_opts.n_rows, theta_opts.n_cols, mcmc);
-  
   arma::cube Sigma = arma::zeros(q, q, mcmc);
+  arma::cube theta = arma::zeros(4, q, mcmc);
   
   if(print_every > 0){
     Rcpp::Rcout << "Starting MCMC" << endl;
@@ -124,21 +109,11 @@ Rcpp::List spiox_response(const arma::mat& Y,
   
   for(unsigned int m=0; m<mcmc; m++){
     
-    iox_model.gibbs(m, sample_precision, sample_mvr, sample_theta_gibbs, upd_theta_opts);
+    iox_model.gibbs(m, sample_precision, sample_beta, update_theta);
 
     Beta.slice(m) = iox_model.B;
     Sigma.slice(m) = iox_model.Sigma;
-    
-    theta_opts_save.slice(m) = iox_model.theta_options;
-    
-    arma::mat theta_choice = arma::zeros(4, q);
-    for(unsigned int j=0; j<q; j++){
-      theta_choice.col(j) = iox_model.theta_options.col(iox_model.spmap(j)); 
-        
-    }
-    
-    theta.slice(m) = theta_choice;
-    theta_which.col(m) = iox_model.spmap;
+    theta.slice(m) = iox_model.theta;
     
     bool print_condition = (print_every>0);
     if(print_condition){
@@ -158,10 +133,8 @@ Rcpp::List spiox_response(const arma::mat& Y,
     Rcpp::Named("Beta") = Beta,
     Rcpp::Named("Sigma") = Sigma,
     Rcpp::Named("theta") = theta,
-    Rcpp::Named("theta_which") = theta_which,
-    Rcpp::Named("theta_opts") = theta_opts_save,
     Rcpp::Named("timings") = iox_model.timings,
-    Rcpp::Named("dag_cache") = iox_model.daggp_options[0].dag_cache
+    Rcpp::Named("dag_cache") = iox_model.daggps[0].dag_cache
   );
   
 }
@@ -185,13 +158,13 @@ Rcpp::List spiox_response(const arma::mat& Y,
 //' @param print_every An integer specifying the frequency of progress updates during MCMC iterations. Default is 100.
 //' @param matern An integer flag for enabling Matérn correlation functions for spatial dependence modeling. Default is 1.
 //' Other options: 0=power exponential, 2=wave.
-//' @param sample_iwish A logical value indicating whether to sample the covariance matrix (\eqn{\Sigma}) 
+//' @param sample_sigma A logical value indicating whether to sample the covariance matrix (\eqn{\Sigma}) 
 //' via Gibbs update from an Inverse Wishart prior. Default is TRUE. 
-//' @param sample_mvr A logical value indicating whether to sample multivariate regression coefficients 
+//' @param sample_beta A logical value indicating whether to sample multivariate regression coefficients 
 //' via Gibbs update from a Normal prior. Default is TRUE.
 //' @param sample_theta_gibbs A logical value indicating whether to enable Gibbs sampling for the correlation 
 //' parameters (\eqn{\theta}). This should be set to TRUE to run "IOX Grid" or "IOX Cluster" from the paper, otherwise FALSE.
-//' @param upd_theta_opts A logical value indicating whether to update the correlation parameter options (\eqn{\theta}) 
+//' @param update_theta A logical value indicating whether to update the correlation parameter options (\eqn{\theta}) 
 //' adaptively during MCMC iterations. This should be set to TRUE to run "IOX Full" or "IOX Cluster" from the paper, otherwise FALSE.
 //' The update is performed jointly for the whole vector if q=3 or less; conditionally in blocks if q>3.
 //' @param num_threads An integer specifying the number of threads for parallel computation. Default is 1.
@@ -236,10 +209,9 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           int print_every=100,
                           int matern = 1,
                           int dag_opts = 0,
-                          bool sample_iwish=true,
-                          bool sample_mvr=true,
-                          bool sample_theta_gibbs=true,
-                          bool upd_theta_opts=true,
+                          bool sample_sigma=true,
+                          bool sample_beta=true,
+                          bool update_theta=true,
                           int num_threads = 1, 
                           int sampling=2){
   
@@ -250,13 +222,13 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   
   Rcpp::Rcout << "GP-IOX latent model, ";
   if(sampling==1){
-    Rcpp::Rcout << "nq block sampler." << endl;
+    Rcpp::Rcout << "nq block sampler (full block sampler)" << endl;
   }
   if(sampling==2){
-    Rcpp::Rcout << "n sequential, q block sampler." << endl;
+    Rcpp::Rcout << "n sequential, q block sampler (single-site sampler)" << endl;
   }
   if(sampling==3){
-    Rcpp::Rcout << "n block, q sequential sampler." << endl;
+    Rcpp::Rcout << "n block, q sequential sampler (single-outcome sampler)" << endl;
   }
   
 #ifdef _OPENMP
@@ -271,16 +243,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   unsigned int q = Y.n_cols;
   unsigned int n = Y.n_rows;
   
-  if(upd_theta_opts){
-    unsigned int n_opts = theta_opts.n_cols;
-    if(n_opts > q){
-      theta_opts = theta_opts.head_cols(q);
-      Rcpp::warning("Limiting theta options to = number of outcomes.\n"
-                      "(More options provided for theta than number of outcomes & updating via Metropolis) ");
-    }
-  }
-  
-  int sample_precision = 2 * sample_iwish;
+  int sample_precision = 2 * sample_sigma;
   
   if(print_every > 0){
     Rcpp::Rcout << "Preparing..." << endl;
@@ -296,13 +259,10 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   
   // storage
   arma::cube Beta = arma::zeros(iox_model.p, q, mcmc);
+  arma::cube Sigma = arma::zeros(q, q, mcmc);
+  arma::cube theta = arma::zeros(4, q, mcmc);
   arma::mat Ddiag = arma::zeros(q, mcmc);
   arma::cube W = arma::zeros(n, q, mcmc);
-  arma::cube theta = arma::zeros(4, q, mcmc);
-  arma::umat theta_which = arma::zeros<arma::umat>(q, mcmc);
-  arma::cube theta_opts_save = arma::zeros(theta_opts.n_rows, theta_opts.n_cols, mcmc);
-  
-  arma::cube Sigma = arma::zeros(q, q, mcmc);
   
   if(print_every > 0){
     Rcpp::Rcout << "Starting MCMC" << endl;
@@ -310,24 +270,14 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   
   for(unsigned int m=0; m<mcmc; m++){
     
-    iox_model.gibbs(m, sample_precision, sample_mvr, sample_theta_gibbs, upd_theta_opts);
+    iox_model.gibbs(m, sample_precision, sample_beta, update_theta);
     
     Beta.slice(m) = iox_model.B;
+    Sigma.slice(m) = iox_model.Sigma;
+    theta.slice(m) = iox_model.theta;
     Ddiag.col(m) = iox_model.Dvec;
     W.slice(m) = iox_model.W;
-    Sigma.slice(m) = iox_model.Sigma;
-    
-    theta_opts_save.slice(m) = iox_model.theta_options;
-    
-    arma::mat theta_choice = arma::zeros(4, q);
-    for(unsigned int j=0; j<q; j++){
-      theta_choice.col(j) = iox_model.theta_options.col(iox_model.spmap(j)); 
-      
-    }
-    
-    theta.slice(m) = theta_choice;
-    theta_which.col(m) = iox_model.spmap;
-    
+
     bool print_condition = (print_every>0);
     if(print_condition){
       print_condition = print_condition & (!(m % print_every));
@@ -346,8 +296,6 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     Rcpp::Named("Beta") = Beta,
     Rcpp::Named("Sigma") = Sigma,
     Rcpp::Named("theta") = theta,
-    Rcpp::Named("theta_which") = theta_which,
-    Rcpp::Named("theta_opts") = theta_opts_save,
     Rcpp::Named("W") = W,
     Rcpp::Named("Ddiag") = Ddiag,
     Rcpp::Named("timings") = iox_model.timings
@@ -363,7 +311,7 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
                           
                           const arma::field<arma::uvec>& custom_dag,
                           int dag_opts,
-                          arma::mat theta_opts, 
+                          const arma::mat& theta, 
                           
                           const arma::mat& Sigma_start,
                           const arma::mat& Beta_start,
@@ -398,7 +346,7 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
   
   SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   latent_model,
-                  theta_opts, 
+                  theta, 
                   Sigma_start,
                   Beta_start,
                   matern,
@@ -406,8 +354,6 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
   
   // storage
   arma::mat Beta = arma::zeros(iox_model.p, q);
-  arma::mat theta = arma::zeros(4, q);
-  
   arma::mat Sigma = arma::zeros(q, q);
   
   bool stop=false;
@@ -435,10 +381,6 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
       Rcpp::Rcout << "Iteration: " <<  i << endl;
     };
     
-    
-    
-    
-    
     bool interrupted = checkInterrupt();
     if(interrupted){
       Rcpp::stop("Interrupted by the user.");
@@ -460,7 +402,7 @@ Rcpp::List spiox_response_map(const arma::mat& Y,
                              
                              const arma::field<arma::uvec>& custom_dag,
                              int dag_opts,
-                             arma::mat theta_opts, 
+                             arma::mat theta, 
                              
                              const arma::mat& Sigma_start,
                              const arma::mat& Beta_start,
@@ -495,7 +437,7 @@ Rcpp::List spiox_response_map(const arma::mat& Y,
   
   SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   latent_model,
-                  theta_opts, 
+                  theta, 
                   Sigma_start,
                   Beta_start,
                   matern,
@@ -503,8 +445,6 @@ Rcpp::List spiox_response_map(const arma::mat& Y,
   
   // storage
   arma::mat Beta = arma::zeros(iox_model.p, q);
-  arma::mat theta = arma::zeros(4, q);
-  
   arma::mat Sigma = arma::zeros(q, q);
   
   bool stop=false;
@@ -531,10 +471,6 @@ Rcpp::List spiox_response_map(const arma::mat& Y,
     if(print_condition){
       Rcpp::Rcout << "Iteration: " <<  i << endl;
     };
-    
-    
-    
-    
     
     bool interrupted = checkInterrupt();
     if(interrupted){

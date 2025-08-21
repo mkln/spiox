@@ -83,13 +83,11 @@ Sigma_identify <- function(Sigma, theta) {
 #' @param print_every An integer specifying the frequency of progress updates during MCMC iterations. Default is 100.
 #' @param matern An integer flag for enabling Matérn correlation functions for spatial dependence modeling. Default is 1.
 #' Other options: 0=power exponential, 2=wave.
-#' @param sample_iwish A logical value indicating whether to sample the covariance matrix (\eqn{\Sigma}) 
+#' @param sample_sigma A logical value indicating whether to sample the covariance matrix (\eqn{\Sigma}) 
 #' via Gibbs update from an Inverse Wishart prior. Default is TRUE. 
-#' @param sample_mvr A logical value indicating whether to sample multivariate regression coefficients 
+#' @param sample_beta A logical value indicating whether to sample multivariate regression coefficients 
 #' via Gibbs update from a Normal prior. Default is TRUE.
-#' @param sample_theta_gibbs A logical value indicating whether to enable Gibbs sampling for the correlation 
-#' parameters (\eqn{\theta}). This should be set to TRUE to run "IOX Grid" or "IOX Cluster" from the paper, otherwise FALSE.
-#' @param upd_theta_opts A logical value indicating whether to update the correlation parameter options (\eqn{\theta}) 
+#' @param update_theta A logical value indicating whether to update the correlation parameter options (\eqn{\theta}) 
 #' adaptively during MCMC iterations. This should be set to TRUE to run "IOX Full" or "IOX Cluster" from the paper, otherwise FALSE.
 #' The update is performed jointly for the whole vector if q=3 or less; conditionally in blocks if q>3.
 #' @param num_threads An integer specifying the number of threads for parallel computation. Default is 1.
@@ -112,8 +110,8 @@ Sigma_identify <- function(Sigma, theta) {
 #' Beware that each column corresponds to a Vecchia-GP with `m` neighbors, so the memory footprint increases linearly with the number of columns of `theta_opts`.
 #'
 #' @export
-spiox_response <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_iwish = TRUE, sample_mvr = TRUE, sample_theta_gibbs = FALSE, upd_theta_opts = TRUE, num_threads = 1L) {
-    .Call(`_spiox_spiox_response`, Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc, print_every, matern, dag_opts, sample_iwish, sample_mvr, sample_theta_gibbs, upd_theta_opts, num_threads)
+spiox_response <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_sigma = TRUE, sample_beta = TRUE, update_theta = FALSE, num_threads = 1L) {
+    .Call(`_spiox_spiox_response`, Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc, print_every, matern, dag_opts, sample_sigma, sample_beta, update_theta, num_threads)
 }
 
 #' @title Spatial Latent Model using Gaussian Processes with IOX as prior for latent effects.
@@ -135,13 +133,13 @@ spiox_response <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Be
 #' @param print_every An integer specifying the frequency of progress updates during MCMC iterations. Default is 100.
 #' @param matern An integer flag for enabling Matérn correlation functions for spatial dependence modeling. Default is 1.
 #' Other options: 0=power exponential, 2=wave.
-#' @param sample_iwish A logical value indicating whether to sample the covariance matrix (\eqn{\Sigma}) 
+#' @param sample_sigma A logical value indicating whether to sample the covariance matrix (\eqn{\Sigma}) 
 #' via Gibbs update from an Inverse Wishart prior. Default is TRUE. 
-#' @param sample_mvr A logical value indicating whether to sample multivariate regression coefficients 
+#' @param sample_beta A logical value indicating whether to sample multivariate regression coefficients 
 #' via Gibbs update from a Normal prior. Default is TRUE.
 #' @param sample_theta_gibbs A logical value indicating whether to enable Gibbs sampling for the correlation 
 #' parameters (\eqn{\theta}). This should be set to TRUE to run "IOX Grid" or "IOX Cluster" from the paper, otherwise FALSE.
-#' @param upd_theta_opts A logical value indicating whether to update the correlation parameter options (\eqn{\theta}) 
+#' @param update_theta A logical value indicating whether to update the correlation parameter options (\eqn{\theta}) 
 #' adaptively during MCMC iterations. This should be set to TRUE to run "IOX Full" or "IOX Cluster" from the paper, otherwise FALSE.
 #' The update is performed jointly for the whole vector if q=3 or less; conditionally in blocks if q>3.
 #' @param num_threads An integer specifying the number of threads for parallel computation. Default is 1.
@@ -170,16 +168,16 @@ spiox_response <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Be
 #' Beware that each column corresponds to a Vecchia-GP with `m` neighbors, so the memory footprint increases linearly with the number of columns of `theta_opts`.
 #'
 #' @export
-spiox_latent <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_iwish = TRUE, sample_mvr = TRUE, sample_theta_gibbs = TRUE, upd_theta_opts = TRUE, num_threads = 1L, sampling = 2L) {
-    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc, print_every, matern, dag_opts, sample_iwish, sample_mvr, sample_theta_gibbs, upd_theta_opts, num_threads, sampling)
+spiox_latent <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_sigma = TRUE, sample_beta = TRUE, update_theta = TRUE, num_threads = 1L, sampling = 2L) {
+    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc, print_every, matern, dag_opts, sample_sigma, sample_beta, update_theta, num_threads, sampling)
 }
 
-spiox_response_vi <- function(Y, X, coords, custom_dag, dag_opts, theta_opts, Sigma_start, Beta_start, verbose = 0L, matern = 1L, num_threads = 1L) {
-    .Call(`_spiox_spiox_response_vi`, Y, X, coords, custom_dag, dag_opts, theta_opts, Sigma_start, Beta_start, verbose, matern, num_threads)
+spiox_response_vi <- function(Y, X, coords, custom_dag, dag_opts, theta, Sigma_start, Beta_start, verbose = 0L, matern = 1L, num_threads = 1L) {
+    .Call(`_spiox_spiox_response_vi`, Y, X, coords, custom_dag, dag_opts, theta, Sigma_start, Beta_start, verbose, matern, num_threads)
 }
 
-spiox_response_map <- function(Y, X, coords, custom_dag, dag_opts, theta_opts, Sigma_start, Beta_start, verbose = 0L, matern = 1L, num_threads = 1L) {
-    .Call(`_spiox_spiox_response_map`, Y, X, coords, custom_dag, dag_opts, theta_opts, Sigma_start, Beta_start, verbose, matern, num_threads)
+spiox_response_map <- function(Y, X, coords, custom_dag, dag_opts, theta, Sigma_start, Beta_start, verbose = 0L, matern = 1L, num_threads = 1L) {
+    .Call(`_spiox_spiox_response_map`, Y, X, coords, custom_dag, dag_opts, theta, Sigma_start, Beta_start, verbose, matern, num_threads)
 }
 
 spiox_predict <- function(X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, matern = 1L, num_threads = 1L) {
