@@ -1,4 +1,4 @@
-scaling_factor_at_zero <- function(S, thetamat, m=20, nmax=1000, n_threads=1){
+scaling_factor_at_zero <- function(S, thetamat, m=20, nmax=1000, matern=TRUE, n_threads=1){
   nr <- nrow(S)
   
   subs <- round(seq(1, nr, length.out=min(c(nmax, nr))))
@@ -6,6 +6,6 @@ scaling_factor_at_zero <- function(S, thetamat, m=20, nmax=1000, n_threads=1){
   daginfo <- dag_vecchia_maxmin(S_sub, m)
   
   return(
-    sfact(daginfo$dag, S_sub[daginfo$maxmin,], thetamat, TRUE, n_threads)
+    sfact(daginfo$dag, S_sub[daginfo$maxmin,], thetamat, matern, n_threads)
   )
 }
