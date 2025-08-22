@@ -90,18 +90,30 @@ Rcpp::List spiox_response(const arma::mat& Y,
     Rcpp::Rcout << "Preparing..." << endl;
   }
   
+  // tausq not needed in this model
+  arma::vec tausq_not_needed = arma::zeros(q);
+  
   SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   latent_model,
                   theta_opts, 
                    Sigma_start,
                    Beta_start,
+                   tausq_not_needed,
                    matern,
                    num_threads);
+  
+  int nmiss = 0;
+  if(iox_model.Y_needs_filling){
+    nmiss = iox_model.Y_na_indices.n_elem;
+  }
   
   // storage
   arma::cube Beta = arma::zeros(iox_model.p, q, mcmc);
   arma::cube Sigma = arma::zeros(q, q, mcmc);
   arma::cube theta = arma::zeros(4, q, mcmc);
+  
+  // only store samples of imputed Y if missing
+  arma::mat Y_missing_fill = arma::zeros(nmiss, mcmc);
   
   if(print_every > 0){
     Rcpp::Rcout << "Starting MCMC" << endl;
@@ -114,6 +126,9 @@ Rcpp::List spiox_response(const arma::mat& Y,
     Beta.slice(m) = iox_model.B;
     Sigma.slice(m) = iox_model.Sigma;
     theta.slice(m) = iox_model.theta;
+    if(iox_model.Y_needs_filling){
+      Y_missing_fill.col(m) = iox_model.Y(iox_model.Y_na_indices);
+    }
     
     bool print_condition = (print_every>0);
     if(print_condition){
@@ -133,6 +148,8 @@ Rcpp::List spiox_response(const arma::mat& Y,
     Rcpp::Named("Beta") = Beta,
     Rcpp::Named("Sigma") = Sigma,
     Rcpp::Named("theta") = theta,
+    Rcpp::Named("Y_missing_samples") = Y_missing_fill,
+    Rcpp::Named("Y_missing_indices") = iox_model.Y_na_indices+1,
     Rcpp::Named("timings") = iox_model.timings,
     Rcpp::Named("dag_cache") = iox_model.daggps[0].dag_cache
   );
@@ -204,6 +221,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           
                           const arma::mat& Sigma_start,
                           const arma::mat& Beta_start,
+                          const arma::vec& tausq_start,
                           
                           int mcmc=1000,
                           int print_every=100,
@@ -211,6 +229,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           int dag_opts = 0,
                           bool sample_sigma=true,
                           bool sample_beta=true,
+                          bool sample_tausq=true,
                           bool update_theta=true,
                           int num_threads = 1, 
                           int sampling=2){
@@ -254,6 +273,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                   theta_opts, 
                   Sigma_start,
                   Beta_start,
+                  tausq_start,
                   matern,
                   num_threads);
   
@@ -270,7 +290,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   
   for(unsigned int m=0; m<mcmc; m++){
     
-    iox_model.gibbs(m, sample_precision, sample_beta, update_theta);
+    iox_model.gibbs(m, sample_precision, sample_beta, update_theta, sample_tausq);
     
     Beta.slice(m) = iox_model.B;
     Sigma.slice(m) = iox_model.Sigma;
@@ -344,11 +364,15 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
     Rcpp::Rcout << "Preparing..." << endl;
   }
   
+  // tausq not needed in this model
+  arma::vec tausq_not_needed = arma::zeros(q);
+  
   SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   latent_model,
                   theta, 
                   Sigma_start,
                   Beta_start,
+                  tausq_not_needed,
                   matern,
                   num_threads);
   
@@ -435,11 +459,17 @@ Rcpp::List spiox_response_map(const arma::mat& Y,
     Rcpp::Rcout << "Preparing..." << endl;
   }
   
+  
+  // tausq not needed in this model
+  arma::vec tausq_not_needed = arma::zeros(q);
+  
+  
   SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   latent_model,
                   theta, 
                   Sigma_start,
                   Beta_start,
+                  tausq_not_needed,
                   matern,
                   num_threads);
   

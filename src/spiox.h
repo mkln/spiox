@@ -15,7 +15,6 @@ public:
   
   // matrix of outcomes dim n, q 
   arma::mat Y;
-  arma::field<arma::uvec> avail_by_outcome;
   // matrix of predictors dim n, p
   arma::mat X;
   
@@ -46,16 +45,63 @@ public:
   void upd_theta_metrop_conditional();
   void init_theta_adapt();
   
+  // data with with misalignment
+  arma::field<arma::uvec> avail_by_outcome;
+  arma::umat missing_mat;
+  arma::uvec rows_with_missing;
+  bool Y_needs_filling;
+  arma::uvec Y_na_indices;
+  void manage_missing_data(){
+    // managing misalignment, i.e. not all outcomes observed at all locations
+    // indices of non-NAs 
+    avail_by_outcome = arma::field<arma::uvec>(q);
+    missing_mat = arma::zeros<arma::umat>(n, q);
+    arma::uvec row_miss_01 = arma::zeros<arma::uvec>(n);
+    Y_na_indices = arma::find_nonfinite(Y);
+    for(int j=0; j<q; j++){
+      avail_by_outcome(j) = arma::find_finite(Y.col(j));
+      for(int i=0; i<n; i++){
+        missing_mat(i,j) = !arma::is_finite(Y(i,j));
+        if(latent_model==0){
+          // response model: rnorm fill missing in Y
+          if(missing_mat(i,j)){
+            Y(i,j) = arma::randn();
+          }
+        }
+      }
+      
+    }
+    
+    for(int i=0; i<n; i++){
+      row_miss_01(i) = arma::any(missing_mat.row(i) == 1);
+    }
+    rows_with_missing = arma::find(row_miss_01 == 1);
+    
+    if(Y.has_nonfinite() & (latent_model!=2)){
+      Rcpp::stop("nq block and single outcome samplers not implemented for misaligned data.\n");
+    }
+    if(arma::accu(missing_mat)>0){
+      Y_needs_filling = true;
+    } else {
+      Y_needs_filling = false;
+    }
+  }
+  void sample_Y_misaligned(bool redo_cache_blanket=true);
+  
   // latent model 
   int latent_model; // 0: response, 1: block, 2: row seq, 3: col seq
   arma::mat W;
-  void gibbs_w_sequential_singlesite();
+  void gibbs_w_sequential_singlesite(bool redo_cache_blanket=true);
   void gibbs_w_sequential_byoutcome();
   void gibbs_w_block();
   void sample_Dvec();
   arma::vec Dvec;
-  arma::mat XtX;
   //
+  
+  // utility for latent model and misaligned response model
+  arma::field<arma::mat> Rw_no_Q;
+  arma::field<arma::mat> Pblanket_no_Q;
+  void cache_blanket_comps();
   
   bool phi_sampling, sigmasq_sampling, nu_sampling, tausq_sampling;
   
@@ -76,7 +122,7 @@ public:
   
   
   // -------------- run 1 gibbs iteration based on current values
-  void gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta);
+  void gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta, bool sample_tausq=false);
   void vi();
   void map();
   double logdens_eval();
@@ -93,7 +139,8 @@ public:
         int latent_model_choice,
         const arma::mat& daggp_theta, 
         const arma::mat& Sigma_start,
-        const arma::mat& mvreg_B_start,
+        const arma::mat& Beta_start,
+        const arma::vec& tausq_start,
         int cov_model_matern,
         int num_threads_in) 
   {
@@ -108,26 +155,15 @@ public:
     
     latent_model = latent_model_choice; // latent model? 
     
-    // managing misalignment, i.e. not all outcomes observed at all locations
-    // indices of non-NAs 
-    avail_by_outcome = arma::field<arma::uvec>(q);
-    //miss_by_outcome = arma::field<arma::uvec>(q);
-    for(int j=0; j<q; j++){
-      avail_by_outcome(j) = arma::find_finite(Y.col(j));
-     // miss_by_outcome(j) = arma::find_nonfinite(Y.col(j));
-    }
-    if(Y.has_nonfinite() & latent_model!=2){
-      Rcpp::stop("nq block and single outcome samplers not implemented for misaligned data.\n");
-    }
+    manage_missing_data();
     
     if(latent_model>0){
       W = Y;
       W(arma::find_nonfinite(W)).fill(0);
-      XtX = X.t() * X;
-      Dvec = arma::ones(q)*.01;
+      Dvec = tausq_start;
     }
     
-    B = mvreg_B_start;
+    B = Beta_start;
     YXB = Y - X * B;
     
     B_Var = 1000 * arma::ones(arma::size(B));
@@ -162,6 +198,11 @@ public:
     Q = Si * Si.t();
     
     compute_V();
+    
+    if(latent_model | Y_needs_filling){
+      // first time making markov blanket cache
+      cache_blanket_comps();
+    }
     
     timings = arma::zeros(10);
   }

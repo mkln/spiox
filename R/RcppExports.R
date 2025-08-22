@@ -168,8 +168,8 @@ spiox_response <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Be
 #' Beware that each column corresponds to a Vecchia-GP with `m` neighbors, so the memory footprint increases linearly with the number of columns of `theta_opts`.
 #'
 #' @export
-spiox_latent <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_sigma = TRUE, sample_beta = TRUE, update_theta = TRUE, num_threads = 1L, sampling = 2L) {
-    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc, print_every, matern, dag_opts, sample_sigma, sample_beta, update_theta, num_threads, sampling)
+spiox_latent <- function(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, tausq_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_sigma = TRUE, sample_beta = TRUE, sample_tausq = TRUE, update_theta = TRUE, num_threads = 1L, sampling = 2L) {
+    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, tausq_start, mcmc, print_every, matern, dag_opts, sample_sigma, sample_beta, sample_tausq, update_theta, num_threads, sampling)
 }
 
 spiox_response_vi <- function(Y, X, coords, custom_dag, dag_opts, theta, Sigma_start, Beta_start, verbose = 0L, matern = 1L, num_threads = 1L) {

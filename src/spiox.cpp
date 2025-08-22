@@ -141,7 +141,9 @@ void SpIOX::sample_B(){
     for(int j=0; j<q; j++){
       arma::vec yj = Ytilde.col(j);
       arma::vec y_available = yj.rows(avail_by_outcome(j));
-      arma::vec XtYtildej = arma::trans(X.rows(avail_by_outcome(j))) * y_available;
+      arma::mat X_available = X.rows(avail_by_outcome(j));
+      arma::mat XtX = X_available.t() * X_available;
+      arma::vec XtYtildej = arma::trans(X_available) * y_available;
       arma::mat post_precision = arma::diagmat(1.0/B_Var.col(j)) + XtX/Dvec(j);
       arma::mat pp_ichol = arma::inv(arma::trimatl(arma::chol(post_precision, "lower")));
       B.col(j) = pp_ichol.t() * (pp_ichol * XtYtildej/Dvec(j) + mvnorm.col(j));
@@ -349,28 +351,30 @@ void SpIOX::upd_theta_metrop_conditional(){
   
 }
 
-void SpIOX::gibbs_w_sequential_singlesite(){
-  // precompute stuff in parallel so we can do fast sequential sampling after
-  arma::mat mvnorm = arma::randn(q, n);
+void SpIOX::cache_blanket_comps(){
+  // all these matrix operations only need to be performed when theta changes
+  // otherwise, we can just cache what's needed and reuse
+  // this impacts the latent model, single site sampler
+  // and imputation of missing data in the response model.
+  int nfill = latent_model == 2 ? n : rows_with_missing.n_elem;
   
-  arma::field<arma::mat> Hw(n);
-  arma::field<arma::mat> Rw(n);
-  arma::field<arma::mat> Ctchol(n);
-  
-  // V = whitened Y-XB or W
+  Rw_no_Q = arma::field<arma::mat> (nfill);
+  Pblanket_no_Q = arma::field<arma::mat> (nfill);
   
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
-  for(int i=0; i<n; i++){
-    Rw(i) = arma::zeros(q, q); 
+  for(int ix=0; ix<nfill; ix++){
+    int i = latent_model == 2 ? ix : rows_with_missing(ix);
+    
+    Rw_no_Q(ix) = arma::zeros(q, q); 
     for(int r=0; r<q; r++){
       for(int s=0; s<=r; s++){
-        Rw(i)(r, s) = Q(r,s) * 
+        Rw_no_Q(ix)(r, s) = 
           arma::accu( daggps[r].H.col(i) % 
           daggps[s].H.col(i) );
         if(s!=r){
-          Rw(i)(s, r) = Rw(i)(r, s);
+          Rw_no_Q(ix)(s, r) = Rw_no_Q(ix)(r, s);
         }
       }
     }
@@ -378,7 +382,7 @@ void SpIOX::gibbs_w_sequential_singlesite(){
     // assume all the same dag otherwise we go cray
     arma::uvec mblanket = daggps[0].mblanket(i);
     int mbsize = mblanket.n_elem;
-    arma::mat Pblanket = arma::zeros(q, q*mbsize);
+    Pblanket_no_Q(ix) = arma::zeros(q, q*mbsize);
     arma::sp_mat H_i_mat(n, q);
     for (int r = 0; r < q; ++r) {
       H_i_mat.col(r) = daggps[r].H.col(i);
@@ -387,19 +391,52 @@ void SpIOX::gibbs_w_sequential_singlesite(){
     for (int s = 0; s < q; ++s) {
       int startcol = s * mbsize;
       int endcol = (s + 1) * mbsize - 1;
-      Pblanket.cols(startcol, endcol) = arma::diagmat(Q.col(s)) * H_i_mat.t() * daggps[s].H.cols(mblanket);
+      Pblanket_no_Q(ix).cols(startcol, endcol) = H_i_mat.t() * daggps[s].H.cols(mblanket);
     }
+  }
+  
+}
 
-    Hw(i) = - Pblanket;
+void SpIOX::gibbs_w_sequential_singlesite(bool redo_cache_blanket){
+  // precompute stuff in parallel so we can do fast sequential sampling after
+  arma::mat mvnorm = arma::randn(q, n);
+  
+  arma::field<arma::mat> Hw(n);
+  arma::field<arma::mat> Rw(n);
+  arma::field<arma::mat> invcholP(n);
+  
+  // V = whitened Y-XB or W
+  
+  if(redo_cache_blanket){
+    // perform this update if theta has changed and we need to recompute the
+    // GP-related matrices that depend on it
+    cache_blanket_comps();
+  }
+  
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+  for(int i=0; i<n; i++){
+    Rw(i) = Q % Rw_no_Q(i);
+    
+    // assume all the same dag otherwise we go cray
+    arma::uvec mblanket = daggps[0].mblanket(i);
+    int mbsize = mblanket.n_elem;
+    arma::mat Pblanket = arma::zeros(q, q*mbsize);
+    
     arma::mat Di_obs = arma::zeros(q,q);
-    for(int j=0; j<q; j++){
-      if(!arma::is_finite(Y(i, j))){
-        Di_obs(j,j) = 0;
-      } else {
+    
+    for(int j = 0; j < q; j++) {
+      int startcol = j * mbsize;
+      int endcol = (j + 1) * mbsize - 1;
+      Pblanket.cols(startcol, endcol) = arma::diagmat(Q.col(j)) * Pblanket_no_Q(i).cols(startcol, endcol);
+      if(!missing_mat(i,j)){
         Di_obs(j,j) = 1.0/Dvec(j);
       }
     }
-    Ctchol(i) = arma::inv(arma::trimatl(arma::chol(Rw(i) + Di_obs, "lower")));
+    
+    Hw(i) = - Pblanket;
+    invcholP(i) = arma::inv(arma::trimatl(arma::chol(Rw(i) + Di_obs, "lower")));
   }
   
   // visit every location and sample from latent effects 
@@ -409,9 +446,7 @@ void SpIOX::gibbs_w_sequential_singlesite(){
     // data contributions may be null if data missing
     arma::vec Di_YXB = arma::zeros(q);
     for(int j=0; j<q; j++){
-      if(!arma::is_finite(Y(i, j))){
-        Di_YXB(j) = 0;
-      } else {
+      if(!missing_mat(i,j)){
         Di_YXB(j) = YXB(i,j)/Dvec(j);
       }
     }
@@ -419,7 +454,7 @@ void SpIOX::gibbs_w_sequential_singlesite(){
     arma::uvec mblanket = daggps[0].mblanket(i);
     arma::vec meancomp = Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di_YXB;
     
-    W.row(i) = arma::trans( Ctchol(i).t() * (Ctchol(i) * meancomp + mvnorm.col(i) ));
+    W.row(i) = arma::trans( invcholP(i).t() * (invcholP(i) * meancomp + mvnorm.col(i) ));
   }
   
   for(unsigned int i=0; i<q; i++){
@@ -566,7 +601,86 @@ void SpIOX::sample_Sigma_iwishart(){
   Sigma = S.t() * S;
 }
 
-void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta){
+
+void SpIOX::sample_Y_misaligned(bool redo_cache_blanket){
+  // precompute stuff in parallel so we can do fast sequential sampling after
+  int nfill = rows_with_missing.n_elem;
+  arma::mat mvnorm = arma::randn(q, nfill);
+  
+  arma::field<arma::mat> Hw(nfill);
+  arma::field<arma::mat> Rw(nfill);
+  arma::field<arma::mat> invcholP(nfill);
+  
+  
+  if(redo_cache_blanket){
+    // perform this update if theta has changed and we need to recompute the
+    // GP-related matrices that depend on it
+    cache_blanket_comps();
+  }
+  
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+  for(int ix=0; ix<nfill; ix++){
+    // this row has missing data
+    int i = rows_with_missing(ix);
+    Rw(ix) = Q % Rw_no_Q(ix);
+    // assume all the same dag otherwise we go cray
+    arma::uvec mblanket = daggps[0].mblanket(i);
+    int mbsize = mblanket.n_elem;
+    arma::mat Pblanket = arma::zeros(q, q*mbsize);
+    
+    for (int s = 0; s < q; ++s) {
+      int startcol = s * mbsize;
+      int endcol = (s + 1) * mbsize - 1;
+      Pblanket.cols(startcol, endcol) = arma::diagmat(Q.col(s)) * Pblanket_no_Q(ix).cols(startcol, endcol);
+    }
+    Hw(ix) = - Pblanket;
+    invcholP(ix) = arma::inv(arma::trimatl(arma::chol(Rw(ix), "lower")));
+  }
+  
+  // visit every location with missing data and fill 
+  // conditional on what's available and markov blanket
+  for(int ix=0; ix<nfill; ix++){
+    arma::vec rnormq = mvnorm.col(ix); // preloaded sample size q
+    // this row has missing
+    int i = rows_with_missing(ix);
+    arma::uvec mblanket = daggps[0].mblanket(i);
+    arma::mat YXB_others = YXB.rows(mblanket);
+    
+    arma::uvec which_missing = arma::find(missing_mat.row(i) == 1);
+    if(which_missing.n_elem == q){
+      // everything missing!
+      arma::mat meancomp = invcholP(ix) * Hw(ix) * arma::vectorise( YXB_others );
+      Y.row(i) = arma::trans(invcholP(ix).t() * (meancomp + rnormq)) + X.row(i) * B;
+    } else {
+      // some data available at this location
+      arma::mat joint_cov = invcholP(ix).t() * invcholP(ix);
+      arma::vec joint_mean = joint_cov * Hw(ix) * arma::vectorise( YXB_others );
+      
+      arma::uvec which_availab = arma::find(missing_mat.row(i) == 0);
+      
+      arma::mat Ckk = joint_cov(which_availab, which_availab);
+      arma::mat Ckx = joint_cov(which_availab, which_missing);
+      arma::mat Cxx = joint_cov(which_missing, which_missing);
+      arma::mat HmatT = arma::solve(Ckk, Ckx);
+      
+      arma::mat cholRmat = arma::chol(arma::symmatu(Cxx - Ckx.t() * HmatT), "lower");
+      
+      arma::vec Yall = arma::trans(YXB.row(i));
+      Yall(which_missing) = joint_mean(which_missing) + 
+        HmatT.t() * (Yall(which_availab) - joint_mean(which_availab)) + 
+          cholRmat * rnormq(which_missing);
+      
+      Y.row(i) = Yall.t() + X.row(i) * B;
+    }
+  }
+  
+  YXB = Y - X*B;
+}
+
+
+void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta, bool sample_tausq){
   
   if(sample_sigma > 0){
     tstart = std::chrono::steady_clock::now();
@@ -605,14 +719,23 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta)
       compute_V();
     } 
     if(latent_model == 2){
-      gibbs_w_sequential_singlesite();
+      // redo_cache_blanket runs if update_theta=true
+      gibbs_w_sequential_singlesite(update_theta); 
       compute_V();
     }
     if(latent_model == 3){
       gibbs_w_sequential_byoutcome();
     }
-    sample_Dvec();
+    if(sample_tausq){
+      sample_Dvec();
+    }
     timings(5) += time_count(tstart);
+  } else {
+    // response model -- do we have missing data? if so, impute
+    if(Y_needs_filling){
+      // redo_cache_blanket runs if update_theta=true
+      sample_Y_misaligned(update_theta);
+    }
   }
 }
 
