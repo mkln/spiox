@@ -53,19 +53,18 @@ Rcpp::List spiox_response(const arma::mat& Y,
                     const arma::mat& coords,
                     
                     const arma::field<arma::uvec>& custom_dag,
-                    
-                    arma::mat theta_opts, 
-                    
-                    const arma::mat& Sigma_start,
+                
                     const arma::mat& Beta_start,
+                    const arma::mat& Sigma_start,
+                    const arma::mat& theta_start, 
                     
                     int mcmc = 1000,
                     int print_every = 100,
                     int matern = 1,
                     int dag_opts = 0,
-                    bool sample_sigma = true,
-                    bool sample_beta = true,
-                    bool update_theta = false,
+                    bool sample_Beta = true,
+                    bool sample_Sigma = true,
+                    const arma::uvec& update_theta = arma::ones<arma::uvec>(4),
                     int num_threads = 1){
   
   Rcpp::Rcout << "GP-IOX response model." << endl;
@@ -84,7 +83,7 @@ Rcpp::List spiox_response(const arma::mat& Y,
   unsigned int q = Y.n_cols;
   unsigned int n = Y.n_rows;
   
-  int sample_precision = 2 * sample_sigma;
+  int sample_precision = 2 * sample_Sigma;
   
   if(print_every > 0){
     Rcpp::Rcout << "Preparing..." << endl;
@@ -95,9 +94,10 @@ Rcpp::List spiox_response(const arma::mat& Y,
   
   SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   latent_model,
-                  theta_opts, 
+                  Beta_start,
                    Sigma_start,
-                   Beta_start,
+                   theta_start, 
+                   update_theta,
                    tausq_not_needed,
                    matern,
                    num_threads);
@@ -118,10 +118,11 @@ Rcpp::List spiox_response(const arma::mat& Y,
   if(print_every > 0){
     Rcpp::Rcout << "Starting MCMC" << endl;
   }
+  bool theta_needs_updating = arma::any(update_theta == 1);
   
   for(unsigned int m=0; m<mcmc; m++){
     
-    iox_model.gibbs(m, sample_precision, sample_beta, update_theta);
+    iox_model.gibbs(m, sample_precision, sample_Beta, theta_needs_updating);
 
     Beta.slice(m) = iox_model.B;
     Sigma.slice(m) = iox_model.Sigma;
@@ -217,10 +218,9 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           
                           const arma::field<arma::uvec>& custom_dag,
                           
-                          arma::mat theta_opts, 
-                          
-                          const arma::mat& Sigma_start,
                           const arma::mat& Beta_start,
+                          const arma::mat& Sigma_start,
+                          const arma::mat& theta_start, 
                           const arma::vec& tausq_start,
                           
                           int mcmc=1000,
@@ -230,7 +230,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           bool sample_sigma=true,
                           bool sample_beta=true,
                           bool sample_tausq=true,
-                          bool update_theta=true,
+                          const arma::uvec& update_theta = arma::ones<arma::uvec>(4),
                           int num_threads = 1, 
                           int sampling=2){
   
@@ -270,9 +270,10 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   
   SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   sampling,
-                  theta_opts, 
-                  Sigma_start,
                   Beta_start,
+                  Sigma_start,
+                  theta_start, 
+                  update_theta,
                   tausq_start,
                   matern,
                   num_threads);
@@ -288,9 +289,11 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     Rcpp::Rcout << "Starting MCMC" << endl;
   }
   
+  bool theta_needs_updating = arma::any(update_theta == 1);
+  
   for(unsigned int m=0; m<mcmc; m++){
     
-    iox_model.gibbs(m, sample_precision, sample_beta, update_theta, sample_tausq);
+    iox_model.gibbs(m, sample_precision, sample_beta, theta_needs_updating, sample_tausq);
     
     Beta.slice(m) = iox_model.B;
     Sigma.slice(m) = iox_model.Sigma;
@@ -366,12 +369,15 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
   
   // tausq not needed in this model
   arma::vec tausq_not_needed = arma::zeros(q);
+  arma::uvec not_updating_theta = arma::zeros<arma::uvec>(q);
   
   SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   latent_model,
-                  theta, 
-                  Sigma_start,
+                  
                   Beta_start,
+                  Sigma_start,
+                  theta, 
+                  not_updating_theta,
                   tausq_not_needed,
                   matern,
                   num_threads);
@@ -389,103 +395,6 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
     arma::mat Sigma_pre = Sigma;
     
     iox_model.vi();
-    
-    Beta = iox_model.B;
-    Sigma = iox_model.Sigma;
-    
-    double rel_mu_change = arma::norm(Beta - Beta_pre, 2) / arma::norm(Beta_pre, 2);
-    double rel_sigma_change = arma::norm(Sigma - Sigma_pre, "fro") / arma::norm(Sigma_pre, "fro");
-    
-    if (rel_mu_change < tol && rel_sigma_change < tol && i > min_iter) {
-      stop=true;
-    }
-    
-    bool print_condition = (verbose>0);
-    if(print_condition){
-      Rcpp::Rcout << "Iteration: " <<  i << endl;
-    };
-    
-    bool interrupted = checkInterrupt();
-    if(interrupted){
-      Rcpp::stop("Interrupted by the user.");
-    }
-  }
-  
-  return Rcpp::List::create(
-    Rcpp::Named("Beta") = Beta,
-    Rcpp::Named("Sigma") = Sigma
-  );
-  
-}
-
-
-// [[Rcpp::export]]
-Rcpp::List spiox_response_map(const arma::mat& Y, 
-                             const arma::mat& X, 
-                             const arma::mat& coords,
-                             
-                             const arma::field<arma::uvec>& custom_dag,
-                             int dag_opts,
-                             arma::mat theta, 
-                             
-                             const arma::mat& Sigma_start,
-                             const arma::mat& Beta_start,
-                             
-                             int verbose = 0,
-                             int matern = 1,
-                             int num_threads = 1){
-  
-  double tol = 1e-5;
-  int min_iter = 1;
-  int max_iter = 500;
-  
-  Rcpp::Rcout << "GP-IOX response model." << endl;
-  
-#ifdef _OPENMP
-  omp_set_num_threads(num_threads);
-#else
-  if(num_threads > 1){
-    Rcpp::warning("num_threads > 1, but source not compiled with OpenMP support.");
-    num_threads = 1;
-  }
-#endif
-  
-  int latent_model = 0;
-  
-  unsigned int q = Y.n_cols;
-  unsigned int n = Y.n_rows;
-  
-  if(verbose > 0){
-    Rcpp::Rcout << "Preparing..." << endl;
-  }
-  
-  
-  // tausq not needed in this model
-  arma::vec tausq_not_needed = arma::zeros(q);
-  
-  
-  SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
-                  latent_model,
-                  theta, 
-                  Sigma_start,
-                  Beta_start,
-                  tausq_not_needed,
-                  matern,
-                  num_threads);
-  
-  // storage
-  arma::mat Beta = arma::zeros(iox_model.p, q);
-  arma::mat Sigma = arma::zeros(q, q);
-  
-  bool stop=false;
-  int i=0;
-  while(!stop){
-    i ++;
-    
-    arma::mat Beta_pre = Beta;
-    arma::mat Sigma_pre = Sigma;
-    
-    iox_model.map();
     
     Beta = iox_model.B;
     Sigma = iox_model.Sigma;

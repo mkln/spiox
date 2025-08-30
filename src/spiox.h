@@ -41,8 +41,8 @@ public:
   void sample_B(); // 
   void sample_Sigma_iwishart();
   void compute_V(); 
-  void upd_theta_metrop();
-  void upd_theta_metrop_conditional();
+  bool upd_theta_metrop();
+  arma::uvec upd_theta_metrop_conditional(); // returns uvec with changes to thetaj
   void init_theta_adapt();
   
   // data with with misalignment
@@ -86,12 +86,12 @@ public:
       Y_needs_filling = false;
     }
   }
-  void sample_Y_misaligned(bool redo_cache_blanket=true);
+  void sample_Y_misaligned(const arma::uvec& theta_changed);
   
   // latent model 
   int latent_model; // 0: response, 1: block, 2: row seq, 3: col seq
   arma::mat W;
-  void gibbs_w_sequential_singlesite(bool redo_cache_blanket=true);
+  void gibbs_w_sequential_singlesite(const arma::uvec& theta_changed);
   void gibbs_w_sequential_byoutcome();
   void gibbs_w_block();
   void sample_Dvec();
@@ -101,7 +101,7 @@ public:
   // utility for latent model and misaligned response model
   arma::field<arma::mat> Rw_no_Q;
   arma::field<arma::mat> Pblanket_no_Q;
-  void cache_blanket_comps();
+  void cache_blanket_comps(const arma::uvec& theta_changed);
   
   bool phi_sampling, sigmasq_sampling, nu_sampling, tausq_sampling;
   
@@ -137,9 +137,10 @@ public:
         const arma::field<arma::uvec>& custom_dag,
         int dag_opts,
         int latent_model_choice,
-        const arma::mat& daggp_theta, 
-        const arma::mat& Sigma_start,
         const arma::mat& Beta_start,
+        const arma::mat& Sigma_start,
+        const arma::mat& daggp_theta, 
+        const arma::uvec& update_theta_which,
         const arma::vec& tausq_start,
         int cov_model_matern,
         int num_threads_in) 
@@ -173,20 +174,23 @@ public:
     
     // if multiple nu options, interpret as wanting to sample smoothness for matern
     // otherwise, power exponential with fixed exponent.
-    phi_sampling = (q == 1) | (arma::var(theta.row(0)) != 0);
-    sigmasq_sampling = (q == 1) | (arma::var(theta.row(1)) != 0);
-    nu_sampling = (q == 1) | (arma::var(theta.row(2)) != 0);
-    tausq_sampling = (q == 1) | (arma::var(theta.row(3)) != 0);
+    phi_sampling = update_theta_which(0) == 1;
+    sigmasq_sampling = update_theta_which(1) == 1;
+    nu_sampling = update_theta_which(2) == 1;
+    tausq_sampling = update_theta_which(3) == 1;
     
     matern = cov_model_matern;
     //Rcpp::Rcout << "Covariance choice: " << matern << endl;
     
+    // make n_threads depend on whether data are gridded, since behavior is opposite
+    
+    int daggp_n_threads = dag_opts == -1? 1 : num_threads;
     for(unsigned int i=0; i<q; i++){
       daggps[i] = DagGP(_coords, theta.col(i), custom_dag, 
                                dag_opts,
                                matern, 
                                latent_model==3, // with q blocks, make Ci
-                               num_threads);
+                               daggp_n_threads);
     }
     daggps_alt = daggps;
     
@@ -199,9 +203,14 @@ public:
     
     compute_V();
     
+    int nfill = latent_model == 2 ? n : rows_with_missing.n_elem;
+    Rw_no_Q = arma::field<arma::mat> (nfill);
+    Pblanket_no_Q = arma::field<arma::mat> (nfill);
+    
+    arma::uvec updater = arma::ones<arma::uvec>(q);
     if(latent_model | Y_needs_filling){
       // first time making markov blanket cache
-      cache_blanket_comps();
+      cache_blanket_comps(updater);
     }
     
     timings = arma::zeros(10);

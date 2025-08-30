@@ -39,8 +39,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // daggp_build
-Rcpp::List daggp_build(const arma::mat& coords, const arma::field<arma::uvec>& dag, double phi, double sigmasq, double nu, double tausq, int matern, int num_threads, bool prune_dag);
-RcppExport SEXP _spiox_daggp_build(SEXP coordsSEXP, SEXP dagSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP, SEXP num_threadsSEXP, SEXP prune_dagSEXP) {
+Rcpp::List daggp_build(const arma::mat& coords, const arma::field<arma::uvec>& dag, double phi, double sigmasq, double nu, double tausq, int matern, int num_threads, int dag_opts);
+RcppExport SEXP _spiox_daggp_build(SEXP coordsSEXP, SEXP dagSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP, SEXP num_threadsSEXP, SEXP dag_optsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -52,8 +52,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type tausq(tausqSEXP);
     Rcpp::traits::input_parameter< int >::type matern(maternSEXP);
     Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
-    Rcpp::traits::input_parameter< bool >::type prune_dag(prune_dagSEXP);
-    rcpp_result_gen = Rcpp::wrap(daggp_build(coords, dag, phi, sigmasq, nu, tausq, matern, num_threads, prune_dag));
+    Rcpp::traits::input_parameter< int >::type dag_opts(dag_optsSEXP);
+    rcpp_result_gen = Rcpp::wrap(daggp_build(coords, dag, phi, sigmasq, nu, tausq, matern, num_threads, dag_opts));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -88,6 +88,22 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type matern(maternSEXP);
     Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
     rcpp_result_gen = Rcpp::wrap(sfact(dag, S, theta, matern, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// Sigma_x_sfact_cpp
+arma::cube Sigma_x_sfact_cpp(const arma::field<arma::uvec>& dag, const arma::mat& S, const arma::cube& Sigma, const arma::cube& theta, int matern, int n_threads);
+RcppExport SEXP _spiox_Sigma_x_sfact_cpp(SEXP dagSEXP, SEXP SSEXP, SEXP SigmaSEXP, SEXP thetaSEXP, SEXP maternSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type dag(dagSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type S(SSEXP);
+    Rcpp::traits::input_parameter< const arma::cube& >::type Sigma(SigmaSEXP);
+    Rcpp::traits::input_parameter< const arma::cube& >::type theta(thetaSEXP);
+    Rcpp::traits::input_parameter< int >::type matern(maternSEXP);
+    Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(Sigma_x_sfact_cpp(dag, S, Sigma, theta, matern, n_threads));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -176,8 +192,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // spiox_response
-Rcpp::List spiox_response(const arma::mat& Y, const arma::mat& X, const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, arma::mat theta_opts, const arma::mat& Sigma_start, const arma::mat& Beta_start, int mcmc, int print_every, int matern, int dag_opts, bool sample_sigma, bool sample_beta, bool update_theta, int num_threads);
-RcppExport SEXP _spiox_spiox_response(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP theta_optsSEXP, SEXP Sigma_startSEXP, SEXP Beta_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP maternSEXP, SEXP dag_optsSEXP, SEXP sample_sigmaSEXP, SEXP sample_betaSEXP, SEXP update_thetaSEXP, SEXP num_threadsSEXP) {
+Rcpp::List spiox_response(const arma::mat& Y, const arma::mat& X, const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, const arma::mat& Beta_start, const arma::mat& Sigma_start, const arma::mat& theta_start, int mcmc, int print_every, int matern, int dag_opts, bool sample_Beta, bool sample_Sigma, const arma::uvec& update_theta, int num_threads);
+RcppExport SEXP _spiox_spiox_response(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP Beta_startSEXP, SEXP Sigma_startSEXP, SEXP theta_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP maternSEXP, SEXP dag_optsSEXP, SEXP sample_BetaSEXP, SEXP sample_SigmaSEXP, SEXP update_thetaSEXP, SEXP num_threadsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -185,24 +201,24 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
     Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type custom_dag(custom_dagSEXP);
-    Rcpp::traits::input_parameter< arma::mat >::type theta_opts(theta_optsSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type Sigma_start(Sigma_startSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type Beta_start(Beta_startSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Sigma_start(Sigma_startSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type theta_start(theta_startSEXP);
     Rcpp::traits::input_parameter< int >::type mcmc(mcmcSEXP);
     Rcpp::traits::input_parameter< int >::type print_every(print_everySEXP);
     Rcpp::traits::input_parameter< int >::type matern(maternSEXP);
     Rcpp::traits::input_parameter< int >::type dag_opts(dag_optsSEXP);
-    Rcpp::traits::input_parameter< bool >::type sample_sigma(sample_sigmaSEXP);
-    Rcpp::traits::input_parameter< bool >::type sample_beta(sample_betaSEXP);
-    Rcpp::traits::input_parameter< bool >::type update_theta(update_thetaSEXP);
+    Rcpp::traits::input_parameter< bool >::type sample_Beta(sample_BetaSEXP);
+    Rcpp::traits::input_parameter< bool >::type sample_Sigma(sample_SigmaSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type update_theta(update_thetaSEXP);
     Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(spiox_response(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, mcmc, print_every, matern, dag_opts, sample_sigma, sample_beta, update_theta, num_threads));
+    rcpp_result_gen = Rcpp::wrap(spiox_response(Y, X, coords, custom_dag, Beta_start, Sigma_start, theta_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, update_theta, num_threads));
     return rcpp_result_gen;
 END_RCPP
 }
 // spiox_latent
-Rcpp::List spiox_latent(const arma::mat& Y, const arma::mat& X, const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, arma::mat theta_opts, const arma::mat& Sigma_start, const arma::mat& Beta_start, const arma::vec& tausq_start, int mcmc, int print_every, int matern, int dag_opts, bool sample_sigma, bool sample_beta, bool sample_tausq, bool update_theta, int num_threads, int sampling);
-RcppExport SEXP _spiox_spiox_latent(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP theta_optsSEXP, SEXP Sigma_startSEXP, SEXP Beta_startSEXP, SEXP tausq_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP maternSEXP, SEXP dag_optsSEXP, SEXP sample_sigmaSEXP, SEXP sample_betaSEXP, SEXP sample_tausqSEXP, SEXP update_thetaSEXP, SEXP num_threadsSEXP, SEXP samplingSEXP) {
+Rcpp::List spiox_latent(const arma::mat& Y, const arma::mat& X, const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, const arma::mat& Beta_start, const arma::mat& Sigma_start, const arma::mat& theta_start, const arma::vec& tausq_start, int mcmc, int print_every, int matern, int dag_opts, bool sample_sigma, bool sample_beta, bool sample_tausq, const arma::uvec& update_theta, int num_threads, int sampling);
+RcppExport SEXP _spiox_spiox_latent(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP Beta_startSEXP, SEXP Sigma_startSEXP, SEXP theta_startSEXP, SEXP tausq_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP maternSEXP, SEXP dag_optsSEXP, SEXP sample_sigmaSEXP, SEXP sample_betaSEXP, SEXP sample_tausqSEXP, SEXP update_thetaSEXP, SEXP num_threadsSEXP, SEXP samplingSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -210,9 +226,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
     Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type custom_dag(custom_dagSEXP);
-    Rcpp::traits::input_parameter< arma::mat >::type theta_opts(theta_optsSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type Sigma_start(Sigma_startSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type Beta_start(Beta_startSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Sigma_start(Sigma_startSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type theta_start(theta_startSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type tausq_start(tausq_startSEXP);
     Rcpp::traits::input_parameter< int >::type mcmc(mcmcSEXP);
     Rcpp::traits::input_parameter< int >::type print_every(print_everySEXP);
@@ -221,10 +237,10 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< bool >::type sample_sigma(sample_sigmaSEXP);
     Rcpp::traits::input_parameter< bool >::type sample_beta(sample_betaSEXP);
     Rcpp::traits::input_parameter< bool >::type sample_tausq(sample_tausqSEXP);
-    Rcpp::traits::input_parameter< bool >::type update_theta(update_thetaSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type update_theta(update_thetaSEXP);
     Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
     Rcpp::traits::input_parameter< int >::type sampling(samplingSEXP);
-    rcpp_result_gen = Rcpp::wrap(spiox_latent(Y, X, coords, custom_dag, theta_opts, Sigma_start, Beta_start, tausq_start, mcmc, print_every, matern, dag_opts, sample_sigma, sample_beta, sample_tausq, update_theta, num_threads, sampling));
+    rcpp_result_gen = Rcpp::wrap(spiox_latent(Y, X, coords, custom_dag, Beta_start, Sigma_start, theta_start, tausq_start, mcmc, print_every, matern, dag_opts, sample_sigma, sample_beta, sample_tausq, update_theta, num_threads, sampling));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -246,27 +262,6 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type matern(maternSEXP);
     Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
     rcpp_result_gen = Rcpp::wrap(spiox_response_vi(Y, X, coords, custom_dag, dag_opts, theta, Sigma_start, Beta_start, verbose, matern, num_threads));
-    return rcpp_result_gen;
-END_RCPP
-}
-// spiox_response_map
-Rcpp::List spiox_response_map(const arma::mat& Y, const arma::mat& X, const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, int dag_opts, arma::mat theta, const arma::mat& Sigma_start, const arma::mat& Beta_start, int verbose, int matern, int num_threads);
-RcppExport SEXP _spiox_spiox_response_map(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP dag_optsSEXP, SEXP thetaSEXP, SEXP Sigma_startSEXP, SEXP Beta_startSEXP, SEXP verboseSEXP, SEXP maternSEXP, SEXP num_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type Y(YSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
-    Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type custom_dag(custom_dagSEXP);
-    Rcpp::traits::input_parameter< int >::type dag_opts(dag_optsSEXP);
-    Rcpp::traits::input_parameter< arma::mat >::type theta(thetaSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type Sigma_start(Sigma_startSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type Beta_start(Beta_startSEXP);
-    Rcpp::traits::input_parameter< int >::type verbose(verboseSEXP);
-    Rcpp::traits::input_parameter< int >::type matern(maternSEXP);
-    Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(spiox_response_map(Y, X, coords, custom_dag, dag_opts, theta, Sigma_start, Beta_start, verbose, matern, num_threads));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -341,6 +336,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_spiox_daggp_build", (DL_FUNC) &_spiox_daggp_build, 9},
     {"_spiox_iox", (DL_FUNC) &_spiox_iox, 9},
     {"_spiox_sfact", (DL_FUNC) &_spiox_sfact, 5},
+    {"_spiox_Sigma_x_sfact_cpp", (DL_FUNC) &_spiox_Sigma_x_sfact_cpp, 6},
     {"_spiox_make_ix", (DL_FUNC) &_spiox_make_ix, 2},
     {"_spiox_iox_mat", (DL_FUNC) &_spiox_iox_mat, 6},
     {"_spiox_MaxMincpp", (DL_FUNC) &_spiox_MaxMincpp, 1},
@@ -351,7 +347,6 @@ static const R_CallMethodDef CallEntries[] = {
     {"_spiox_spiox_response", (DL_FUNC) &_spiox_spiox_response, 15},
     {"_spiox_spiox_latent", (DL_FUNC) &_spiox_spiox_latent, 18},
     {"_spiox_spiox_response_vi", (DL_FUNC) &_spiox_spiox_response_vi, 11},
-    {"_spiox_spiox_response_map", (DL_FUNC) &_spiox_spiox_response_map, 11},
     {"_spiox_spiox_predict", (DL_FUNC) &_spiox_spiox_predict, 11},
     {"_spiox_spiox_predict_part", (DL_FUNC) &_spiox_spiox_predict_part, 12},
     {"_spiox_spiox_latent_predict", (DL_FUNC) &_spiox_spiox_latent_predict, 11},

@@ -2,6 +2,7 @@
 
 using namespace std;
 
+
 int time_count(std::chrono::steady_clock::time_point tstart){
   return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - tstart).count();
 }
@@ -154,7 +155,7 @@ void SpIOX::sample_B(){
   
 }
 
-void SpIOX::upd_theta_metrop(){
+bool SpIOX::upd_theta_metrop(){
   std::chrono::steady_clock::time_point tstart;
   std::chrono::steady_clock::time_point tend;
   int timed = 0;
@@ -264,13 +265,13 @@ void SpIOX::upd_theta_metrop(){
   
   theta_mcmc_counter++;
   
-  //Rcpp::Rcout << theta.row(0) << endl;
-  //Rcpp::Rcout << spmap.t() << endl;
+  return accepted;
 }
 
-void SpIOX::upd_theta_metrop_conditional(){
-  
+arma::uvec SpIOX::upd_theta_metrop_conditional(){
   arma::uvec oneuv = arma::ones<arma::uvec>(1);
+  arma::uvec accepteds = arma::zeros<arma::uvec>(q);
+  
   for(int j=0; j<q; j++){
     c_theta_adapt[j].count_proposal();
     
@@ -294,7 +295,6 @@ void SpIOX::upd_theta_metrop_conditional(){
     // ---------------------
     // create proposal daggp
     daggps_alt[j].update_theta(theta_alt.col(j), true);
-    
     // conditional density of Y_j | Y_-j (or W depending on target)
     arma::mat V_alt = V;
     if(latent_model>0){
@@ -331,9 +331,9 @@ void SpIOX::upd_theta_metrop_conditional(){
     double jacobian  = calc_jacobian(phisig_alt, phisig_cur, c_theta_unif_bounds);
     double logaccept = prop_logdens - curr_logdens + jacobian + logpriors;
     
-    bool accepted = do_I_accept(logaccept);
+    accepteds(j) = do_I_accept(logaccept);
     
-    if(accepted){
+    if(accepteds(j)){
       theta = theta_alt;
       std::swap(daggps.at(j), daggps_alt.at(j));
       //std::swap(V, V_alt);
@@ -349,25 +349,50 @@ void SpIOX::upd_theta_metrop_conditional(){
     theta_mcmc_counter++;
   }
   
+  return accepteds;
 }
 
-void SpIOX::cache_blanket_comps(){
+// wall clock in seconds
+static inline double wall_time() {
+#ifdef _OPENMP
+  return omp_get_wtime();
+#else
+  return std::chrono::duration<double>(
+    std::chrono::steady_clock::now().time_since_epoch()
+  ).count();
+#endif
+}
+
+void SpIOX::cache_blanket_comps(const arma::uvec& theta_changed){
   // all these matrix operations only need to be performed when theta changes
   // otherwise, we can just cache what's needed and reuse
   // this impacts the latent model, single site sampler
   // and imputation of missing data in the response model.
   int nfill = latent_model == 2 ? n : rows_with_missing.n_elem;
   
-  Rw_no_Q = arma::field<arma::mat> (nfill);
-  Pblanket_no_Q = arma::field<arma::mat> (nfill);
+  // allocate timing buffers BEFORE the loop
+  arma::vec t_total(nfill, arma::fill::zeros);
+  arma::vec t_rw(nfill,    arma::fill::zeros);
+  arma::vec t_hit(nfill,   arma::fill::zeros);
+  arma::vec t_pblk(nfill,  arma::fill::zeros);
   
 #ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
+//#pragma omp parallel for num_threads(num_threads) //***
 #endif
   for(int ix=0; ix<nfill; ix++){
+    const double t_start = wall_time();
     int i = latent_model == 2 ? ix : rows_with_missing(ix);
     
+    // assume all the same dag otherwise we go cray
+    arma::uvec mblanket = daggps[0].mblanket(i);
+    int mbsize = mblanket.n_elem;
+  
+    // initialization
     Rw_no_Q(ix) = arma::zeros(q, q); 
+    Pblanket_no_Q(ix) = arma::zeros(q, q*mbsize);
+
+    // --- time Rw_no_Q ---
+    double t0 = wall_time();
     for(int r=0; r<q; r++){
       for(int s=0; s<=r; s++){
         Rw_no_Q(ix)(r, s) = 
@@ -378,26 +403,46 @@ void SpIOX::cache_blanket_comps(){
         }
       }
     }
-    
-    // assume all the same dag otherwise we go cray
-    arma::uvec mblanket = daggps[0].mblanket(i);
-    int mbsize = mblanket.n_elem;
-    Pblanket_no_Q(ix) = arma::zeros(q, q*mbsize);
+    double t1 = wall_time();
+    t_rw(ix) = t1 - t0;
+  
+    // --- time building H_i_mat ---
+    t0 = wall_time();
     arma::sp_mat H_i_mat(n, q);
     for (int r = 0; r < q; ++r) {
       H_i_mat.col(r) = daggps[r].H.col(i);
     }
-    
+    arma::sp_mat Hitt = H_i_mat.t();
+    t1 = wall_time();
+    t_hit(ix) = t1 - t0;
+    // --- time Pblanket_no_Q block products ---
+    //Rcpp::Rcout << arma::size(H_i_mat) << " " << arma::size(Pblanket_no_Q(ix)) << endl;
+    t0 = wall_time();
     for (int s = 0; s < q; ++s) {
       int startcol = s * mbsize;
       int endcol = (s + 1) * mbsize - 1;
-      Pblanket_no_Q(ix).cols(startcol, endcol) = H_i_mat.t() * daggps[s].H.cols(mblanket);
+      arma::sp_mat Hblanket = daggps[s].H.cols(mblanket);
+      arma::mat result(Hitt * Hblanket);
+      Pblanket_no_Q(ix).cols(startcol, endcol) = result;
     }
-  }
+    t1 = wall_time();
+    t_pblk(ix) = t1 - t0;
   
+  t_total(ix) = wall_time() - t_start;
+  }
+  // OPTIONAL: print after the loop (single-threaded) to avoid interleaving
+  // for (int ix = 0; ix < nfill; ++ix) {
+  //   Rcpp::Rcout << " total=" << arma::accu(t_total)
+  //               << " Rw="    << arma::accu(t_rw)
+   //              << " H_i="   << arma::accu(t_hit)
+   //              << " Pblk="  << arma::accu(t_pblk) << "\n";
 }
 
-void SpIOX::gibbs_w_sequential_singlesite(bool redo_cache_blanket){
+void SpIOX::gibbs_w_sequential_singlesite(const arma::uvec& theta_changed){
+  double ms_if_cache = 0;
+  double ms_omp_for = 0;
+  double ms_sample = 0;
+  
   // precompute stuff in parallel so we can do fast sequential sampling after
   arma::mat mvnorm = arma::randn(q, n);
   
@@ -406,13 +451,18 @@ void SpIOX::gibbs_w_sequential_singlesite(bool redo_cache_blanket){
   arma::field<arma::mat> invcholP(n);
   
   // V = whitened Y-XB or W
-  
-  if(redo_cache_blanket){
-    // perform this update if theta has changed and we need to recompute the
-    // GP-related matrices that depend on it
-    cache_blanket_comps();
+  {
+    auto t0 = std::chrono::steady_clock::now();
+    if(arma::any(theta_changed != 0)){
+      // perform this update if theta has changed and we need to recompute the
+      // GP-related matrices that depend on it
+      cache_blanket_comps(theta_changed);
+    }
+    ms_if_cache += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   }
   
+  {
+    auto t0 = std::chrono::steady_clock::now();
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
@@ -439,27 +489,49 @@ void SpIOX::gibbs_w_sequential_singlesite(bool redo_cache_blanket){
     invcholP(i) = arma::inv(arma::trimatl(arma::chol(Rw(i) + Di_obs, "lower")));
   }
   
-  // visit every location and sample from latent effects 
-  // conditional on data and markov blanket
-  for(int i=0; i<n; i++){
-    
-    // data contributions may be null if data missing
-    arma::vec Di_YXB = arma::zeros(q);
-    for(int j=0; j<q; j++){
-      if(!missing_mat(i,j)){
-        Di_YXB(j) = YXB(i,j)/Dvec(j);
-      }
-    }
-
-    arma::uvec mblanket = daggps[0].mblanket(i);
-    arma::vec meancomp = Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di_YXB;
-    
-    W.row(i) = arma::trans( invcholP(i).t() * (invcholP(i) * meancomp + mvnorm.col(i) ));
+  ms_omp_for += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   }
   
+  {
+    auto t0 = std::chrono::steady_clock::now();
+  // visit every location and sample from latent effects 
+  // conditional on data and markov blanket
+  
+  for(int c=0; c < daggps[0].colors.n_elem; c++){
+    arma::uvec nodes_in_color = daggps[0].colors(c);
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+    for(int ix=0; ix < nodes_in_color.n_elem; ix++){
+      int i = nodes_in_color(ix);
+  //for(int i=0; i<n; i++){
+      // data contributions may be null if data missing
+      arma::vec Di_YXB = arma::zeros(q);
+      for(int j=0; j<q; j++){
+        if(!missing_mat(i,j)){
+          Di_YXB(j) = YXB(i,j)/Dvec(j);
+        }
+      }
+      
+      arma::uvec mblanket = daggps[0].mblanket(i);
+      arma::vec meancomp = Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di_YXB;
+      
+      W.row(i) = arma::trans( invcholP(i).t() * (invcholP(i) * meancomp + mvnorm.col(i) ));
+      
+      if(W.has_nan()){
+        Rcpp::stop("Found nan in W.\n");
+      }
+  //}
+    }
+    
+  }
+
+  ms_sample += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  }
   for(unsigned int i=0; i<q; i++){
     W.col(i) = W.col(i) - arma::mean(W.col(i));
   }
+  //Rcpp::Rcout << "cache: " << ms_if_cache << " omp for: " << ms_omp_for << " sample: " << ms_sample << endl; 
 }
 
 void SpIOX::gibbs_w_sequential_byoutcome(){
@@ -582,17 +654,27 @@ void SpIOX::gibbs_w_block(){
 
 void SpIOX::sample_Dvec(){
   arma::mat E = YXB - W;
+  double a = 2;//1e-5;
+  double b = 1;//1e-5;
   for(int j=0; j<q; j++){
     arma::vec ej = E.col(j);
     double ssq = arma::accu(pow(ej.rows(avail_by_outcome(j)), 2));
     double navail = .0 + avail_by_outcome(j).n_elem;
-    Dvec(j) = 1.0/R::rgamma(navail/2 + 1e-5, 1.0/(1e-5 + 0.5 * ssq));
+    Dvec(j) = 1.0/R::rgamma(navail/2 + a, 1.0/(b + 0.5 * ssq));
   }
 }
 
 void SpIOX::sample_Sigma_iwishart(){
   arma::mat Smean = V.t() * V + arma::eye(V.n_cols, V.n_cols);
-  arma::mat Q_mean_post = arma::inv_sympd(Smean);
+  arma::mat Q_mean_post;
+  try { 
+    Q_mean_post = arma::inv_sympd(Smean);
+  } catch (...) {
+    Rcpp::Rcout << Smean << endl;
+    Rcpp::Rcout << theta << endl;
+    Rcpp::stop("Error in inv_sympd within sample_Sigma_iwishart \n");
+  }
+   
   double df_post = n + (V.n_cols);
   
   Q = arma::wishrnd(Q_mean_post, df_post);
@@ -602,7 +684,7 @@ void SpIOX::sample_Sigma_iwishart(){
 }
 
 
-void SpIOX::sample_Y_misaligned(bool redo_cache_blanket){
+void SpIOX::sample_Y_misaligned(const arma::uvec& theta_changed){
   // precompute stuff in parallel so we can do fast sequential sampling after
   int nfill = rows_with_missing.n_elem;
   arma::mat mvnorm = arma::randn(q, nfill);
@@ -612,10 +694,10 @@ void SpIOX::sample_Y_misaligned(bool redo_cache_blanket){
   arma::field<arma::mat> invcholP(nfill);
   
   
-  if(redo_cache_blanket){
+  if(arma::any(theta_changed != 0)){
     // perform this update if theta has changed and we need to recompute the
     // GP-related matrices that depend on it
-    cache_blanket_comps();
+    cache_blanket_comps(theta_changed);
   }
   
 #ifdef _OPENMP
@@ -703,11 +785,13 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
   
   // update atoms for theta
   tstart = std::chrono::steady_clock::now();
+  arma::uvec theta_has_changed = arma::zeros<arma::uvec>(q);
   if(update_theta){
     if(q>2){
-      upd_theta_metrop_conditional();
+      theta_has_changed = upd_theta_metrop_conditional();
     } else {
-      upd_theta_metrop();
+      bool block_changed = upd_theta_metrop();
+      theta_has_changed += block_changed;
     }
   }
   timings(4) += time_count(tstart);
@@ -720,7 +804,7 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
     } 
     if(latent_model == 2){
       // redo_cache_blanket runs if update_theta=true
-      gibbs_w_sequential_singlesite(update_theta); 
+      gibbs_w_sequential_singlesite(theta_has_changed); 
       compute_V();
     }
     if(latent_model == 3){
@@ -731,11 +815,13 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
     }
     timings(5) += time_count(tstart);
   } else {
+    tstart = std::chrono::steady_clock::now();
     // response model -- do we have missing data? if so, impute
     if(Y_needs_filling){
       // redo_cache_blanket runs if update_theta=true
-      sample_Y_misaligned(update_theta);
+      sample_Y_misaligned(theta_has_changed);
     }
+    timings(5) += time_count(tstart);
   }
 }
 
@@ -789,9 +875,9 @@ void SpIOX::vi(){
   arma::mat S_post = arma::eye(q,q) + V.t()*V + E2;
   double df_post = q + n;
   
-  Sigma = S_post / (df_post - q - 1);         // Mean of IW
-  Q = arma::inv_sympd(Sigma);         // Expectation of Σ⁻¹
-  Si = arma::chol(Q, "lower");        // For B update
+  Sigma = S_post / (df_post - q - 1);         
+  Q = arma::inv_sympd(Sigma);         
+  Si = arma::chol(Q, "lower");        
 
 
 }

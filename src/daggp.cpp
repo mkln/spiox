@@ -58,6 +58,9 @@ DagGP::DagGP(
     }
   }
   
+  // color the dag (for parallelizing gibbs samplers)
+  color_from_mblanket();
+  
   compute_comps();
   initialize_H();
   
@@ -438,6 +441,53 @@ void DagGP::build_grid_exemplars() {
   }
 }
 
+void DagGP::color_from_mblanket() {
+  const arma::uword n = mblanket.n_elem;
+  auto nb = sym_neighbors(mblanket);
+  
+  // order nodes by nonincreasing degree
+  arma::uvec order = arma::regspace<arma::uvec>(0, n-1);
+  arma::uvec deg(n);
+  for (arma::uword i = 0; i < n; ++i) deg[i] = nb[i].size();
+  arma::uvec idx = arma::sort_index(deg, "descend");
+  order = order(idx); // permutation of 0..n-1
+  
+  // color assignment: color[i] in {0,1,...}
+  arma::ivec color(n, arma::fill::value(-1));
+  int max_color = -1;
+  
+  for (arma::uword p = 0; p < n; ++p) {
+    arma::uword i = order[p];
+    
+    // mark colors used by colored neighbors
+    std::unordered_set<int> used;
+    used.reserve(nb[i].size());
+    for (arma::uword j : nb[i]) {
+      if (j < n && color[j] >= 0) used.insert(color[j]);
+    }
+    
+    // assign smallest feasible color
+    int c = 0;
+    while (used.find(c) != used.end()) ++c;
+    color[i] = c;
+    if (c > max_color) max_color = c;
+  }
+  
+  // pack indices by color into an Armadillo arma::field<arma::uvec>
+  const arma::uword C = static_cast<arma::uword>(max_color + 1);
+  std::vector<std::vector<arma::uword>> buckets(C);
+  for (arma::uword i = 0; i < n; ++i) buckets[ static_cast<arma::uword>(color[i]) ].push_back(i);
+  
+  arma::field<arma::uvec> classes(C);
+  for (arma::uword c = 0; c < C; ++c) {
+    classes(c) = arma::uvec(buckets[c].size());
+    for (arma::uword t = 0; t < buckets[c].size(); ++t) classes(c)[t] = buckets[c][t];
+  }
+  
+  colors = classes;
+}
+
+
 void DagGP::compute_comps(bool update_H){
   // this function avoids building H since H is always used to multiply a matrix A
   sqrtR = arma::zeros(nr);
@@ -455,10 +505,10 @@ void DagGP::compute_comps(bool update_H){
   arma::field<arma::mat> Pinv_cache(G);
   arma::field<arma::mat> h_cache(G);
   arma::vec CPC_cache(G);
-  
+
   bool cache_error = false;
 #ifdef _OPENMP
-#pragma omp parallel for num_threads(n_threads)
+#pragma omp parallel for num_threads(n_threads) 
 #endif
   for (int g = 0; g < G; ++g) {
     try {
@@ -669,7 +719,7 @@ arma::mat DagGP::Corr_export(const arma::mat& these_coords,
 //[[Rcpp::export]]
 Rcpp::List daggp_build(const arma::mat& coords, const arma::field<arma::uvec>& dag,
                        double phi, double sigmasq, double nu, double tausq,
-                       int matern=1, int num_threads=1, bool prune_dag=false){
+                       int matern=1, int num_threads=1, int dag_opts=0){
   
   arma::vec theta(4);
   theta(0) = phi;
@@ -677,20 +727,20 @@ Rcpp::List daggp_build(const arma::mat& coords, const arma::field<arma::uvec>& d
   theta(2) = nu;
   theta(3) = tausq;
   
-  Rcpp::Rcout << "Building DAG-GP model\n";
-  DagGP adag(coords, theta, dag, matern, false, num_threads, prune_dag);
+  //Rcpp::Rcout << "Building DAG-GP model\n";
+  DagGP adag(coords, theta, dag, dag_opts, matern, false, num_threads);
   
-  Rcpp::Rcout << "Calculating Ci\n";
   arma::sp_mat Ci = adag.H.t() * adag.H;
-  Rcpp::Rcout << "Done. Returning. \n";
+  //Rcpp::Rcout << "Done. Returning. \n";
   
   return Rcpp::List::create(
+    Rcpp::Named("H") = adag.H,
+    Rcpp::Named("Cinv") = Ci,
+    Rcpp::Named("Cinv_logdet") = adag.precision_logdeterminant,
     Rcpp::Named("dag") = adag.dag,
     Rcpp::Named("dag_cache") = adag.dag_cache,
     Rcpp::Named("cache_map") = adag.cache_map,
-    Rcpp::Named("H") = adag.H,
-    Rcpp::Named("Cinv") = Ci,
-    Rcpp::Named("Cinv_logdet") = adag.precision_logdeterminant
+    Rcpp::Named("markov_blankets") = adag.mblanket
   );
 }
 
