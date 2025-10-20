@@ -377,7 +377,7 @@ void SpIOX::cache_blanket_comps(const arma::uvec& theta_changed){
   arma::vec t_pblk(nfill,  arma::fill::zeros);
   
 #ifdef _OPENMP
-//#pragma omp parallel for num_threads(num_threads) //***
+#pragma omp parallel for num_threads(num_threads) //***
 #endif
   for(int ix=0; ix<nfill; ix++){
     const double t_start = wall_time();

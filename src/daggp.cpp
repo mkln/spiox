@@ -413,8 +413,6 @@ void DagGP::build_grid_exemplars() {
     dag_cache(g) = exemplar_sets[g];
   }
   
-
-  // 3) materialize dag_cache from exemplars
   const arma::uword G = exemplar_sets.size();
   dag_cache.set_size(G);
   child_cache = arma::zeros<arma::uvec>(G);  // arma::uvec
