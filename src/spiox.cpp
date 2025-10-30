@@ -438,13 +438,15 @@ void SpIOX::cache_blanket_comps(const arma::uvec& theta_changed){
    //              << " Pblk="  << arma::accu(t_pblk) << "\n";
 }
 
-void SpIOX::gibbs_w_sequential_singlesite(const arma::uvec& theta_changed){
+void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
   double ms_if_cache = 0;
   double ms_omp_for = 0;
   double ms_sample = 0;
   
   // precompute stuff in parallel so we can do fast sequential sampling after
-  arma::mat mvnorm = arma::randn(q, n);
+  
+  bool gibbs = false;
+  arma::mat mvnorm = gibbs * arma::randn(q, n);
   
   arma::field<arma::mat> Hw(n);
   arma::field<arma::mat> Rw(n);
@@ -464,7 +466,7 @@ void SpIOX::gibbs_w_sequential_singlesite(const arma::uvec& theta_changed){
   {
     auto t0 = std::chrono::steady_clock::now();
 #ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
+//#pragma omp parallel for num_threads(num_threads)
 #endif
   for(int i=0; i<n; i++){
     Rw(i) = Q % Rw_no_Q(i);
@@ -500,7 +502,7 @@ void SpIOX::gibbs_w_sequential_singlesite(const arma::uvec& theta_changed){
   for(int c=0; c < daggps[0].colors.n_elem; c++){
     arma::uvec nodes_in_color = daggps[0].colors(c);
 #ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
+//#pragma omp parallel for num_threads(num_threads)
 #endif
     for(int ix=0; ix < nodes_in_color.n_elem; ix++){
       int i = nodes_in_color(ix);
@@ -515,6 +517,8 @@ void SpIOX::gibbs_w_sequential_singlesite(const arma::uvec& theta_changed){
       
       arma::uvec mblanket = daggps[0].mblanket(i);
       arma::vec meancomp = Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di_YXB;
+      
+      Rcpp::Rcout << "node i=" << i << " blanket: " << mblanket.t() << "\n";
       
       W.row(i) = arma::trans( invcholP(i).t() * (invcholP(i) * meancomp + mvnorm.col(i) ));
       
@@ -804,7 +808,7 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
     } 
     if(latent_model == 2){
       // redo_cache_blanket runs if update_theta=true
-      gibbs_w_sequential_singlesite(theta_has_changed); 
+      w_sequential_singlesite(theta_has_changed); 
       compute_V();
     }
     if(latent_model == 3){
@@ -933,6 +937,7 @@ void SpIOX::map(){
   Si = arma::chol(Q, "lower");       
 
 }
+
 
 
 double SpIOX::logdens_eval(){

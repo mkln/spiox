@@ -91,7 +91,7 @@ public:
   // latent model 
   int latent_model; // 0: response, 1: block, 2: row seq, 3: col seq
   arma::mat W;
-  void gibbs_w_sequential_singlesite(const arma::uvec& theta_changed);
+  void w_sequential_singlesite(const arma::uvec& theta_changed);
   void gibbs_w_sequential_byoutcome();
   void gibbs_w_block();
   void sample_Dvec();

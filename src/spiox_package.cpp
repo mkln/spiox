@@ -315,12 +315,15 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     }
   }
   
+  arma::sp_mat Ci = iox_model.daggps[0].H.t() * iox_model.daggps[0].H;
+  
   return Rcpp::List::create(
     Rcpp::Named("Beta") = Beta,
     Rcpp::Named("Sigma") = Sigma,
     Rcpp::Named("theta") = theta,
     Rcpp::Named("W") = W,
     Rcpp::Named("Ddiag") = Ddiag,
+    Rcpp::Named("Ci") = Ci,
     Rcpp::Named("timings") = iox_model.timings
   );
   
