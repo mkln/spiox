@@ -89,7 +89,7 @@ void SpIOX::compute_V(){
   }
 }
 
-void SpIOX::sample_B(){
+void SpIOX::update_B(bool vi=false){
   if(latent_model==0){
     // update B via gibbs for the response model
     //Rcpp::Rcout << "+++++++++++++++++ ORIG +++++++++++++++++++" << endl;
@@ -438,16 +438,15 @@ void SpIOX::cache_blanket_comps(const arma::uvec& theta_changed){
    //              << " Pblk="  << arma::accu(t_pblk) << "\n";
 }
 
-/*
-void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
+
+void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed, bool vi=false){
   double ms_if_cache = 0;
   double ms_omp_for = 0;
   double ms_sample = 0;
   
   // precompute stuff in parallel so we can do fast sequential sampling after
   
-  bool gibbs = false;
-  arma::mat mvnorm = gibbs * arma::randn(q, n);
+  arma::mat mvnorm = arma::randn(q, n);
   
   arma::field<arma::mat> Hw(n);
   arma::field<arma::mat> Rw(n);
@@ -519,7 +518,7 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
       arma::uvec mblanket = daggps[0].mblanket(i);
       arma::vec meancomp = Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di_YXB;
       
-      Rcpp::Rcout << "node i=" << i << " blanket: " << mblanket.t() << "\n";
+      //Rcpp::Rcout << "node i=" << i << " blanket: " << mblanket.t() << "\n";
       
       W.row(i) = arma::trans( invcholP(i).t() * (invcholP(i) * meancomp + mvnorm.col(i) ));
       
@@ -538,14 +537,14 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
   }
   //Rcpp::Rcout << "cache: " << ms_if_cache << " omp for: " << ms_omp_for << " sample: " << ms_sample << endl; 
 }
-*/
 
-void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
+/*
+void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed, bool vi=false){
   // stuff to be moved to SpIOX class for latent model
   arma::mat Di = arma::diagmat(1/Dvec);
   
   // precompute stuff in parallel so we can do fast sequential sampling after
-  arma::mat mvnorm = 0*arma::randn(q, n);
+  arma::mat mvnorm = arma::randn(q, n);
   
   arma::field<arma::mat> Hw(n);
   arma::field<arma::mat> Rw(n);
@@ -597,8 +596,7 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
     //W.col(i) = W.col(i) - arma::mean(W.col(i));
   }
 }
-
-
+*/
 
 void SpIOX::gibbs_w_sequential_byoutcome(){
   
@@ -613,30 +611,19 @@ void SpIOX::gibbs_w_sequential_byoutcome(){
   arma::mat vrands = arma::randn(n, q);
   
   arma::mat HDs = arma::zeros(n, q);
+  arma::uvec r1q = arma::regspace<arma::uvec>(0,q-1);
   
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
   for(int j=0; j<q; j++){
     // compute prior precision
     arma::sp_mat post_prec = Q(j,j) * daggps[j].Ci; //daggps[j].H.t() * daggps[j].H;
     // compute posterior precision
     post_prec.diag() += 1.0/Dvec(j);
     
-    // factorise precision so we can use it for sampling
-    bool status = factoriser[j].factorise(post_prec, opts);
-    if(status == false) { statuses(j) = 0; }
-    
     // this does not need sequential
     HDs.col(j) = YXB.col(j)/Dvec(j) + 
       urands.col(j)/sqrt(Dvec(j)) + 
       sqrt(Q(j,j)) * daggps[j].H.t() * vrands.col(j);
-  }
   
-  if(arma::any(statuses==0)){ Rcpp::stop("Failed factorization for sampling w."); }
-  
-  arma::uvec r1q = arma::regspace<arma::uvec>(0,q-1);
-  for(int j=0; j<q; j++){
     arma::vec x = arma::zeros(n);
     arma::uvec notj = arma::find(r1q != j);
     arma::uvec jx = arma::zeros<arma::uvec>(1) + j;
@@ -644,11 +631,10 @@ void SpIOX::gibbs_w_sequential_byoutcome(){
     arma::vec Mi_m_prior = - daggps[j].H.t() * V.cols(notj) * Q.submat(notj, jx);
     arma::vec rhs = Mi_m_prior + HDs.col(j);
     
-    arma::vec w_sampled; 
-    bool foundsol = factoriser[j].solve(w_sampled, rhs);
+    arma::vec xguess = W.col(j);
+    arma::vec w_sampled = gauss_seidel_solve(post_prec, rhs, xguess, 1e-3, 100);
     
     W.col(j) = w_sampled - arma::mean(w_sampled);
-    
     V.col(j) = daggps.at(j).H_times_A(W.col(j));
   }
   
@@ -699,18 +685,9 @@ void SpIOX::gibbs_w_block(){
   
   arma::vec post_meansample = post_Cmean + arma::vectorise(Unorm) + vnorm;
   
-  arma::superlu_opts opts;
-  opts.symmetric  = true;
-  
-  arma::spsolve_factoriser factr;
-  bool okfact = factr.factorise(post_prec, opts);
-  
-  if(okfact == false){ Rcpp::stop("Failed factorization for sampling w."); }
-  
-  arma::vec w;
-  bool foundsol = factr.solve(w, post_meansample);
-  
-  if(foundsol == false)  { Rcpp::stop("Could not solve for sampling w."); }
+  arma::vec wbefore = arma::vectorise(W);
+  arma::vec w = gauss_seidel_solve(post_prec, post_meansample, wbefore, 1e-3, 100);
+
   W = arma::mat(w.memptr(), n, q);
   
   for(unsigned int i=0; i<q; i++){
@@ -718,7 +695,7 @@ void SpIOX::gibbs_w_block(){
   }
 }
 
-void SpIOX::sample_Dvec(){
+void SpIOX::update_Dvec(bool vi=false){
   arma::mat E = YXB - W;
   double a = 2;//1e-5;
   double b = 1;//1e-5;
@@ -730,7 +707,7 @@ void SpIOX::sample_Dvec(){
   }
 }
 
-void SpIOX::sample_Sigma_iwishart(){
+void SpIOX::update_Sigma_iwishart(bool vi=false){
   arma::mat Smean = V.t() * V + arma::eye(V.n_cols, V.n_cols);
   arma::mat Q_mean_post;
   try { 
@@ -832,7 +809,7 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
   
   if(sample_sigma > 0){
     tstart = std::chrono::steady_clock::now();
-    sample_Sigma_iwishart();
+    update_Sigma_iwishart();
     timings(2) += time_count(tstart); 
   }
   
@@ -840,7 +817,7 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
     //Rcpp::Rcout << "B " << endl;
     // sample B 
     tstart = std::chrono::steady_clock::now();
-    sample_B();
+    update_B();
     timings(0) += time_count(tstart);  
     
     // V = whitened Y-XB or W
@@ -877,7 +854,7 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
       gibbs_w_sequential_byoutcome();
     }
     if(sample_tausq){
-      sample_Dvec();
+      update_Dvec();
     }
     timings(5) += time_count(tstart);
   } else {
@@ -892,7 +869,7 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
 }
 
 
-void SpIOX::vi(){
+void SpIOX::response_vi(){
   arma::mat Ytilde = Y;
   arma::mat Xtilde = arma::zeros(n*q, p*q);
   

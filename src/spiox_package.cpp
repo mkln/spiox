@@ -397,7 +397,7 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
     arma::mat Beta_pre = Beta;
     arma::mat Sigma_pre = Sigma;
     
-    iox_model.vi();
+    iox_model.response_vi();
     
     Beta = iox_model.B;
     Sigma = iox_model.Sigma;
@@ -422,7 +422,8 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
   
   return Rcpp::List::create(
     Rcpp::Named("Beta") = Beta,
-    Rcpp::Named("Sigma") = Sigma
+    Rcpp::Named("Sigma") = Sigma,
+    Rcpp::Named("H") = iox_model.daggps[0].H
   );
   
 }

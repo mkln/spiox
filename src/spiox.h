@@ -1,4 +1,5 @@
 #include "omp_import.h"
+#include "gssolver.h"
 #include "daggp.h"
 #include "ramadapt.h"
 
@@ -38,8 +39,8 @@ public:
   
   // -------------- utilities
   int matern;
-  void sample_B(); // 
-  void sample_Sigma_iwishart();
+  void update_B(bool vi); // 
+  void update_Sigma_iwishart(bool vi);
   void compute_V(); 
   bool upd_theta_metrop();
   arma::uvec upd_theta_metrop_conditional(); // returns uvec with changes to thetaj
@@ -91,10 +92,10 @@ public:
   // latent model 
   int latent_model; // 0: response, 1: block, 2: row seq, 3: col seq
   arma::mat W;
-  void w_sequential_singlesite(const arma::uvec& theta_changed);
+  void w_sequential_singlesite(const arma::uvec& theta_changed, bool vi);
   void gibbs_w_sequential_byoutcome();
   void gibbs_w_block();
-  void sample_Dvec();
+  void update_Dvec(bool vi);
   arma::vec Dvec;
   //
   
@@ -123,9 +124,11 @@ public:
   
   // -------------- run 1 gibbs iteration based on current values
   void gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta, bool sample_tausq=false);
-  void vi();
+  void response_vi();
+  void latent_vi();
   void map();
   double logdens_eval();
+  //double logdens_eval_latent();
   
   std::chrono::steady_clock::time_point tstart;
   arma::vec timings;

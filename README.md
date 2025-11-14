@@ -7,11 +7,6 @@ This package implements Bayesian hierarchical models for fitting GPs with IOX cr
 
 In R, `devtools::install_github("mkln/spiox")` to compile from source.
 
-Some sampling algorithms implemented in `spiox` require SuperLU. 
-
-- On Ubuntu, `sudo apt install libsuperlu-dev`.
-- On Mac, [install superlu from Homebrew](https://formulae.brew.sh/formula/superlu). The `Makevars` file in `spiox` assumes a Homebrew install. 
-
 ## Inside-out cross-covariance for spatial multivariate data
 
 ### [arXiv:2412.12407](https://arxiv.org/abs/2412.12407) 
