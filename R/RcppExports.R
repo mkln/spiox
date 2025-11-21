@@ -68,112 +68,12 @@ Sigma_identify <- function(Sigma, theta) {
     .Call(`_spiox_Sigma_identify`, Sigma, theta)
 }
 
-#' @title Spatial Response Model using Gaussian Processes with IOX.
-#' @description This function performs Bayesian inference for a spatial response model using a 
-#' multivariate GP with Inside-Out Cross-Covariance (IOX). 
-#'
-#' @param Y A numeric matrix (\eqn{n \times q}) of observed multivariate spatial responses, 
-#' where \eqn{n} is the number of spatial locations and \eqn{q} is the number of response variables. 
-#' @param X A numeric matrix (\eqn{n \times p}) of predictors corresponding to the observed responses.
-#' @param coords A numeric matrix (\eqn{n \times d}) of spatial coordinates, where \eqn{d} is the spatial dimension 
-#' (e.g., 2 for latitude and longitude).
-#' @param custom_dag An object returned from `spiox::dag_vecchia` 
-#' @param theta_opts A numeric matrix specifying options for the correlation parameters (\eqn{\theta}) 
-#' used during MCMC updates. The way this is input determines how MCMC works. See details below.
-#' @param Sigma_start A numeric matrix (\eqn{q \times q}) specifying the starting value for the IOX covariance matrix 
-#' \eqn{\Sigma}.
-#' @param Beta_start A numeric matrix (\eqn{p \times q}) specifying the starting values for the regression coefficients.
-#' @param mcmc An integer specifying the number of MCMC iterations to perform. 
-#' @param print_every An integer specifying the frequency of progress updates during MCMC iterations. Default is 100.
-#' @param matern An integer flag for enabling Matérn correlation functions for spatial dependence modeling. Default is 1.
-#' Other options: 0=power exponential, 2=wave.
-#' @param sample_sigma A logical value indicating whether to sample the covariance matrix (\eqn{\Sigma}) 
-#' via Gibbs update from an Inverse Wishart prior. Default is TRUE. 
-#' @param sample_beta A logical value indicating whether to sample multivariate regression coefficients 
-#' via Gibbs update from a Normal prior. Default is TRUE.
-#' @param update_theta A logical value indicating whether to update the correlation parameter options (\eqn{\theta}) 
-#' adaptively during MCMC iterations. This should be set to TRUE to run "IOX Full" or "IOX Cluster" from the paper, otherwise FALSE.
-#' The update is performed jointly for the whole vector if q=3 or less; conditionally in blocks if q>3.
-#' @param num_threads An integer specifying the number of threads for parallel computation. Default is 1.
-#'
-#' @return A list containing:
-#' \item{Beta}{Array of dimension (p,q,mcmc) with posterior samples of the regression coefficients (\eqn{\beta}).}
-#' \item{Sigma}{Array of dimension (q,q,mcmc) with posterior samples of the covariance matrix (\eqn{\Sigma}).}
-#' \item{theta}{Array of dimension (4,q,mcmc) with posterior samples of the correlation parameters (\eqn{\theta}).}
-#' \item{theta_which}{Cluster membership for "IOX Grid" and "IOX Cluster".}
-#' \item{theta_opts}{Cluster options for "IOX Grid" and "IOX Cluster".}
-#' \item{timings}{Breakdown of timings of the various MCMC operations (debugging).}
-#'
-#' @details The function is designed for scalable inference on spatial multivariate data using GP-IOX. 
-#' Use multi-threading (`num_threads > 1`) for faster computation on large datasets.
-#' How to set up `theta_opts`. Each column of theta has 4 elements. 1=phi, spatial decay parameter. 2=spatial variance. 3=smoothness or exponent. 4=nugget.
-#' MCMC will sample the jth parameter a posteriori (j=1,2,3,4) ONLY if `var(theta_opts[j,])>0`. 
-#' In other words, posterior sampling is DISABLED for parameter j if the entire jth row of `theta_opts` is set to the same value (which will be the fixed value of that parameter).
-#' for "IOX Full", `theta_opts` should have \eqn{q} columns. For "IOX Cluster", `theta_opts` should have as many columns as the number of clusters (choose it smaller than \eqn{q}).
-#' For "IOX Grid", `theta_opts` should have as many columns as the number of elements in the grid. Tested with up to 200 columns.
-#' Beware that each column corresponds to a Vecchia-GP with `m` neighbors, so the memory footprint increases linearly with the number of columns of `theta_opts`.
-#'
-#' @export
-spiox_response <- function(Y, X, coords, custom_dag, Beta_start, Sigma_start, theta_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_Beta = TRUE, sample_Sigma = TRUE, update_theta, num_threads = 1L) {
-    .Call(`_spiox_spiox_response`, Y, X, coords, custom_dag, Beta_start, Sigma_start, theta_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, update_theta, num_threads)
+spiox_response <- function(Y, X, coords, custom_dag, Beta_start, Sigma_start, Theta_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_Beta = TRUE, sample_Sigma = TRUE, update_Theta, num_threads = 1L) {
+    .Call(`_spiox_spiox_response`, Y, X, coords, custom_dag, Beta_start, Sigma_start, Theta_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, update_Theta, num_threads)
 }
 
-#' @title Spatial Latent Model using Gaussian Processes with IOX as prior for latent effects.
-#' @description This function performs Bayesian inference for a spatial latent model using a 
-#' multivariate GP with Inside-Out Cross-Covariance (IOX) prior for the latent effects. 
-#'
-#' @param Y A numeric matrix (\eqn{n \times q}) of observed multivariate spatial responses, 
-#' where \eqn{n} is the number of spatial locations and \eqn{q} is the number of response variables. 
-#' @param X A numeric matrix (\eqn{n \times p}) of predictors corresponding to the observed responses.
-#' @param coords A numeric matrix (\eqn{n \times d}) of spatial coordinates, where \eqn{d} is the spatial dimension 
-#' (e.g., 2 for latitude and longitude).
-#' @param custom_dag An object returned from `spiox::dag_vecchia` 
-#' @param theta_opts A numeric matrix specifying options for the correlation parameters (\eqn{\theta}) 
-#' used during MCMC updates. The way this is input determines how MCMC works. See details below.
-#' @param Sigma_start A numeric matrix (\eqn{q \times q}) specifying the starting value for the IOX covariance matrix 
-#' \eqn{\Sigma}.
-#' @param Beta_start A numeric matrix (\eqn{p \times q}) specifying the starting values for the regression coefficients.
-#' @param mcmc An integer specifying the number of MCMC iterations to perform. 
-#' @param print_every An integer specifying the frequency of progress updates during MCMC iterations. Default is 100.
-#' @param matern An integer flag for enabling Matérn correlation functions for spatial dependence modeling. Default is 1.
-#' Other options: 0=power exponential, 2=wave.
-#' @param sample_sigma A logical value indicating whether to sample the covariance matrix (\eqn{\Sigma}) 
-#' via Gibbs update from an Inverse Wishart prior. Default is TRUE. 
-#' @param sample_beta A logical value indicating whether to sample multivariate regression coefficients 
-#' via Gibbs update from a Normal prior. Default is TRUE.
-#' @param sample_theta_gibbs A logical value indicating whether to enable Gibbs sampling for the correlation 
-#' parameters (\eqn{\theta}). This should be set to TRUE to run "IOX Grid" or "IOX Cluster" from the paper, otherwise FALSE.
-#' @param update_theta A logical value indicating whether to update the correlation parameter options (\eqn{\theta}) 
-#' adaptively during MCMC iterations. This should be set to TRUE to run "IOX Full" or "IOX Cluster" from the paper, otherwise FALSE.
-#' The update is performed jointly for the whole vector if q=3 or less; conditionally in blocks if q>3.
-#' @param num_threads An integer specifying the number of threads for parallel computation. Default is 1.
-#' @param sampling An integer specifying how to sample the latent effects. Available options:  
-#' sampling=1: block sampler for the entire set of latent effects (AVOID if \eqn{n} or \eqn{q} are large)
-#' sampling=2 (default): single-outcome block sampler (\eqn{q} sequential steps)
-#' sampling=3: single-site sampler (\eqn{n} sequential steps)
-#'
-#' @return A list containing:
-#' \item{Beta}{Array of dimension (p,q,mcmc) with posterior samples of the regression coefficients (\eqn{\beta}).}
-#' \item{Sigma}{Array of dimension (q,q,mcmc) with posterior samples of the covariance matrix (\eqn{\Sigma}).}
-#' \item{theta}{Array of dimension (4,q,mcmc) with posterior samples of the correlation parameters (\eqn{\theta}).}
-#' \item{theta_which}{Cluster membership for "IOX Grid" and "IOX Cluster".}
-#' \item{theta_opts}{Cluster options for "IOX Grid" and "IOX Cluster".}
-#' \item{W}{Array of dimension (n,q,mcmc) with posterior samples of the latent effects.}
-#' \item{Ddiag}{Matrix of dimension (q, mcmc) with posterior samples of the diagonal of measurement error matrix D.}
-#' \item{timings}{Breakdown of timings of the various MCMC operations (debugging).}
-#'
-#' @details The function is designed for scalable inference on spatial multivariate data using GP-IOX. 
-#' Use multi-threading (`num_threads > 1`) for faster computation on large datasets.
-#' How to set up `theta_opts`. Each column of theta has 4 elements. 1=phi, spatial decay parameter. 2=spatial variance. 3=smoothness or exponent. 4=nugget.
-#' MCMC will sample the jth parameter a posteriori (j=1,2,3,4) ONLY if `var(theta_opts[j,])>0`. 
-#' In other words, posterior sampling is DISABLED for parameter j if the entire jth row of `theta_opts` is set to the same value (which will be the fixed value of that parameter).
-#' for "IOX Full", `theta_opts` should have \eqn{q} columns. For "IOX Cluster", `theta_opts` should have as many columns as the number of clusters (choose it smaller than \eqn{q}).
-#' For "IOX Grid", `theta_opts` should have as many columns as the number of elements in the grid. Tested with up to 200 columns.
-#' Beware that each column corresponds to a Vecchia-GP with `m` neighbors, so the memory footprint increases linearly with the number of columns of `theta_opts`.
-#'
-#' @export
-spiox_latent <- function(Y, X, coords, custom_dag, Beta_start, Sigma_start, theta_start, tausq_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_sigma = TRUE, sample_beta = TRUE, sample_tausq = TRUE, update_theta, num_threads = 1L, sampling = 2L) {
-    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, Beta_start, Sigma_start, theta_start, tausq_start, mcmc, print_every, matern, dag_opts, sample_sigma, sample_beta, sample_tausq, update_theta, num_threads, sampling)
+spiox_latent <- function(Y, X, coords, custom_dag, Beta_start, Sigma_start, Theta_start, Ddiag_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_Beta = TRUE, sample_Sigma = TRUE, sample_Ddiag = TRUE, update_Theta, num_threads = 1L, sampling = 2L) {
+    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, Beta_start, Sigma_start, Theta_start, Ddiag_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, sample_Ddiag, update_Theta, num_threads, sampling)
 }
 
 spiox_response_vi <- function(Y, X, coords, custom_dag, dag_opts, theta, Sigma_start, Beta_start, verbose = 0L, matern = 1L, num_threads = 1L) {

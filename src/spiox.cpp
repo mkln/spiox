@@ -601,11 +601,11 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed, bool vi=fal
 void SpIOX::gibbs_w_sequential_byoutcome(){
   
   std::vector<arma::sp_mat> prior_precs(q);
-  std::vector<arma::spsolve_factoriser> factoriser(q);
+  //std::vector<arma::spsolve_factoriser> factoriser(q);
   arma::uvec statuses = arma::ones<arma::uvec>(q);
   
-  arma::superlu_opts opts;
-  opts.symmetric  = true;
+  //arma::superlu_opts opts;
+  //opts.symmetric  = true;
   
   arma::mat urands = arma::randn(n, q);
   arma::mat vrands = arma::randn(n, q);
