@@ -9,7 +9,7 @@ void matern_inplace(arma::mat& res,
                              const double& phi, const double& nu, 
                              const double& sigmasq, 
                              double * bessel_ws,
-                             const double& nugginside=0,  bool same=false){
+                             const double& nugg=0,  bool same=false){
   
   int threadid = 0;
 #ifdef _OPENMP
@@ -28,7 +28,7 @@ void matern_inplace(arma::mat& res,
           res(i, j) = pow(hphi, nu) * pow2_nu1_gammanu_sigmasq *
             R::bessel_k_ex(hphi, nu, 1.0, &bessel_ws[threadid*MAT_NU_MAX]);
         } else {
-          res(i, j) = (sigmasq + nugginside);
+          res(i, j) = sigmasq + nugg;
         }
       }
     }
@@ -43,7 +43,7 @@ void matern_inplace(arma::mat& res,
           res(i, j) = pow(hphi, nu) * pow2_nu1_gammanu_sigmasq *
             R::bessel_k_ex(hphi, nu, 1.0, &bessel_ws[threadid*MAT_NU_MAX]);
         } else {
-          res(i, j) = (sigmasq + nugginside);
+          res(i, j) = sigmasq + nugg;
         }
       }
     }

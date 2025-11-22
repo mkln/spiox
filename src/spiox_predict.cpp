@@ -50,6 +50,7 @@ Rcpp::List spiox_predict(
     arma::field<arma::mat> PPi(q);
     arma::field<arma::mat> ht(q);
     arma::field<arma::mat> CPh(q);
+    arma::vec Dj = arma::zeros(q);
     
     for(int m=0; m<mcmc; m++){
       
@@ -66,7 +67,7 @@ Rcpp::List spiox_predict(
       arma::vec Y_out = arma::zeros(q);
       arma::mat rndnorm_m = random_stdnormal.row(m);
     
-      arma::vec Dj = arma::zeros(q);
+      
       arma::vec Yspat = arma::zeros(q);
       
       // loop over outcomes
@@ -82,9 +83,9 @@ Rcpp::List spiox_predict(
           CPh(j) = CPt(j).t() * ht(j);
           Dj(j) = sqrt( abs(arma::conv_to<double>::from(
             CC(j) - CPh(j) )) ); // abs for numerical zeros
-          Yspat(j) = arma::conv_to<double>::from(ht(j).t() * yxb_old(px, outjx)); 
         }
         
+        Yspat(j) = arma::conv_to<double>::from(ht(j).t() * yxb_old(px, outjx)); 
         Y_out(j) = xb_new(j) + Yspat(j); // post mean only
       }
       
@@ -100,7 +101,8 @@ Rcpp::List spiox_predict(
   
   return Rcpp::List::create(
     Rcpp::Named("Y") = Y_out_mcmc,
-    Rcpp::Named("dag") = dag
+    Rcpp::Named("dag") = dag,
+    Rcpp::Named("seedmvn") = random_stdnormal
   );
 }
 

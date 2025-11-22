@@ -2,7 +2,7 @@
 #include "covariance.h"
 #include "omp_import.h"
 #include "daggp.h"
-
+#include "interrupt.h"
 
 using namespace std;
 
@@ -106,10 +106,13 @@ arma::mat sfact(const arma::field<arma::uvec>& dag, const arma::mat& S,
   arma::mat I1 = arma::eye(n, n);
   arma::mat result = arma::zeros(q,q);
   
+  int dag_opts = 0;
+  bool use_Ci = false;
+  
   std::vector<DagGP> daggps(q);
   arma::cube Hinvs(n,n,q);
   for(int i=0; i<q; i++){
-    daggps[i] = DagGP(S, theta.col(i), dag, matern, n_threads);
+    daggps[i] = DagGP(S, theta.col(i),dag, dag_opts, matern, use_Ci, n_threads);
     Hinvs.slice(i) = arma::spsolve(daggps[i].H, I1, "lower");
     for(int j=0; j<=i; j++){
       result(i,j) = arma::accu(Hinvs.slice(i)%Hinvs.slice(j))/(n+.0);
@@ -117,6 +120,57 @@ arma::mat sfact(const arma::field<arma::uvec>& dag, const arma::mat& S,
   }
   
   return(result);
+}
+
+// [[Rcpp::export]]
+arma::cube Sigma_x_sfact_cpp(const arma::field<arma::uvec>& dag, const arma::mat& S, 
+                const arma::cube& Sigma, const arma::cube& theta, int matern=1, int n_threads=1){
+  int n = S.n_rows;
+  int q = theta.n_cols;
+  arma::mat I1 = arma::eye(n, n);
+  int mcmc = theta.n_slices;
+  arma::cube result_cube = arma::zeros(q,q, mcmc);
+  
+  std::vector<DagGP> daggps(q);
+  arma::cube Hinvs(n,n,q);
+  
+  int dag_opts=0;
+  int use_Ci = false;
+  
+  for(int i=0; i<q; i++){
+    arma::mat theta0 = theta.slice(0);
+    arma::vec thetai = theta0.col(i);
+    daggps[i] = DagGP(S, thetai, dag, dag_opts, matern, use_Ci, n_threads);
+    Hinvs.slice(i) = arma::spsolve(daggps[i].H, I1, "lower");
+  }
+  arma::mat theta_curr = theta.slice(0);
+  
+  for(int m=0; m<mcmc; m++){
+    arma::mat result = arma::zeros(q,q);
+    const arma::mat thetam = theta.slice(m);
+    
+    // update theta-dependent state once per m if needed
+    bool theta_changed = !arma::approx_equal(theta_curr, thetam, "absdiff", 1e-10);
+    if (theta_changed) theta_curr = thetam;
+    
+    for(int i=0; i<q; i++){
+      arma::mat thetam = theta.slice(m);
+      if(theta_changed){
+        // update
+        theta_curr = thetam;
+        arma::vec thetai = theta_curr.col(i);
+        daggps[i] = DagGP(S, thetai, dag, dag_opts, matern, use_Ci, n_threads);
+        Hinvs.slice(i) = arma::spsolve(daggps[i].H, I1, "lower");
+      }
+      for(int j=0; j<=i; j++){
+        double v = arma::accu( Sigma(i,j,m) * (Hinvs.slice(i) % Hinvs.slice(j)) ) / double(n);
+        result(i,j) = v;
+        result(j,i) = v;  
+      }
+    }
+    result_cube.slice(m) = result;
+  }
+  return(result_cube);
 }
 
 
