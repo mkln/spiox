@@ -112,9 +112,7 @@ public:
   arma::mat B_post_cov;
   arma::mat VTV;
   arma::mat ETE;
-  int N_gs_maxiter;
   int N_mcvi_samples;
-  double tol_gs;
   arma::mat Ws;
   arma::cube W_samples_vi;
   arma::cube V_samples_vi;
@@ -191,8 +189,6 @@ public:
     vi = do_vi;
     Ws = W;
     N_mcvi_samples = vi? 100 : 1; // if mcmc, we still need to run that loop once
-    N_gs_maxiter = vi? 50 : 1;
-    tol_gs = 1e-2; // relative diff
     VTV = arma::zeros(q, q);
     ETE = arma::zeros(q, q);
     W_samples_vi = arma::zeros(W.n_rows, W.n_cols, N_mcvi_samples);
