@@ -233,6 +233,8 @@ void SpIOX::update_B_vi(){
     B = arma::mat(mu_b.memptr(), p, q);  // reshape to matrix for consistency
   }
   
+  YXB = Y - X*B;
+  
 }
 
 bool SpIOX::upd_theta_metrop(){
