@@ -754,9 +754,6 @@ void SpIOX::update_Dvec(){
     arma::mat Xj = X.rows(ix);
     arma::mat XtX = Xj.t() * Xj;
     
-    //arma::vec ej = E.col(j);
-    
-    //double ssq = arma::accu(pow(ej.rows(avail_by_outcome(j)), 2));
     double ssq = 0;//arma::accu(arma::square(ej.rows(ix)));
     double navail = .0 + avail_by_outcome(j).n_elem;
     
@@ -773,6 +770,9 @@ void SpIOX::update_Dvec(){
       Dvec(j) = (b + 0.5 * ssq) / (navail/2 + a - 1);
     } else {
       // MCMC - sample with inverse gamma for each tau_sq
+      arma::vec ej = E.col(j);
+      
+      double ssq = arma::accu(arma::square(ej.rows(ix)));
       Dvec(j) = 1.0/R::rgamma(navail/2 + a, 1.0/(b + 0.5 * ssq));
     }
   }
