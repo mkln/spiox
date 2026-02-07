@@ -350,10 +350,14 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
                            int num_threads = 1,
                            int verbose = 0,
                            int report = 50,
-                           double tol = 1e-5,
+                           double tol = 1e-2,
                            int max_iter = 500){
   
-  int min_iter = 1; 
+  // do min_iter iterations at least
+  int min_iter = 10; 
+  // then check maximum relative change. if it's <tol for this time then stop
+  int wait_time_before_stop = 5;
+  
   // for artifacts in other subfunctions.
   int latent_model = 2; 
   bool do_vi = true;
@@ -392,8 +396,6 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
                   matern,
                   num_threads, do_vi);
   
-  Rcpp::Rcout << "done init \n";
-  
   // storage
   arma::mat Beta = arma::zeros(iox_model.p, q);
   arma::mat Sigma = arma::zeros(q, q);
@@ -406,9 +408,10 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   arma::vec rel_W_store(max_iter, arma::fill::zeros);
   arma::vec rel_D_store(max_iter, arma::fill::zeros);
   
-  Rcpp::Rcout << "starting \n";
-  
-  bool stop=false;
+  bool stop=false; // stopping flag
+  double alpha=0.1; // moving average coefficient
+  int about_to_exit = 0; // counter for how long we've been "good"
+  double rel_change_movave = 0; // moving average of max relative change
   int i=0;
   while(!stop){
     i ++;
@@ -426,41 +429,46 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
     Ddiag = iox_model.Dvec;
     
     // monitoring convergence of the parameters
-    double rel_mu_change = arma::norm(Beta - Beta_pre, 2) / (arma::norm(Beta_pre, 2)  + 1e-12);
-    double rel_sigma_change = arma::norm(Sigma - Sigma_pre, "fro") / (arma::norm(Sigma_pre, "fro") + 1e-12);
-    double rel_W_change = arma::norm(W - W_pre, "fro") / (arma::norm(W_pre, "fro") + 1e-12);
-    double rel_Ddiag_change = arma::norm(Ddiag - D_pre, 2) / (arma::norm(D_pre, 2) + 1e-12);
+    arma::vec rel_change = arma::zeros(4);
+    rel_change(0) = arma::norm(Beta - Beta_pre, 2) / (arma::norm(Beta_pre, 2)  + 1e-12);
+    rel_change(1) = arma::norm(Sigma - Sigma_pre, "fro") / (arma::norm(Sigma_pre, "fro") + 1e-12);
+    rel_change(2) = arma::norm(W - W_pre, "fro") / (arma::norm(W_pre, "fro") + 1e-12);
+    rel_change(3) = arma::norm(Ddiag - D_pre, 2) / (arma::norm(D_pre, 2) + 1e-12);
     
-    // storing for trace plots
-    rel_B_store(i - 1) = rel_mu_change;
-    rel_Sigma_store(i - 1) = rel_sigma_change;
-    rel_W_store(i - 1) = rel_W_change;
-    rel_D_store(i - 1) = rel_Ddiag_change;
+    double max_rel_change = rel_change.max();
+    rel_change_movave = max_rel_change;
     
-    if (rel_mu_change < tol &&
-        rel_sigma_change < tol &&
-        rel_W_change < tol &&
-        rel_Ddiag_change < tol &&
-        i > min_iter) {
-      stop=true;
+    if(i > min_iter){
+      // do at least 10 iterations
+      rel_change_movave = (1-alpha) * rel_change_movave + alpha * max_rel_change;
+      if(verbose){
+        Rcpp::Rcout << "rel_change_movave: " << rel_change_movave << "\n";  
+      }
+      
     }
     
-    // Progress printing
-    if(verbose>0 && (i % report == 0)){
-      Rcpp::Rcout << "Iter: " <<  i 
-                  << " rel_B=" << rel_mu_change
-                  << " rel_Sigma=" << rel_sigma_change
-                  << " rel_W=" << rel_W_change
-                  << " rel_D=" << rel_Ddiag_change
-                  << std::endl;
-    };
+    // storing for trace plots
+    rel_B_store(i - 1) = rel_change(0);
+    rel_Sigma_store(i - 1) = rel_change(1);
+    rel_W_store(i - 1) = rel_change(2);
+    rel_D_store(i - 1) = rel_change(3);
+    
+    if(rel_change_movave < tol){
+      // we're doing well, prepare to exit
+      about_to_exit += 1;
+    } else {
+      // reset
+      about_to_exit = 0;
+    }
+    
     
     bool interrupted = checkInterrupt();
     if(interrupted){
       Rcpp::stop("Interrupted by the user.");
     }
-    
-    // stopping properly
+  
+    // stopping?
+    stop = about_to_exit > wait_time_before_stop;
     if (i >= max_iter) stop = true;
   }
   

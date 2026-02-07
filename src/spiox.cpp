@@ -93,24 +93,27 @@ void SpIOX::compute_V(){
   }
   
   if(vi){
-    for(int ss=0; ss<K; ss++){
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+    for(int ss=0; ss<N_mcvi_samples; ss++){
       for(int j=0; j<q; j++){
         arma::vec Vtemp = V_samples_vi.subcube(0, j, ss, n-1, j, ss);
         V_samples_vi.subcube(0, j, ss, n-1, j, ss) = daggps.at(j).H_times_A(Vtemp);
       }
     }
+    
+    VTV = arma::zeros(q, q);
+    for(int ss=0; ss<N_mcvi_samples; ss++){
+      arma::mat Vtemp = V_samples_vi.slice(ss);
+      VTV += 1.0/N_mcvi_samples * Vtemp.t() * Vtemp;
+    }
   }
-  
-  VTV = arma::zeros(q, q);
-  for(int ss=0; ss<K; ss++){
-    arma::mat Vtemp = V_samples_vi.slice(ss);
-    VTV += 1.0/K * Vtemp.t() * Vtemp;
-  }
-  
+
   
 }
 
-void SpIOX::update_B(){
+void SpIOX::update_B_gibbs(){
   if(latent_model==0){
     // update B via gibbs for the response model
     //Rcpp::Rcout << "+++++++++++++++++ ORIG +++++++++++++++++++" << endl;
@@ -121,7 +124,7 @@ void SpIOX::update_B(){
     //Rcpp::Rcout << "------- builds0 ----" << endl;
     tstart = std::chrono::steady_clock::now();
     arma::mat Ytilde = Y;
-    arma::mat Xtilde = arma::zeros(n*q, p*q);
+    Xtilde = arma::zeros(n*q, p*q);
     arma::vec daggp_logdets = arma::zeros(q);
     
 #ifdef _OPENMP
@@ -173,6 +176,62 @@ void SpIOX::update_B(){
   }
   
   YXB = Y - X*B;
+  
+}
+
+void SpIOX::update_B_vi(){
+  
+  arma::mat Ytilde;
+  B = arma::zeros(p, q);
+  if(latent_model > 0){
+    Ytilde = (Y - W);
+    for(int j=0; j<q; j++){
+      // prior precision (diagonal)
+      arma::vec vecB_Var = B_Var.col(j);
+      arma::mat prior_prec = arma::diagmat(1.0 / vecB_Var);
+      
+      // posterior precision 
+      arma::mat post_precision = prior_prec + X.t() * X;
+      B_post_cov = arma::inv_sympd(post_precision);
+      // posterior mean 
+      arma::vec mu_b = B_post_cov * X.t() * Ytilde.col(j);
+      
+      // store the mean and optionally the covariance
+      B.col(j) = mu_b;  
+    }
+    
+  } else {
+    Ytilde = Y;
+    Xtilde = arma::zeros(n*q, p*q);
+    
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+    for(unsigned int j = 0; j < q; j++){
+      Ytilde.col(j) = daggps.at(j).H_times_A( Ytilde.col(j) ); // whitened (Y - W)
+      arma::mat HX = daggps.at(j).H_times_A(X);         // whitened X
+      
+      for(unsigned int i = 0; i < q; i++){
+        Xtilde.submat(i * n, j * p,
+                      (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX;
+      }
+    }
+    
+    arma::vec ytilde = arma::vectorise(Ytilde * Si); // vec(Y^* Σ^{-1})
+    
+    // prior precision (diagonal)
+    arma::vec vecB_Var = arma::vectorise(B_Var);
+    arma::mat prior_prec = arma::diagmat(1.0 / vecB_Var);
+    
+    // posterior precision 
+    arma::mat post_precision = prior_prec + Xtilde.t() * Xtilde;
+    B_post_cov = arma::inv_sympd(post_precision);
+    // posterior mean 
+    arma::vec mu_b = B_post_cov * Xtilde.t() * ytilde;
+    
+    // store the mean and optionally the covariance
+    B = arma::mat(mu_b.memptr(), p, q);  // reshape to matrix for consistency
+  }
   
 }
 
@@ -487,91 +546,84 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
-  for(int i=0; i<n; i++){
-    Rw(i) = Q % Rw_no_Q(i);
-    
-    // assume all the same dag otherwise we go cray
-    arma::uvec mblanket = daggps[0].mblanket(i);
-    int mbsize = mblanket.n_elem;
-    arma::mat Pblanket = arma::zeros(q, q*mbsize);
-    
-    arma::mat Di_obs = arma::zeros(q,q);
-    
-    for(int j = 0; j < q; j++) {
-      int startcol = j * mbsize;
-      int endcol = (j + 1) * mbsize - 1;
-      Pblanket.cols(startcol, endcol) = arma::diagmat(Q.col(j)) * Pblanket_no_Q(i).cols(startcol, endcol);
-      if(!missing_mat(i,j)){
-        Di_obs(j,j) = 1.0/Dvec(j);
+    for(int i=0; i<n; i++){
+      Rw(i) = Q % Rw_no_Q(i);
+      
+      // assume all the same dag otherwise we go cray
+      arma::uvec mblanket = daggps[0].mblanket(i);
+      int mbsize = mblanket.n_elem;
+      arma::mat Pblanket = arma::zeros(q, q*mbsize);
+      
+      arma::mat Di_obs = arma::zeros(q,q);
+      
+      for(int j = 0; j < q; j++) {
+        int startcol = j * mbsize;
+        int endcol = (j + 1) * mbsize - 1;
+        Pblanket.cols(startcol, endcol) = arma::diagmat(Q.col(j)) * Pblanket_no_Q(i).cols(startcol, endcol);
+        if(!missing_mat(i,j)){
+          Di_obs(j,j) = 1.0/Dvec(j);
+        }
       }
+      
+      Hw(i) = - Pblanket;
+      invcholP(i) = arma::inv(arma::trimatl(arma::chol(Rw(i) + Di_obs, "lower")));
     }
     
-    Hw(i) = - Pblanket;
-    invcholP(i) = arma::inv(arma::trimatl(arma::chol(Rw(i) + Di_obs, "lower")));
-  }
-  
-  ms_omp_for += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    ms_omp_for += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   }
   
   {
     auto t0 = std::chrono::steady_clock::now();
-  // visit every location and sample from latent effects 
-  // conditional on data and markov blanket
-  
-  for(int ss=0; ss < K; ss ++ ){
-    arma::mat mvnorm = arma::randn(q, n);
-    for(int c=0; c < daggps[0].colors.n_elem; c++){
-      arma::uvec nodes_in_color = daggps[0].colors(c);
-      #ifdef _OPENMP
-      #pragma omp parallel for num_threads(num_threads)
-      #endif
-      for(int ix=0; ix < nodes_in_color.n_elem; ix++){
-        int i = nodes_in_color(ix);
-        //for(int i=0; i<n; i++){
-        // data contributions may be null if data missing
-        arma::vec Di_YXB = arma::zeros(q);
-        for(int j=0; j<q; j++){
-          if(!missing_mat(i,j)){
-            Di_YXB(j) = YXB(i,j)/Dvec(j);
+    // visit every location and sample from latent effects 
+    // conditional on data and markov blanket
+    
+    for(int ss=0; ss < N_mcvi_samples; ss ++ ){
+      arma::mat mvnorm = arma::randn(q, n);
+      //arma::mat Ws = W; // samples
+      for(int c=0; c < daggps[0].colors.n_elem; c++){
+        arma::uvec nodes_in_color = daggps[0].colors(c);
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+        for(int ix=0; ix < nodes_in_color.n_elem; ix++){
+          int i = nodes_in_color(ix);
+          //for(int i=0; i<n; i++){
+          // data contributions may be null if data missing
+          arma::vec Di_YXB = arma::zeros(q);
+          for(int j=0; j<q; j++){
+            if(!missing_mat(i,j)){
+              Di_YXB(j) = YXB(i,j)/Dvec(j);
+            }
           }
+          
+          arma::uvec mblanket = daggps[0].mblanket(i);
+          if(! vi){
+            arma::vec meancomp = Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di_YXB;
+            W.row(i) = arma::trans( invcholP(i).t() * (invcholP(i) * meancomp + mvnorm.col(i) ));
+          } else {
+            // mean part
+            arma::vec meancomp = Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di_YXB;
+            W.row(i) = arma::trans( invcholP(i).t() * (invcholP(i) * meancomp ));
+            // sample part
+            arma::vec meancomp_S = Hw(i) * arma::vectorise( Ws.rows(mblanket) ) + Di_YXB;
+            Ws.row(i) = arma::trans( invcholP(i).t() * (invcholP(i) * meancomp_S + mvnorm.col(i) ));
+          }
+          
+          if(W.has_nan()){
+            Rcpp::stop("Found nan in W.\n");
+          }
+          //}
         }
-        
-        arma::uvec mblanket = daggps[0].mblanket(i);
-        arma::vec meancomp = Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di_YXB;
-        
-        //Rcpp::Rcout << "node i=" << i << " blanket: " << mblanket.t() << "\n";
-        
-        if(! vi){
-          W.row(i) = arma::trans( invcholP(i).t() * (invcholP(i) * meancomp + mvnorm.col(i) ));
-        } else {
-          W.row(i) = arma::trans( invcholP(i).t() * (invcholP(i) * meancomp ));
-          W_samples_vi.subcube(i, 0, ss, i, q-1, ss) = 
-            arma::trans( invcholP(i).t() * (invcholP(i) * meancomp + mvnorm.col(i) ));
-        }
-        
-        if(W.has_nan()){
-          Rcpp::stop("Found nan in W.\n");
-        }
-        //}
       }
-      
+      // store 
+      W_samples_vi.slice(ss) = Ws;
     }
-  }
-
-
-  ms_sample += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    
+    
+    ms_sample += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   }
   for(unsigned int i=0; i<q; i++){
     W.col(i) = W.col(i) - arma::mean(W.col(i));
-  }
-  
-  if(vi){
-    for(int ss=0; ss<K; ss++){
-      arma::mat Ws = W_samples_vi.slice(ss);
-      for(unsigned int i=0; i<q; i++){
-        Ws.col(i) = Ws.col(i) - arma::mean(Ws.col(i));
-      }
-    }
   }
   
 }
@@ -733,19 +785,43 @@ void SpIOX::gibbs_w_block(){
   }
 }
 
-void SpIOX::update_Dvec(){
+void SpIOX::update_Dvec_gibbs(){
   arma::mat E = YXB - W;
   
   // priors fpr tau_sq
   double a = 2;//1e-5;
   double b = 1;//1e-5;
   
-  if(vi){
-    ETE = arma::zeros(q, q);
-    for(int ss=0; ss<K; ss++){
-      arma::mat E = YXB - W_samples_vi.slice(ss);
-      ETE += 1.0/K * E.t() * E;
+  // Updating each tau_sq
+  for(int j=0; j<q; j++){
+    arma::uvec ix = avail_by_outcome(j);
+    arma::mat Xj = X.rows(ix);
+    arma::mat XtX = Xj.t() * Xj;
+    
+    double navail = .0 + avail_by_outcome(j).n_elem;
+
+    // MCMC - sample with inverse gamma for each tau_sq
+    arma::vec ej = E.col(j);
+    
+    double ssq = arma::accu(arma::square(ej.rows(ix)));
+    Dvec(j) = 1.0/R::rgamma(navail/2 + a, 1.0/(b + 0.5 * ssq));
+  
+  }
+}
+
+void SpIOX::update_Dvec_vi(){
+  
+  // priors fpr tau_sq
+  double a = 2;//1e-5;
+  double b = 1;//1e-5;
+  
+  ETE = arma::zeros(q, q);
+  for(int ss=0; ss<N_mcvi_samples; ss++){
+    arma::mat E = YXB - W_samples_vi.slice(ss);
+    for(int j=0; j<q; j++){
+      E.col(j) -= arma::mean(E.col(j));
     }
+    ETE += 1.0/N_mcvi_samples * E.t() * E;
   }
   
   // Updating each tau_sq
@@ -756,27 +832,23 @@ void SpIOX::update_Dvec(){
     
     double ssq = 0;//arma::accu(arma::square(ej.rows(ix)));
     double navail = .0 + avail_by_outcome(j).n_elem;
+  
+    // add sum_i Var(W_{i,j}) for the uncertainty of W
+    ssq += ETE(j,j);
+
+    // posterior precision 
+    arma::mat post_precision = arma::diagmat(1.0 / B_Var.col(j)) + X.t() * X;
+    //B_post_cov = arma::inv_sympd(post_precision);
     
-    if(vi){
-      // add sum_i Var(W_{i,j}) for the uncertainty of W
-      ssq += ETE(j,j);
-      
-      // add var of B = tr(S_beta_j * XTX)
-      arma::uvec idx = arma::regspace<arma::uvec>(j*p, (j+1)*p - 1);
-      arma::mat Sbj = B_post_cov.submat(idx, idx);
-      ssq += arma::trace(Sbj * XtX);
-      
-      // VI - posterior mean update for each tau_sq
-      Dvec(j) = (b + 0.5 * ssq) / (navail/2 + a - 1);
-    } else {
-      // MCMC - sample with inverse gamma for each tau_sq
-      arma::vec ej = E.col(j);
-      
-      double ssq = arma::accu(arma::square(ej.rows(ix)));
-      Dvec(j) = 1.0/R::rgamma(navail/2 + a, 1.0/(b + 0.5 * ssq));
-    }
+    arma::mat Sbj = arma::inv_sympd(post_precision);
+    ssq += arma::trace(Sbj * XtX);
+    
+    // VI - posterior mean update for each tau_sq
+    Dvec(j) = (b + 0.5 * ssq) / (navail/2 + a - 1);
+
   }
 }
+
 
 void SpIOX::update_Sigma_iwishart(){
   arma::mat Smean = V.t() * V + arma::eye(V.n_cols, V.n_cols);
@@ -795,6 +867,31 @@ void SpIOX::update_Sigma_iwishart(){
   Si = arma::chol(Q, "lower");
   S = arma::inv(arma::trimatl(Si));
   Sigma = S.t() * S;
+}
+
+void SpIOX::update_Sigma_vi(){
+  arma::mat S_post;
+  if(latent_model > 0){
+    S_post = arma::eye(q,q) + VTV;
+    
+  } else {
+    // trace terms
+    arma::mat E2 = arma::zeros(q, q);
+    for (unsigned int i = 0; i < q; ++i){
+      arma::mat Xi = Xtilde.rows(i * n, (i+1) * n - 1);
+      for (unsigned int j = 0; j < q; ++j){
+        arma::mat Xj = Xtilde.rows(j * n, (j+1) * n - 1);
+        E2(i,j) = arma::trace(Xi * B_post_cov * Xj.t());
+      }
+    }
+    S_post = arma::eye(q,q) + V.t()*V + E2;
+  }
+  
+  double df_post = q + n;
+  Sigma = S_post / (df_post - q - 1);  
+  Q = arma::inv_sympd(Sigma);
+  Si = arma::chol(Q, "lower");
+  
 }
 
 
@@ -888,7 +985,7 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
     //Rcpp::Rcout << "B " << endl;
     // sample B 
     tstart = std::chrono::steady_clock::now();
-    update_B();
+    update_B_gibbs();
     timings(0) += time_count(tstart);  
     
     // V = whitened Y-XB or W
@@ -925,7 +1022,7 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
       gibbs_w_sequential_byoutcome();
     }
     if(sample_tausq){
-      update_Dvec();
+      update_Dvec_gibbs();
     }
     timings(5) += time_count(tstart);
   } else {
@@ -941,136 +1038,39 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
 
 
 void SpIOX::response_vi(){
-  arma::mat Ytilde = Y;
-  arma::mat Xtilde = arma::zeros(n*q, p*q);
-  
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-  for(unsigned int j=0; j<q; j++){
-    Ytilde.col(j) = daggps.at(j).H_times_A(Y.col(j)); // whitening
-    arma::mat HX = daggps.at(j).H_times_A(X);         // whitened X
-    for(unsigned int i=0; i<q; i++){
-      Xtilde.submat(i * n,       j * p,
-                    (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX;
-    }
-  }
-  
-  arma::vec ytilde = arma::vectorise(Ytilde * Si); // vec(Y^* Σ^{-1})
-  
-  // prior precision (diagonal)
-  arma::vec vecB_Var = arma::vectorise(B_Var);
-  arma::mat prior_prec = arma::diagmat(1.0 / vecB_Var);
-  
-  // posterior precision 
-  arma::mat post_precision = prior_prec + Xtilde.t() * Xtilde;
-  
-  // posterior mean 
-  arma::vec mu_b = arma::solve(post_precision, Xtilde.t() * ytilde);
-  
-  // store the mean and optionally the covariance
-  B = arma::mat(mu_b.memptr(), p, q);  // reshape to matrix for consistency
-  
-  arma::mat B_post_cov = arma::inv_sympd(post_precision);
+  update_B_vi();
   
   // V = whitened Y-XB or W
   compute_V();
   
-  // trace terms
-  arma::mat E2 = arma::zeros(q, q);
-  for (unsigned int i = 0; i < q; ++i){
-    arma::mat Xi = Xtilde.rows(i * n, (i+1) * n - 1);
-    for (unsigned int j = 0; j < q; ++j){
-      arma::mat Xj = Xtilde.rows(j * n, (j+1) * n - 1);
-      E2(i,j) = arma::trace(Xi * B_post_cov * Xj.t());
-    }
-  }
-  
-  arma::mat S_post = arma::eye(q,q) + V.t()*V + E2;
-  double df_post = q + n;
-  
-  Sigma = S_post / (df_post - q - 1);         
-  Q = arma::inv_sympd(Sigma);         
-  Si = arma::chol(Q, "lower");        
-
-
+  update_Sigma_vi();
 }
 
 
 void SpIOX::latent_vi(){
-  //--- Update B - same as response_vi() but with Y - W
-  arma::mat Ytilde = (Y - W);
-  arma::mat Xtilde = arma::zeros(n*q, p*q);
+  update_B_vi();
   
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-  for(unsigned int j = 0; j < q; j++){
-    Ytilde.col(j) = daggps.at(j).H_times_A( Ytilde.col(j) ); // whitened (Y - W)
-    arma::mat HX = daggps.at(j).H_times_A(X);         // whitened X
-    
-    for(unsigned int i = 0; i < q; i++){
-      Xtilde.submat(i * n, j * p,
-                    (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX;
-    }
-  }
-  
-  //Rcpp::Rcout << "begin latent vi \n"; 
-  
-  arma::vec ytilde = arma::vectorise(Ytilde * Si); // vec(Y^* Σ^{-1})
-  
-  // prior precision (diagonal)
-  arma::vec vecB_Var = arma::vectorise(B_Var);
-  arma::mat prior_prec = arma::diagmat(1.0 / vecB_Var);
-  
-  // posterior precision Λ_b = X̃ᵗ X̃ + prior precision
-  arma::mat post_precision = prior_prec + Xtilde.t() * Xtilde;
-  B_post_cov = arma::inv_sympd(post_precision);
-  
-  // posterior mean μ_b = Λ_b^{-1} X̃ᵗ ỹ
-  arma::vec mu_b = arma::solve(post_precision, Xtilde.t() * ytilde);
-  
-  // store the mean and optionally the covariance (if needed for ELBO or sampling)
-  B = arma::reshape(mu_b, p, q);  // reshape to matrix for consistency
-  
-  //Rcpp::Rcout << "2 latent vi \n"; 
-  
-  //--- W update using single-site update
-  YXB = Y - X * B; // update Y - XB before W update
-  
-  // VI don't change theta (for now, right?)
   arma::uvec theta_changed = arma::zeros<arma::uvec>(q); 
-  
   // single-site VI for updating W
   w_sequential_singlesite(theta_changed);
   
-  //Rcpp::Rcout << "3 latent vi \n"; 
-
-  // refresh Y - XB 
-  YXB = Y - X * B;
-  
-  //Rcpp::Rcout << "4 latent vi \n"; 
   //--- Update Sigma - same as response_vi() but with W for compute_V()
   // V = whitened Y-XB or W
   compute_V();
   
-  arma::mat S_post = arma::eye(q,q) + VTV;
-  double df_post = q + n;
-  
-  Sigma = S_post / (df_post - q - 1);  
-  
-  Q = arma::inv_sympd(Sigma);
-  Si = arma::chol(Q, "lower");
+  // Update Sigma
+  update_Sigma_vi();
   
   // Update Dvec
-  update_Dvec();
+  update_Dvec_vi();
 }
 
 
 
 void SpIOX::map(){
   arma::mat Ytilde = Y;
-  arma::mat Xtilde = arma::zeros(n*q, p*q);
+  
+  Xtilde = arma::zeros(n*q, p*q);
   
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)

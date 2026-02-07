@@ -95,16 +95,27 @@ public:
   void w_sequential_singlesite(const arma::uvec& theta_changed);
   void gibbs_w_sequential_byoutcome();
   void gibbs_w_block();
-  void update_Dvec();
   arma::vec Dvec;
   //
   
+  // utilities for gibbs
+  void update_B_gibbs();
+  void update_Sigma_gibbs();
+  void update_Dvec_gibbs();
+  
   // utilities for vi
+  void update_B_vi();
+  void update_Sigma_vi();
+  void update_Dvec_vi();
+  arma::mat Xtilde; // for response VI update of Sigma
   bool vi;
   arma::mat B_post_cov;
   arma::mat VTV;
   arma::mat ETE;
-  int K;
+  int N_gs_maxiter;
+  int N_mcvi_samples;
+  double tol_gs;
+  arma::mat Ws;
   arma::cube W_samples_vi;
   arma::cube V_samples_vi;
   
@@ -176,13 +187,18 @@ public:
       Dvec = tausq_start;
     }
     
+    // mcvi params
     vi = do_vi;
-    K = vi? 50 : 1;
+    Ws = W;
+    N_mcvi_samples = vi? 100 : 1; // if mcmc, we still need to run that loop once
+    N_gs_maxiter = vi? 50 : 1;
+    tol_gs = 1e-2; // relative diff
     VTV = arma::zeros(q, q);
     ETE = arma::zeros(q, q);
-    W_samples_vi = arma::zeros(W.n_rows, W.n_cols, K);
-    V_samples_vi = arma::zeros(W.n_rows, W.n_cols, K);
+    W_samples_vi = arma::zeros(W.n_rows, W.n_cols, N_mcvi_samples);
+    V_samples_vi = arma::zeros(W.n_rows, W.n_cols, N_mcvi_samples);
     
+    // continue with other init
     B = Beta_start;
     YXB = Y - X * B;
     

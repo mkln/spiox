@@ -6,7 +6,7 @@ find_marginal_pars <- function(Y, X, coords, m_nn = 20, nu=0.5) {
     covfun_name = "matern15_isotropic"
   } else {
     covfun_name = "matern_isotropic"
-    cat("nu smoothness value != c(0.5, 1.5), fitting matern_isotropic")
+    cat("nu smoothness value != c(0.5, 1.5), fitting matern_isotropic\n")
   }
   
   q <- ncol(Y)
