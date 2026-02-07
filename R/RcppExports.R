@@ -80,6 +80,10 @@ spiox_response_vi <- function(Y, X, coords, custom_dag, dag_opts, theta, Sigma_s
     .Call(`_spiox_spiox_response_vi`, Y, X, coords, custom_dag, dag_opts, theta, Sigma_start, Beta_start, verbose, matern, num_threads)
 }
 
+spiox_latent_vi <- function(Y, X, coords, custom_dag, dag_opts, theta, Sigma_start, Beta_start, Ddiag_start, matern = 1L, num_threads = 1L, verbose = 0L, report = 50L, tol = 1e-5, max_iter = 500L) {
+    .Call(`_spiox_spiox_latent_vi`, Y, X, coords, custom_dag, dag_opts, theta, Sigma_start, Beta_start, Ddiag_start, matern, num_threads, verbose, report, tol, max_iter)
+}
+
 spiox_predict <- function(X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, matern = 1L, num_threads = 1L) {
     .Call(`_spiox_spiox_predict`, X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, matern, num_threads)
 }

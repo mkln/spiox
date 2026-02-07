@@ -102,7 +102,7 @@ Rcpp::List spiox_response(const arma::mat& Y,
   return Rcpp::List::create(
     Rcpp::Named("Beta") = Beta,
     Rcpp::Named("Sigma") = Sigma,
-    Rcpp::Named("theta") = theta,
+    Rcpp::Named("Theta") = theta,
     Rcpp::Named("Y_missing_samples") = Y_missing_fill,
     Rcpp::Named("Y_missing_indices") = iox_model.Y_na_indices+1,
     Rcpp::Named("timings") = iox_model.timings,
@@ -221,7 +221,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   return Rcpp::List::create(
     Rcpp::Named("Beta") = Beta,
     Rcpp::Named("Sigma") = Sigma,
-    Rcpp::Named("theta") = theta,
+    Rcpp::Named("Theta") = theta,
     Rcpp::Named("W") = W,
     Rcpp::Named("Ddiag") = Ddiag,
     Rcpp::Named("Ci") = Ci,
@@ -251,6 +251,8 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
   int min_iter = 1;
   int max_iter = 500;
   
+  bool do_vi = true;
+
   Rcpp::Rcout << "GP-IOX response model." << endl;
   
 #ifdef _OPENMP
@@ -273,7 +275,7 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
   
   // tausq not needed in this model
   arma::vec tausq_not_needed = arma::zeros(q);
-  arma::uvec not_updating_theta = arma::zeros<arma::uvec>(q);
+  arma::uvec not_updating_theta = arma::zeros<arma::uvec>(4);
   
   SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   latent_model,
@@ -284,7 +286,7 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
                   not_updating_theta,
                   tausq_not_needed,
                   matern,
-                  num_threads);
+                  num_threads, do_vi);
   
   // storage
   arma::mat Beta = arma::zeros(iox_model.p, q);
@@ -325,6 +327,163 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
     Rcpp::Named("Beta") = Beta,
     Rcpp::Named("Sigma") = Sigma,
     Rcpp::Named("H") = iox_model.daggps[0].H
+  );
+  
+}
+
+
+
+// [[Rcpp::export]]
+Rcpp::List spiox_latent_vi(const arma::mat& Y, 
+                           const arma::mat& X, 
+                           const arma::mat& coords,
+                           
+                           const arma::field<arma::uvec>& custom_dag,
+                           int dag_opts,
+                           const arma::mat& theta, 
+                           
+                           const arma::mat& Sigma_start,
+                           const arma::mat& Beta_start,
+                           const arma::vec& Ddiag_start,
+                           
+                           int matern = 1,
+                           int num_threads = 1,
+                           int verbose = 0,
+                           int report = 50,
+                           double tol = 1e-5,
+                           int max_iter = 500){
+  
+  int min_iter = 1; 
+  // for artifacts in other subfunctions.
+  int latent_model = 2; 
+  bool do_vi = true;
+  
+  // print method
+  Rcpp::Rcout << "GP-IOX latent VI model,\n "
+              << "n sequential, q block updates (single-site updates)\n"
+              << endl;
+  
+#ifdef _OPENMP
+  omp_set_num_threads(num_threads);
+#else
+  if(num_threads > 1){
+    Rcpp::warning("num_threads > 1, but source not compiled with OpenMP support.");
+    num_threads = 1;
+  }
+#endif
+  
+  unsigned int q = Y.n_cols;
+  unsigned int n = Y.n_rows;
+  
+  if(verbose > 0){
+    Rcpp::Rcout << "Preparing..." << endl;
+  }
+  
+  arma::uvec not_updating_theta = arma::zeros<arma::uvec>(4); //
+  
+  SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
+                  latent_model,
+                  
+                  Beta_start,
+                  Sigma_start,
+                  theta, 
+                  not_updating_theta,
+                  Ddiag_start, // Need tau_sq for latent VI 
+                  matern,
+                  num_threads, do_vi);
+  
+  Rcpp::Rcout << "done init \n";
+  
+  // storage
+  arma::mat Beta = arma::zeros(iox_model.p, q);
+  arma::mat Sigma = arma::zeros(q, q);
+  arma::mat W = arma::zeros(n, q);
+  arma::vec Ddiag = arma::zeros(q);
+  
+  // for trace plots
+  arma::vec rel_B_store(max_iter, arma::fill::zeros);
+  arma::vec rel_Sigma_store(max_iter, arma::fill::zeros);
+  arma::vec rel_W_store(max_iter, arma::fill::zeros);
+  arma::vec rel_D_store(max_iter, arma::fill::zeros);
+  
+  Rcpp::Rcout << "starting \n";
+  
+  bool stop=false;
+  int i=0;
+  while(!stop){
+    i ++;
+    
+    arma::mat Beta_pre = Beta;
+    arma::mat Sigma_pre = Sigma;
+    arma::mat W_pre = iox_model.W;
+    arma::vec D_pre = iox_model.Dvec;
+    
+    iox_model.latent_vi();
+    
+    Beta = iox_model.B;
+    Sigma = iox_model.Sigma;
+    W = iox_model.W;
+    Ddiag = iox_model.Dvec;
+    
+    // monitoring convergence of the parameters
+    double rel_mu_change = arma::norm(Beta - Beta_pre, 2) / (arma::norm(Beta_pre, 2)  + 1e-12);
+    double rel_sigma_change = arma::norm(Sigma - Sigma_pre, "fro") / (arma::norm(Sigma_pre, "fro") + 1e-12);
+    double rel_W_change = arma::norm(W - W_pre, "fro") / (arma::norm(W_pre, "fro") + 1e-12);
+    double rel_Ddiag_change = arma::norm(Ddiag - D_pre, 2) / (arma::norm(D_pre, 2) + 1e-12);
+    
+    // storing for trace plots
+    rel_B_store(i - 1) = rel_mu_change;
+    rel_Sigma_store(i - 1) = rel_sigma_change;
+    rel_W_store(i - 1) = rel_W_change;
+    rel_D_store(i - 1) = rel_Ddiag_change;
+    
+    if (rel_mu_change < tol &&
+        rel_sigma_change < tol &&
+        rel_W_change < tol &&
+        rel_Ddiag_change < tol &&
+        i > min_iter) {
+      stop=true;
+    }
+    
+    // Progress printing
+    if(verbose>0 && (i % report == 0)){
+      Rcpp::Rcout << "Iter: " <<  i 
+                  << " rel_B=" << rel_mu_change
+                  << " rel_Sigma=" << rel_sigma_change
+                  << " rel_W=" << rel_W_change
+                  << " rel_D=" << rel_Ddiag_change
+                  << std::endl;
+    };
+    
+    bool interrupted = checkInterrupt();
+    if(interrupted){
+      Rcpp::stop("Interrupted by the user.");
+    }
+    
+    // stopping properly
+    if (i >= max_iter) stop = true;
+  }
+  
+  // cut off the unused(NA) elements
+  rel_B_store = rel_B_store.head(i);
+  rel_Sigma_store = rel_Sigma_store.head(i);
+  rel_W_store = rel_W_store.head(i);
+  rel_D_store = rel_D_store.head(i);
+  
+  return Rcpp::List::create(
+    Rcpp::Named("Beta") = Beta,
+    Rcpp::Named("Sigma") = Sigma,
+    Rcpp::Named("W") = W,
+    Rcpp::Named("Ddiag") = Ddiag,
+    Rcpp::Named("H") = iox_model.daggps[0].H,
+    Rcpp::Named("rel_change") = Rcpp::List::create(
+      Rcpp::Named("rel_Beta")  = rel_B_store,
+      Rcpp::Named("rel_Sigma") = rel_Sigma_store,
+      Rcpp::Named("rel_W")     = rel_W_store,
+      Rcpp::Named("rel_Ddiag") = rel_D_store
+    ),
+    Rcpp::Named("n_iter") = i,
+    Rcpp::Named("timings") = iox_model.timings
   );
   
 }

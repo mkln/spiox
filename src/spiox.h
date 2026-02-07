@@ -39,8 +39,8 @@ public:
   
   // -------------- utilities
   int matern;
-  void update_B(bool vi); // 
-  void update_Sigma_iwishart(bool vi);
+  void update_B(); // 
+  void update_Sigma_iwishart();
   void compute_V(); 
   bool upd_theta_metrop();
   arma::uvec upd_theta_metrop_conditional(); // returns uvec with changes to thetaj
@@ -92,12 +92,21 @@ public:
   // latent model 
   int latent_model; // 0: response, 1: block, 2: row seq, 3: col seq
   arma::mat W;
-  void w_sequential_singlesite(const arma::uvec& theta_changed, bool vi);
+  void w_sequential_singlesite(const arma::uvec& theta_changed);
   void gibbs_w_sequential_byoutcome();
   void gibbs_w_block();
-  void update_Dvec(bool vi);
+  void update_Dvec();
   arma::vec Dvec;
   //
+  
+  // utilities for vi
+  bool vi;
+  arma::mat B_post_cov;
+  arma::mat VTV;
+  arma::mat ETE;
+  int K;
+  arma::cube W_samples_vi;
+  arma::cube V_samples_vi;
   
   // utility for latent model and misaligned response model
   arma::field<arma::mat> Rw_no_Q;
@@ -146,7 +155,7 @@ public:
         const arma::uvec& update_theta_which,
         const arma::vec& tausq_start,
         int cov_model_matern,
-        int num_threads_in) 
+        int num_threads_in, bool do_vi=false) 
   {
     num_threads = num_threads_in;
     
@@ -166,6 +175,13 @@ public:
       W(arma::find_nonfinite(W)).fill(0);
       Dvec = tausq_start;
     }
+    
+    vi = do_vi;
+    K = vi? 50 : 1;
+    VTV = arma::zeros(q, q);
+    ETE = arma::zeros(q, q);
+    W_samples_vi = arma::zeros(W.n_rows, W.n_cols, K);
+    V_samples_vi = arma::zeros(W.n_rows, W.n_cols, K);
     
     B = Beta_start;
     YXB = Y - X * B;
