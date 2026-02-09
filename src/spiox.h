@@ -110,12 +110,17 @@ public:
   arma::mat Xtilde; // for response VI update of Sigma
   bool vi;
   arma::mat B_post_cov;
-  arma::mat VTV;
-  arma::mat ETE;
+  bool VTV_ma_initialized;
+  arma::mat VTV, VTV_ma; // ma for moving average
+  bool ETE_ma_initialized;
+  arma::mat ETE, ETE_ma;  
   int N_mcvi_samples;
   arma::mat Ws;
   arma::cube W_samples_vi;
   arma::cube V_samples_vi;
+  arma::mat Beta_UQ;
+  arma::vec Dvec_UQ;
+  arma::mat Sigma_UQ;
   
   // utility for latent model and misaligned response model
   arma::field<arma::mat> Rw_no_Q;
@@ -191,6 +196,8 @@ public:
     N_mcvi_samples = vi? 100 : 1; // if mcmc, we still need to run that loop once
     VTV = arma::zeros(q, q);
     ETE = arma::zeros(q, q);
+    ETE_ma_initialized = false;
+    VTV_ma_initialized = false;
     W_samples_vi = arma::zeros(W.n_rows, W.n_cols, N_mcvi_samples);
     V_samples_vi = arma::zeros(W.n_rows, W.n_cols, N_mcvi_samples);
     

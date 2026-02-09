@@ -92,7 +92,8 @@ void SpIOX::compute_V(){
     V.col(j) = daggps.at(j).H_times_A(V.col(j));
   }
   
-  if(vi){
+  bool do_VTV = vi & (latent_model>0);
+  if(do_VTV){
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
@@ -108,8 +109,16 @@ void SpIOX::compute_V(){
       arma::mat Vtemp = V_samples_vi.slice(ss);
       VTV += 1.0/N_mcvi_samples * Vtemp.t() * Vtemp;
     }
+    double alpha_VTV = 0;
+    if(!VTV_ma_initialized){
+      VTV_ma = VTV;
+      VTV_ma_initialized = true;
+    } else {
+      VTV_ma = alpha_VTV * VTV_ma + (1-alpha_VTV) * VTV;
+    }
   }
-
+  
+  
   
 }
 
@@ -183,6 +192,8 @@ void SpIOX::update_B_vi(){
   
   arma::mat Ytilde;
   B = arma::zeros(p, q);
+  Beta_UQ = arma::zeros(p, q);
+  
   if(latent_model > 0){
     Ytilde = (Y - W);
     for(int j=0; j<q; j++){
@@ -198,6 +209,8 @@ void SpIOX::update_B_vi(){
       
       // store the mean and optionally the covariance
       B.col(j) = mu_b;  
+      Beta_UQ.col(j) = B_post_cov.diag();
+      
     }
     
   } else {
@@ -231,7 +244,11 @@ void SpIOX::update_B_vi(){
     
     // store the mean and optionally the covariance
     B = arma::mat(mu_b.memptr(), p, q);  // reshape to matrix for consistency
+    arma::vec v = B_post_cov.diag();
+    Beta_UQ = arma::mat(v.memptr(), p, q);
   }
+  
+  
   
   YXB = Y - X*B;
   
@@ -817,6 +834,8 @@ void SpIOX::update_Dvec_vi(){
   double a = 2;//1e-5;
   double b = 1;//1e-5;
   
+  Dvec_UQ = arma::zeros(q);
+  
   ETE = arma::zeros(q, q);
   for(int ss=0; ss<N_mcvi_samples; ss++){
     arma::mat E = YXB - W_samples_vi.slice(ss);
@@ -826,27 +845,36 @@ void SpIOX::update_Dvec_vi(){
     ETE += 1.0/N_mcvi_samples * E.t() * E;
   }
   
+  double alpha_ETE = 0;
+  if(!ETE_ma_initialized){
+    ETE_ma = ETE;
+    ETE_ma_initialized = true;
+  } else {
+    ETE_ma = alpha_ETE * ETE_ma + (1-alpha_ETE) * ETE;
+  }
+  
+  
   // Updating each tau_sq
   for(int j=0; j<q; j++){
     arma::uvec ix = avail_by_outcome(j);
     arma::mat Xj = X.rows(ix);
     arma::mat XtX = Xj.t() * Xj;
     
-    double ssq = 0;//arma::accu(arma::square(ej.rows(ix)));
+    Dvec_UQ(j) = 0;//arma::accu(arma::square(ej.rows(ix)));
     double navail = .0 + avail_by_outcome(j).n_elem;
   
     // add sum_i Var(W_{i,j}) for the uncertainty of W
-    ssq += ETE(j,j);
+    Dvec_UQ(j) += ETE_ma(j,j);
 
     // posterior precision 
     arma::mat post_precision = arma::diagmat(1.0 / B_Var.col(j)) + X.t() * X;
     //B_post_cov = arma::inv_sympd(post_precision);
     
     arma::mat Sbj = arma::inv_sympd(post_precision);
-    ssq += arma::trace(Sbj * XtX);
+    Dvec_UQ(j) += arma::trace(Sbj * XtX);
     
     // VI - posterior mean update for each tau_sq
-    Dvec(j) = (b + 0.5 * ssq) / (navail/2 + a - 1);
+    Dvec(j) = (b + 0.5 * Dvec_UQ(j)) / (navail/2 + a - 1);
 
   }
 }
@@ -872,9 +900,9 @@ void SpIOX::update_Sigma_iwishart(){
 }
 
 void SpIOX::update_Sigma_vi(){
-  arma::mat S_post;
+
   if(latent_model > 0){
-    S_post = arma::eye(q,q) + VTV;
+    Sigma_UQ = arma::eye(q,q) + VTV_ma;
     
   } else {
     // trace terms
@@ -886,14 +914,13 @@ void SpIOX::update_Sigma_vi(){
         E2(i,j) = arma::trace(Xi * B_post_cov * Xj.t());
       }
     }
-    S_post = arma::eye(q,q) + V.t()*V + E2;
+    Sigma_UQ = arma::eye(q,q) + V.t()*V + E2;
   }
   
   double df_post = q + n;
-  Sigma = S_post / (df_post - q - 1);  
+  Sigma = Sigma_UQ / (df_post - q - 1);  
   Q = arma::inv_sympd(Sigma);
   Si = arma::chol(Q, "lower");
-  
 }
 
 
@@ -1047,7 +1074,6 @@ void SpIOX::response_vi(){
   
   update_Sigma_vi();
 }
-
 
 void SpIOX::latent_vi(){
   update_B_vi();

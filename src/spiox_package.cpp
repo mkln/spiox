@@ -243,7 +243,7 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
                           const arma::mat& Sigma_start,
                           const arma::mat& Beta_start,
                           
-                          int verbose = 0,
+                          int print_every = 0,
                           int matern = 1,
                           int num_threads = 1){
   
@@ -269,7 +269,7 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
   unsigned int q = Y.n_cols;
   unsigned int n = Y.n_rows;
   
-  if(verbose > 0){
+  if(print_every > 0){
     Rcpp::Rcout << "Preparing..." << endl;
   }
   
@@ -292,6 +292,10 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
   arma::mat Beta = arma::zeros(iox_model.p, q);
   arma::mat Sigma = arma::zeros(q, q);
   
+  if(print_every > 0){
+    Rcpp::Rcout << "Starting VI" << endl;
+  }
+  
   bool stop=false;
   int i=0;
   while(!stop){
@@ -305,17 +309,20 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
     Beta = iox_model.B;
     Sigma = iox_model.Sigma;
     
-    double rel_mu_change = arma::norm(Beta - Beta_pre, 2) / arma::norm(Beta_pre, 2);
-    double rel_sigma_change = arma::norm(Sigma - Sigma_pre, "fro") / arma::norm(Sigma_pre, "fro");
+    double rel_mu_change = arma::norm(Beta - Beta_pre, 2) / (arma::norm(Beta_pre, 2) + 1e-12);
+    double rel_sigma_change = arma::norm(Sigma - Sigma_pre, "fro") / (arma::norm(Sigma_pre, "fro") + 1e-12);
     
     if (rel_mu_change < tol && rel_sigma_change < tol && i > min_iter) {
       stop=true;
     }
     
-    bool print_condition = (verbose>0);
+    bool print_condition = (print_every>0);
+    if(print_condition){
+      print_condition = print_condition & (!(i % print_every));
+    };
     if(print_condition){
       Rcpp::Rcout << "Iteration: " <<  i << endl;
-    };
+    }
     
     bool interrupted = checkInterrupt();
     if(interrupted){
@@ -325,8 +332,9 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
   
   return Rcpp::List::create(
     Rcpp::Named("Beta") = Beta,
+    Rcpp::Named("Beta_UQ") = iox_model.Beta_UQ,
     Rcpp::Named("Sigma") = Sigma,
-    Rcpp::Named("H") = iox_model.daggps[0].H
+    Rcpp::Named("Sigma_UQ") = iox_model.Sigma_UQ
   );
   
 }
@@ -348,8 +356,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
                            
                            int matern = 1,
                            int num_threads = 1,
-                           int verbose = 0,
-                           int report = 50,
+                           int print_every = 0,
                            double tol = 1e-2,
                            int max_iter = 500){
   
@@ -379,7 +386,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   unsigned int q = Y.n_cols;
   unsigned int n = Y.n_rows;
   
-  if(verbose > 0){
+  if(print_every > 0){
     Rcpp::Rcout << "Preparing..." << endl;
   }
   
@@ -407,6 +414,11 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   arma::vec rel_Sigma_store(max_iter, arma::fill::zeros);
   arma::vec rel_W_store(max_iter, arma::fill::zeros);
   arma::vec rel_D_store(max_iter, arma::fill::zeros);
+  
+  
+  if(print_every > 0){
+    Rcpp::Rcout << "Starting VI" << endl;
+  }
   
   bool stop=false; // stopping flag
   double alpha=0.1; // moving average coefficient
@@ -441,10 +453,17 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
     if(i > min_iter){
       // do at least 10 iterations
       rel_change_movave = (1-alpha) * rel_change_movave + alpha * max_rel_change;
-      if(verbose){
-        Rcpp::Rcout << "rel_change_movave: " << rel_change_movave << "\n";  
+      if(print_every > 0){
+        Rcpp::Rcout << "[ rel_change_movave: " << rel_change_movave << " ]\n";  
       }
-      
+    }
+    
+    bool print_condition = (print_every>0);
+    if(print_condition){
+      print_condition = print_condition & (!(i % print_every));
+    };
+    if(print_condition){
+      Rcpp::Rcout << "Iteration: " <<  i << endl;
     }
     
     // storing for trace plots
@@ -480,18 +499,19 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   
   return Rcpp::List::create(
     Rcpp::Named("Beta") = Beta,
+    Rcpp::Named("Beta_UQ") = iox_model.Beta_UQ,
     Rcpp::Named("Sigma") = Sigma,
+    Rcpp::Named("Sigma_UQ") = iox_model.Sigma_UQ,
     Rcpp::Named("W") = W,
     Rcpp::Named("Ddiag") = Ddiag,
-    Rcpp::Named("H") = iox_model.daggps[0].H,
+    Rcpp::Named("Ddiag_UQ") = iox_model.Dvec_UQ,
     Rcpp::Named("rel_change") = Rcpp::List::create(
       Rcpp::Named("rel_Beta")  = rel_B_store,
       Rcpp::Named("rel_Sigma") = rel_Sigma_store,
       Rcpp::Named("rel_W")     = rel_W_store,
       Rcpp::Named("rel_Ddiag") = rel_D_store
     ),
-    Rcpp::Named("n_iter") = i,
-    Rcpp::Named("timings") = iox_model.timings
+    Rcpp::Named("n_iter") = i
   );
   
 }
