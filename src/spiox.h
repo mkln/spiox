@@ -104,9 +104,8 @@ public:
   // centering of W and move to intercept (if there is one)
   void W_centering();
   
-  // utilities for gibbs
-  void update_B_gibbs();
-  void update_BW_asis_gibbs();
+  // utilities for gibbs 
+  void update_BW_asis(arma::mat&, arma::mat&, bool sampling); 
   void update_Sigma_gibbs();
   void update_Dvec_gibbs();
   
@@ -114,23 +113,24 @@ public:
   arma::mat Xtilde; 
   
   // utilities for vi
-  void update_B_vi();
+  int vi_it; // internal iteration counter
+  //void update_B_vi();
   void update_Sigma_vi();
   void update_Dvec_vi();
-  
   bool vi;
-  arma::mat B_post_cov;
-  bool VTV_ma_initialized;
+  //arma::mat B_post_cov;
   arma::mat VTV, VTV_ma; // ma for moving average
-  bool ETE_ma_initialized;
   arma::mat ETE, ETE_ma;  
-  int N_mcvi_samples;
-  arma::mat Ws;
-  arma::cube W_samples_vi;
-  arma::cube V_samples_vi;
+  arma::mat E_B;
+  arma::mat E_W;
+  //arma::cube W_samples_vi;
+  //arma::cube V_samples_vi;
+  void vi_Beta_UQ(); // for computing Beta_UQ
+  arma::vec delta_t, beta_running_mean;
   arma::mat Beta_UQ;
   arma::vec Dvec_UQ;
   arma::mat Sigma_UQ;
+  
   
   // utility for latent model and misaligned response model
   arma::field<arma::mat> Rw_no_Q;
@@ -205,22 +205,33 @@ public:
     if(latent_model>0){
       W = Y;
       W(arma::find_nonfinite(W)).fill(0);
+      E_W = W;
       Dvec = tausq_start;
     }
     
+    
+    
     // mcvi params
     vi = do_vi;
-    Ws = W;
-    N_mcvi_samples = vi? 100 : 1; // if mcmc, we still need to run that loop once
+    vi_it = 0;
+    //N_mcvi_samples = vi? 100 : 1; // if mcmc, we still need to run that loop once
     VTV = arma::zeros(q, q);
     ETE = arma::zeros(q, q);
-    ETE_ma_initialized = false;
-    VTV_ma_initialized = false;
-    W_samples_vi = arma::zeros(W.n_rows, W.n_cols, N_mcvi_samples);
-    V_samples_vi = arma::zeros(W.n_rows, W.n_cols, N_mcvi_samples);
+    delta_t = arma::zeros(p*q);
+    beta_running_mean = arma::zeros(p*q);
+    Beta_UQ = arma::zeros(p*q, p*q);
+    
+    VTV_ma = arma::zeros(q, q);
+    ETE_ma = arma::zeros(q, q);
+    //ETE_ma_initialized = false;
+    //VTV_ma_initialized = false;
+    //W_samples_vi = arma::zeros(W.n_rows, W.n_cols, N_mcvi_samples);
+    //V_samples_vi = arma::zeros(W.n_rows, W.n_cols, N_mcvi_samples);
+    
     
     // continue with other init
     B = Beta_start;
+    E_B = B;
     YXB = Y - X * B;
     
     B_Var = 1000 * arma::ones(arma::size(B));

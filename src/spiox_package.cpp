@@ -265,6 +265,7 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
   
   int latent_model = 0;
   
+  unsigned int p = X.n_cols;
   unsigned int q = Y.n_cols;
   unsigned int n = Y.n_rows;
   
@@ -288,7 +289,7 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
                   num_threads, do_vi);
   
   // storage
-  arma::mat Beta = arma::zeros(iox_model.p, q);
+  arma::mat Beta = arma::zeros(p, q);
   arma::mat Sigma = arma::zeros(q, q);
   
   if(print_every > 0){
@@ -329,9 +330,12 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
     }
   }
   
+  arma::vec vecBeta_UQ = iox_model.Beta_UQ.diag();
+  arma::mat Beta_UQ = arma::mat(vecBeta_UQ.memptr(), p, q);
+  
   return Rcpp::List::create(
     Rcpp::Named("Beta") = Beta,
-    Rcpp::Named("Beta_UQ") = iox_model.Beta_UQ,
+    Rcpp::Named("Beta_UQ") = Beta_UQ,
     Rcpp::Named("Sigma") = Sigma,
     Rcpp::Named("Sigma_UQ") = iox_model.Sigma_UQ
   );
@@ -360,9 +364,9 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
                            int max_iter = 500){
   
   // do min_iter iterations at least
-  int min_iter = 10; 
+  int min_iter = 100; 
   // then check maximum relative change. if it's <tol for this time then stop
-  int wait_time_before_stop = 5;
+  int wait_time_before_stop = 2;
   
   // for artifacts in other subfunctions.
   int latent_model = 2; 
@@ -382,6 +386,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   }
 #endif
   
+  unsigned int p = X.n_cols;
   unsigned int q = Y.n_cols;
   unsigned int n = Y.n_rows;
   
@@ -403,7 +408,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
                   num_threads, do_vi);
   
   // storage
-  arma::mat Beta = arma::zeros(iox_model.p, q);
+  arma::mat Beta = arma::zeros(p, q);
   arma::mat Sigma = arma::zeros(q, q);
   arma::mat W = arma::zeros(n, q);
   arma::vec Ddiag = arma::zeros(q);
@@ -420,23 +425,22 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   }
   
   bool stop=false; // stopping flag
-  double alpha=0.1; // moving average coefficient
   int about_to_exit = 0; // counter for how long we've been "good"
-  double rel_change_movave = 0; // moving average of max relative change
+  
   int i=0;
   while(!stop){
     i ++;
     
     arma::mat Beta_pre = Beta;
     arma::mat Sigma_pre = Sigma;
-    arma::mat W_pre = iox_model.W;
+    arma::mat W_pre = iox_model.E_W;
     arma::vec D_pre = iox_model.Dvec;
     
     iox_model.latent_vi();
     
-    Beta = iox_model.B;
+    Beta = iox_model.E_B;
     Sigma = iox_model.Sigma;
-    W = iox_model.W;
+    W = iox_model.E_W;
     Ddiag = iox_model.Dvec;
     
     // monitoring convergence of the parameters
@@ -447,15 +451,6 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
     rel_change(3) = arma::norm(Ddiag - D_pre, 2) / (arma::norm(D_pre, 2) + 1e-12);
     
     double max_rel_change = rel_change.max();
-    rel_change_movave = max_rel_change;
-    
-    if(i > min_iter){
-      // do at least 10 iterations
-      rel_change_movave = (1-alpha) * rel_change_movave + alpha * max_rel_change;
-      if(print_every > 0){
-        Rcpp::Rcout << "[ rel_change_movave: " << rel_change_movave << " ]\n";  
-      }
-    }
     
     bool print_condition = (print_every>0);
     if(print_condition){
@@ -471,14 +466,15 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
     rel_W_store(i - 1) = rel_change(2);
     rel_D_store(i - 1) = rel_change(3);
     
-    if(rel_change_movave < tol){
-      // we're doing well, prepare to exit
-      about_to_exit += 1;
-    } else {
-      // reset
-      about_to_exit = 0;
+    if(i > min_iter){
+      if(max_rel_change < tol){
+        // we're doing well, prepare to exit
+        about_to_exit += 1;
+      } else {
+        // reset
+        about_to_exit = 0;
+      }
     }
-    
     
     bool interrupted = checkInterrupt();
     if(interrupted){
@@ -490,6 +486,9 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
     if (i >= max_iter) stop = true;
   }
   
+  arma::vec vecBeta_UQ = iox_model.Beta_UQ.diag() / (i-1.0);
+  arma::mat Beta_UQ = arma::mat(vecBeta_UQ.memptr(), p, q);
+  
   // cut off the unused(NA) elements
   rel_B_store = rel_B_store.head(i);
   rel_Sigma_store = rel_Sigma_store.head(i);
@@ -498,7 +497,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   
   return Rcpp::List::create(
     Rcpp::Named("Beta") = Beta,
-    Rcpp::Named("Beta_UQ") = iox_model.Beta_UQ,
+    Rcpp::Named("Beta_UQ") = Beta_UQ,
     Rcpp::Named("Sigma") = Sigma,
     Rcpp::Named("Sigma_UQ") = iox_model.Sigma_UQ,
     Rcpp::Named("W") = W,
