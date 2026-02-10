@@ -21,20 +21,24 @@ public:
   
   // metadata
   unsigned int n, q, p;
+  int intercept; // location of intercept in X, if at all
   int num_threads;
   //double spatial_sparsity;
   
   // -------------- model parameters
+  // objects that depend on B
   arma::mat B;
   arma::mat YXB;
   arma::mat B_Var; // prior variance on B, element by element
   
+  // objects that depend on Sigma
   arma::mat S, Si, Sigma, Q; // S^T * S = Sigma = Q^-1 = (Lambda*Lambda^T + Delta)^-1 = (Si * Si^T)^-1
   
-  // RadGP for spatial dependence
+  // objects that depend on theta RadGP for spatial dependence
   std::vector<DagGP> daggps, daggps_alt;
   arma::mat theta; // each column is one alternative value for theta
   
+  // objects that depend on W
   arma::mat V; 
   
   // -------------- utilities
@@ -96,18 +100,24 @@ public:
   void gibbs_w_sequential_byoutcome();
   void gibbs_w_block();
   arma::vec Dvec;
-  //
+  
+  // centering of W and move to intercept (if there is one)
+  void W_centering();
   
   // utilities for gibbs
   void update_B_gibbs();
+  void update_BW_asis_gibbs();
   void update_Sigma_gibbs();
   void update_Dvec_gibbs();
+  
+  // whitened X (that is, applying the same operation that makes W white noise)
+  arma::mat Xtilde; 
   
   // utilities for vi
   void update_B_vi();
   void update_Sigma_vi();
   void update_Dvec_vi();
-  arma::mat Xtilde; // for response VI update of Sigma
+  
   bool vi;
   arma::mat B_post_cov;
   bool VTV_ma_initialized;
@@ -127,6 +137,7 @@ public:
   arma::field<arma::mat> Pblanket_no_Q;
   void cache_blanket_comps(const arma::uvec& theta_changed);
   
+  // which theta updates are we doing
   bool phi_sampling, sigmasq_sampling, nu_sampling, tausq_sampling;
   
   // adaptive metropolis to update theta atoms
@@ -136,8 +147,6 @@ public:
   //arma::mat theta_metrop_sd;
   RAMAdapt theta_adapt;
   bool theta_adapt_active;
-  // --------
-  
   // adaptive metropolis (conditional update) to update theta atoms
   // assume shared covariance functions and unknown parameters across variables
   arma::mat c_theta_unif_bounds;
@@ -179,6 +188,15 @@ public:
     n = Y.n_rows;
     q = Y.n_cols;
     p = X.n_cols;
+    
+    // intercept? 
+    intercept = -1;
+    for(int j=0; j<q; j++){
+      if(arma::all(X.col(j) == 1.0)){
+        intercept = j;
+        break;
+      }
+    }
     
     latent_model = latent_model_choice; // latent model? 
     

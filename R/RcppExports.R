@@ -76,12 +76,12 @@ spiox_latent <- function(Y, X, coords, custom_dag, Beta_start, Sigma_start, Thet
     .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, Beta_start, Sigma_start, Theta_start, Ddiag_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, sample_Ddiag, update_Theta, num_threads, sampling)
 }
 
-spiox_response_vi <- function(Y, X, coords, custom_dag, dag_opts, theta, Sigma_start, Beta_start, print_every = 0L, matern = 1L, num_threads = 1L) {
-    .Call(`_spiox_spiox_response_vi`, Y, X, coords, custom_dag, dag_opts, theta, Sigma_start, Beta_start, print_every, matern, num_threads)
+spiox_response_vi <- function(Y, X, coords, custom_dag, dag_opts, Theta, Sigma_start, Beta_start, print_every = 0L, matern = 1L, num_threads = 1L) {
+    .Call(`_spiox_spiox_response_vi`, Y, X, coords, custom_dag, dag_opts, Theta, Sigma_start, Beta_start, print_every, matern, num_threads)
 }
 
-spiox_latent_vi <- function(Y, X, coords, custom_dag, dag_opts, theta, Sigma_start, Beta_start, Ddiag_start, matern = 1L, num_threads = 1L, print_every = 0L, tol = 1e-2, max_iter = 500L) {
-    .Call(`_spiox_spiox_latent_vi`, Y, X, coords, custom_dag, dag_opts, theta, Sigma_start, Beta_start, Ddiag_start, matern, num_threads, print_every, tol, max_iter)
+spiox_latent_vi <- function(Y, X, coords, custom_dag, dag_opts, Theta, Sigma_start, Beta_start, Ddiag_start, matern = 1L, num_threads = 1L, print_every = 0L, tol = 1e-2, max_iter = 500L) {
+    .Call(`_spiox_spiox_latent_vi`, Y, X, coords, custom_dag, dag_opts, Theta, Sigma_start, Beta_start, Ddiag_start, matern, num_threads, print_every, tol, max_iter)
 }
 
 spiox_predict <- function(X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, matern = 1L, num_threads = 1L) {

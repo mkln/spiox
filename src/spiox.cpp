@@ -188,6 +188,65 @@ void SpIOX::update_B_gibbs(){
   
 }
 
+void SpIOX::update_BW_asis_gibbs(){
+  if(latent_model>0){
+    // update B via gibbs for the response model
+    //Rcpp::Rcout << "+++++++++++++++++ ORIG +++++++++++++++++++" << endl;
+    //S^T * S = Sigma
+    std::chrono::steady_clock::time_point tstart;
+    std::chrono::steady_clock::time_point tend;
+    int timed = 0;
+    
+    //
+    arma::mat eta = X * B + W;
+    
+    //Rcpp::Rcout << " asis eta = XB + W " << endl;
+    tstart = std::chrono::steady_clock::now();
+    
+    arma::mat Ytilde = eta; // we will whiten this in the loop below
+    Xtilde = arma::zeros(n*q, p*q);
+    arma::vec daggp_logdets = arma::zeros(q);
+    // whitening of eta and X
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+    for(unsigned int j=0; j<q; j++){
+      Ytilde.col(j) = daggps.at(j).H_times_A(Y.col(j));// * Y.col(j);
+      arma::mat HX = daggps.at(j).H_times_A(X);// * X;
+      daggp_logdets(j) = daggps.at(j).precision_logdeterminant;
+      for(unsigned int i=0; i<q; i++){
+        Xtilde.submat(i * n,       j * p,
+                      (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX; 
+      }
+    }
+    arma::vec ytilde = arma::vectorise(Ytilde * Si);
+    tend = std::chrono::steady_clock::now();
+    timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
+    //Rcpp::Rcout << timed << endl;
+    
+    //Rcpp::Rcout << "------- builds3 ----" << endl;
+    tstart = std::chrono::steady_clock::now();
+    
+    arma::vec vecB_Var = arma::vectorise(B_Var);
+    arma::mat post_precision = arma::diagmat(1.0/vecB_Var) + Xtilde.t() * Xtilde;
+    arma::mat pp_ichol = arma::inv(arma::trimatl(arma::chol(post_precision, "lower")));
+    arma::vec beta = pp_ichol.t() * (pp_ichol * Xtilde.t() * ytilde + arma::randn(p*q));
+    B = arma::mat(beta.memptr(), p, q);
+    
+    W = eta - X*B;
+    
+    tend = std::chrono::steady_clock::now();
+    timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
+    //Rcpp::Rcout << timed << endl;
+    
+    
+    
+    YXB = Y - X*B;
+  } 
+  
+}
+
+
 void SpIOX::update_B_vi(){
   
   arma::mat Ytilde;
@@ -641,9 +700,6 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
     
     ms_sample += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   }
-  for(unsigned int i=0; i<q; i++){
-    W.col(i) = W.col(i) - arma::mean(W.col(i));
-  }
   
 }
 
@@ -701,9 +757,6 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed, bool vi=fal
     W.row(i) = arma::trans( Ctchol(i).t() * (Ctchol(i) * meancomp + 0*mvnorm.col(i) ));
   }
   
-  for(unsigned int i=0; i<q; i++){
-    //W.col(i) = W.col(i) - arma::mean(W.col(i));
-  }
 }
 */
 
@@ -799,9 +852,6 @@ void SpIOX::gibbs_w_block(){
 
   W = arma::mat(w.memptr(), n, q);
   
-  for(unsigned int i=0; i<q; i++){
-    W.col(i) = W.col(i) - arma::mean(W.col(i));
-  }
 }
 
 void SpIOX::update_Dvec_gibbs(){
@@ -879,6 +929,15 @@ void SpIOX::update_Dvec_vi(){
   }
 }
 
+void SpIOX::W_centering(){
+  if(intercept != -1){
+    // we have an intercept. move the mean of W to it
+    arma::rowvec w_means = arma::mean(W, 0);
+    W.each_row() -= w_means;
+    B.row(intercept) += w_means;
+    YXB.each_row() -= w_means;
+  }
+}
 
 void SpIOX::update_Sigma_iwishart(){
   arma::mat Smean = V.t() * V + arma::eye(V.n_cols, V.n_cols);
@@ -1017,10 +1076,12 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
     update_B_gibbs();
     timings(0) += time_count(tstart);  
     
-    // V = whitened Y-XB or W
-    tstart = std::chrono::steady_clock::now();
-    compute_V();
-    timings(1) += time_count(tstart);
+    // need to recompute V only when V = Y-XB (response model)
+    if(latent_model == 0){
+      tstart = std::chrono::steady_clock::now();
+      compute_V();
+      timings(1) += time_count(tstart);
+    }
   }
   
   // update atoms for theta
@@ -1040,16 +1101,24 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
     tstart = std::chrono::steady_clock::now();
     if(latent_model == 1){
       gibbs_w_block();
+      W_centering();
       compute_V();
     } 
     if(latent_model == 2){
       // redo_cache_blanket runs if update_theta=true
       w_sequential_singlesite(theta_has_changed); 
+      W_centering();
       compute_V();
     }
     if(latent_model == 3){
       gibbs_w_sequential_byoutcome();
     }
+    
+    // ASIS
+    update_BW_asis_gibbs();
+    W_centering();
+    compute_V();
+    
     if(sample_tausq){
       update_Dvec_gibbs();
     }
@@ -1081,6 +1150,7 @@ void SpIOX::latent_vi(){
   arma::uvec theta_changed = arma::zeros<arma::uvec>(q); 
   // single-site VI for updating W
   w_sequential_singlesite(theta_changed);
+  W_centering();
   
   //--- Update Sigma - same as response_vi() but with W for compute_V()
   // V = whitened Y-XB or W

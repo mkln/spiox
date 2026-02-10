@@ -216,7 +216,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     }
   }
   
-  arma::sp_mat Ci = iox_model.daggps[0].H.t() * iox_model.daggps[0].H;
+  //arma::sp_mat Ci = iox_model.daggps[0].H.t() * iox_model.daggps[0].H;
   
   return Rcpp::List::create(
     Rcpp::Named("Beta") = Beta,
@@ -224,7 +224,6 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     Rcpp::Named("Theta") = theta,
     Rcpp::Named("W") = W,
     Rcpp::Named("Ddiag") = Ddiag,
-    Rcpp::Named("Ci") = Ci,
     Rcpp::Named("timings") = iox_model.timings
   );
   
@@ -238,7 +237,7 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
                           
                           const arma::field<arma::uvec>& custom_dag,
                           int dag_opts,
-                          const arma::mat& theta, 
+                          const arma::mat& Theta, 
                           
                           const arma::mat& Sigma_start,
                           const arma::mat& Beta_start,
@@ -282,7 +281,7 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
                   
                   Beta_start,
                   Sigma_start,
-                  theta, 
+                  Theta, 
                   not_updating_theta,
                   tausq_not_needed,
                   matern,
@@ -348,7 +347,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
                            
                            const arma::field<arma::uvec>& custom_dag,
                            int dag_opts,
-                           const arma::mat& theta, 
+                           const arma::mat& Theta, 
                            
                            const arma::mat& Sigma_start,
                            const arma::mat& Beta_start,
@@ -397,7 +396,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
                   
                   Beta_start,
                   Sigma_start,
-                  theta, 
+                  Theta, 
                   not_updating_theta,
                   Ddiag_start, // Need tau_sq for latent VI 
                   matern,
