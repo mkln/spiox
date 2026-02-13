@@ -7,6 +7,16 @@ int time_count(std::chrono::steady_clock::time_point tstart){
   return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - tstart).count();
 }
 
+void SpIOX::update_running_means(arma::mat& E_A, arma::mat& A){
+  double min_iterations = 100.0;
+  double gamma = 0.7;
+  
+  double alpha = vi_it < min_iterations ? 1 : 1.0/pow(vi_it - min_iterations + 1, gamma); // weight for present
+  E_A = (1-alpha) * E_A + alpha * A;
+  
+  // vi_it is the internal iteration counter
+}
+
 void SpIOX::init_theta_adapt(){
   // adaptive metropolis
   theta_mcmc_counter = 0;
@@ -109,8 +119,7 @@ void SpIOX::compute_V(){
 //      arma::mat Vtemp = V_samples_vi.slice(ss);
     VTV = V.t() * V; //1.0/N_mcvi_samples * Vtemp.t() * Vtemp;
 //    }
-    double alpha_VTV = vi_it < 100 ? 1 : 1.0/pow(vi_it - 100.0 + 1, 0.7); // weight for present
-    VTV_ma = (1-alpha_VTV) * VTV_ma + alpha_VTV * VTV;
+    update_running_means(VTV_ma, VTV);
   
   }
   
@@ -121,7 +130,7 @@ void SpIOX::compute_V(){
 void SpIOX::update_B(){
   if(latent_model==0){
     // update B via gibbs for the response model
-    //Rcpp::Rcout << "+++++++++++++++++ ORIG +++++++++++++++++++" << endl;
+    
     //S^T * S = Sigma
     std::chrono::steady_clock::time_point tstart;
     std::chrono::steady_clock::time_point tend;
@@ -168,19 +177,21 @@ void SpIOX::update_B(){
     
   } else {
     // update B via gibbs for the latent model
-    // we could make this into a conjugate MN update rather than conj N
+    // btw we could make this into a conjugate MN update rather than conj N
     arma::mat Ytilde = Y - W;
     arma::mat mvnorm = arma::randn(p, q);
     for(int j=0; j<q; j++){
-      arma::vec yj = Ytilde.col(j);
-      arma::vec y_available = yj.rows(avail_by_outcome(j));
       arma::mat X_available = X.rows(avail_by_outcome(j));
       arma::mat XtX = X_available.t() * X_available;
-      arma::vec XtYtildej = arma::trans(X_available) * y_available;
       arma::mat post_precision = arma::diagmat(1.0/B_Var.col(j)) + XtX/Dvec(j);
       arma::mat pp_ichol = arma::inv(arma::trimatl(arma::chol(post_precision, "lower")));
-      E_B.col(j) = pp_ichol.t() * pp_ichol * XtYtildej/Dvec(j);
-      B.col(j) = E_B.col(j) + pp_ichol.t() * mvnorm.col(j);
+      arma::vec yj = Ytilde.col(j);
+      arma::vec y_available = yj.rows(avail_by_outcome(j));
+      arma::vec XtYtildej = arma::trans(X_available) * y_available;
+      
+      arma::vec B_mean = pp_ichol.t() * pp_ichol * XtYtildej/Dvec(j);
+      B.col(j) = B_mean + pp_ichol.t() * mvnorm.col(j);
+      
     }
   }
   
@@ -189,8 +200,6 @@ void SpIOX::update_B(){
 }
 
 void SpIOX::update_BW_asis(arma::mat& B, arma::mat& W, bool sampling){
-  // this function gets called on E_B and E_W with sampling=false
-  
   if(latent_model>0){
     // update B via gibbs for the response model
     //Rcpp::Rcout << "+++++++++++++++++ ORIG +++++++++++++++++++" << endl;
@@ -681,16 +690,10 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
         }
         
         arma::uvec mblanket = daggps[0].mblanket(i);
-        
-        if(vi){
-          // track the mean
-          arma::vec e_meancomp = Hw(i) * arma::vectorise( E_W.rows(mblanket) ) + Di_YXB;
-          E_W.row(i) = arma::trans( invcholP(i).t() * (invcholP(i) * e_meancomp) );
-        }
-        
+      
         // sample
-        arma::vec meancomp = Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di_YXB;
-        W.row(i) = arma::trans( invcholP(i).t() * ( invcholP(i) * meancomp + mvnorm.col(i) ) );
+        arma::vec W_mean = invcholP(i).t()*invcholP(i) * ( Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di_YXB );
+        W.row(i) = arma::trans(  W_mean + invcholP(i).t()*mvnorm.col(i) );
         
         if(W.has_nan()){
           Rcpp::stop("Found nan in W.\n");
@@ -894,9 +897,7 @@ void SpIOX::update_Dvec_vi(){
     ETE = E.t() * E; //1.0/N_mcvi_samples * E.t() * E;
   //}
   
-  double alpha_ETE = vi_it < 100 ? 1 : 1.0/pow(vi_it - 100.0 + 1, 0.7); // weight for present
-  ETE_ma = (1-alpha_ETE) * ETE_ma + alpha_ETE * ETE;
-  
+  update_running_means(ETE_ma, ETE);
   
   // Updating each tau_sq
   for(int j=0; j<q; j++){
@@ -929,10 +930,6 @@ void SpIOX::W_centering(){
     W.each_row() -= w_means;
     B.row(intercept) += w_means;
     YXB.each_row() -= w_means;
-    
-    arma::rowvec ew_means = arma::mean(E_W, 0);
-    E_W.each_row() -= ew_means;
-    E_B.row(intercept) += ew_means;
   }
 }
 
@@ -1141,25 +1138,30 @@ void SpIOX::response_vi(){
 }
 
 void SpIOX::latent_vi(){
-  // mcmc-vi plus asis
-  update_B();
+  // mcmc(asis)-vi
   
+  // sample B
+  update_B();
+  // sample W
   arma::uvec theta_changed = arma::zeros<arma::uvec>(q); 
   w_sequential_singlesite(theta_changed);
-  
-  W_centering();
+  // asis rotation on B, W
   update_BW_asis(B, W, true); // with sampling
-  update_BW_asis(E_B, E_W, false); // with sampling
+  // center W and place on intercept, if applicable
   W_centering();
+  // working V with sampled B and W
   compute_V();
+  // Update E(Sigma) using MC approx of E(quad forms)
+  update_Sigma_vi();
+  // Update E(Dvec) using MC approx of E(quad forms)
+  update_Dvec_vi(); 
   
+  // compute covariance in B iteratively
   vi_Beta_UQ();
   
-  // Update Sigma
-  update_Sigma_vi();
-  
-  // Update Dvec
-  update_Dvec_vi();
+  // update running means for E(B) and E(W)
+  update_running_means(E_B, B);
+  update_running_means(E_W, W);
   
   vi_it ++;
 }

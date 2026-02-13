@@ -45,6 +45,7 @@ public:
   int matern;
   void update_B(); // 
   void update_Sigma_iwishart();
+  
   void compute_V(); 
   bool upd_theta_metrop();
   arma::uvec upd_theta_metrop_conditional(); // returns uvec with changes to thetaj
@@ -103,6 +104,8 @@ public:
   
   // centering of W and move to intercept (if there is one)
   void W_centering();
+  // update running means
+  void update_running_means(arma::mat&, arma::mat&); 
   
   // utilities for gibbs 
   void update_BW_asis(arma::mat&, arma::mat&, bool sampling); 
@@ -121,7 +124,7 @@ public:
   //arma::mat B_post_cov;
   arma::mat VTV, VTV_ma; // ma for moving average
   arma::mat ETE, ETE_ma;  
-  arma::mat E_B;
+  arma::mat E_B; 
   arma::mat E_W;
   //arma::cube W_samples_vi;
   //arma::cube V_samples_vi;
@@ -208,7 +211,6 @@ public:
       E_W = W;
       Dvec = tausq_start;
     }
-    
     
     
     // mcvi params
