@@ -70,7 +70,6 @@ public:
   void build_grid_exemplars();
   void color_from_mblanket();
   
-  
   arma::mat Corr_export(const arma::mat& cx, const arma::uvec& ix, const arma::uvec& jx, int matern, bool same);
 };
 
@@ -189,23 +188,5 @@ static inline std::string key_from_offsets(const arma::Mat<arma::uword>& idx,
   }
   return s;
 }
-
-// Build symmetric neighbor sets from possibly asymmetric blankets
-static inline std::vector<std::unordered_set<arma::uword>>
-  sym_neighbors(const arma::field<arma::uvec>& mblanket) {
-    const arma::uword n = mblanket.n_elem;
-    std::vector<std::unordered_set<arma::uword>> nb(n);
-    for (arma::uword i = 0; i < n; ++i) {
-      const arma::uvec& v = mblanket(i);
-      for (arma::uword t = 0; t < v.n_elem; ++t) {
-        arma::uword j = v[t];
-        if (j == i || j >= n) continue;
-        nb[i].insert(j);
-        nb[j].insert(i);
-      }
-    }
-    return nb;
-  }
-
 
 #endif

@@ -113,7 +113,9 @@ public:
   void update_Dvec_gibbs();
   
   // whitened X (that is, applying the same operation that makes W white noise)
-  arma::mat Xtilde; 
+  arma::mat Xtilde;
+  arma::cube HX; 
+  bool HX_needs_updating; // save operations if not needed
   
   // utilities for vi
   int vi_it; // internal iteration counter
@@ -229,6 +231,10 @@ public:
     //VTV_ma_initialized = false;
     //W_samples_vi = arma::zeros(W.n_rows, W.n_cols, N_mcvi_samples);
     //V_samples_vi = arma::zeros(W.n_rows, W.n_cols, N_mcvi_samples);
+    
+    Xtilde = arma::zeros(n*q, p*q);
+    HX = arma::zeros(n, p, q);
+    HX_needs_updating = true;
     
     
     // continue with other init

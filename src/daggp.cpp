@@ -58,12 +58,16 @@ DagGP::DagGP(
     }
   }
   
-  // color the dag (for parallelizing gibbs samplers)
-  color_from_mblanket();
   
   compute_comps();
   initialize_H();
   
+  arma::wall_clock timer;
+  
+  timer.tic(); 
+  color_from_mblanket();
+  double n_secs = timer.toc(); // Stop timer and get seconds
+  //Rcpp::Rcout << "Compute time 1: " << n_secs << " seconds" << std::endl;
   
 }
 
@@ -439,52 +443,60 @@ void DagGP::build_grid_exemplars() {
   }
 }
 
-void DagGP::color_from_mblanket() {
-  const arma::uword n = mblanket.n_elem;
-  auto nb = sym_neighbors(mblanket);
+void DagGP::color_from_mblanket(){
   
-  // order nodes by nonincreasing degree
-  arma::uvec order = arma::regspace<arma::uvec>(0, n-1);
-  arma::uvec deg(n);
-  for (arma::uword i = 0; i < n; ++i) deg[i] = nb[i].size();
-  arma::uvec idx = arma::sort_index(deg, "descend");
-  order = order(idx); // permutation of 0..n-1
+  arma::uword n_nodes = mblanket.n_elem;
   
-  // color assignment: color[i] in {0,1,...}
-  arma::ivec color(n, arma::fill::value(-1));
-  int max_color = -1;
+  // Stores the color assigned to each node (-1 = unassigned)
+  // This allows O(1) lookup to see a neighbors color.
+  std::vector<int> node_colors(n_nodes, -1);
   
-  for (arma::uword p = 0; p < n; ++p) {
-    arma::uword i = order[p];
+  // Intermediate storage: groups[c] is the list of nodes with color c
+  std::vector<std::vector<arma::uword>> groups;
+  
+  for (arma::uword i = 0; i < n_nodes; ++i) {
     
-    // mark colors used by colored neighbors
-    std::unordered_set<int> used;
-    used.reserve(nb[i].size());
-    for (arma::uword j : nb[i]) {
-      if (j < n && color[j] >= 0) used.insert(color[j]);
+    // 1. Identify which colors are forbidden for this node
+    // We assume the number of colors wont exceed the current max + 1
+    std::vector<bool> forbidden(groups.size() + 1, false);
+    
+    const arma::uvec& neighbors = mblanket(i);
+    for (arma::uword neighbor_idx : neighbors) {
+      // Safety check for index and check if neighbor is already colored
+      if (neighbor_idx < n_nodes && node_colors[neighbor_idx] != -1) {
+        int neighbor_c = node_colors[neighbor_idx];
+        
+        // If neighbors color is within our current range, mark it
+        if (neighbor_c < forbidden.size()) {
+          forbidden[neighbor_c] = true;
+        }
+      }
     }
     
-    // assign smallest feasible color
-    int c = 0;
-    while (used.find(c) != used.end()) ++c;
-    color[i] = c;
-    if (c > max_color) max_color = c;
+    // 2. Pick the first color that is NOT forbidden
+    int chosen_color = 0;
+    while (chosen_color < forbidden.size() && forbidden[chosen_color]) {
+      chosen_color++;
+    }
+    
+    // 3. Assign the color
+    node_colors[i] = chosen_color;
+    
+    // 4. Add to the corresponding group
+    // If we picked a new color we havent used before, resize the groups vector
+    if (chosen_color >= groups.size()) {
+      groups.resize(chosen_color + 1);
+    }
+    groups[chosen_color].push_back(i);
   }
   
-  // pack indices by color into an Armadillo arma::field<arma::uvec>
-  const arma::uword C = static_cast<arma::uword>(max_color + 1);
-  std::vector<std::vector<arma::uword>> buckets(C);
-  for (arma::uword i = 0; i < n; ++i) buckets[ static_cast<arma::uword>(color[i]) ].push_back(i);
-  
-  arma::field<arma::uvec> classes(C);
-  for (arma::uword c = 0; c < C; ++c) {
-    classes(c) = arma::uvec(buckets[c].size());
-    for (arma::uword t = 0; t < buckets[c].size(); ++t) classes(c)[t] = buckets[c][t];
+  // 5. Convert std::vector to arma::field
+  colors = arma::field<arma::uvec>(groups.size());
+  for (size_t c = 0; c < groups.size(); ++c) {
+    colors(c) = arma::uvec(groups[c]);
   }
   
-  colors = classes;
 }
-
 
 void DagGP::compute_comps(bool update_H){
   // this function avoids building H since H is always used to multiply a matrix A

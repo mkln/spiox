@@ -138,7 +138,7 @@ void SpIOX::update_B(){
     //Rcpp::Rcout << "------- builds0 ----" << endl;
     tstart = std::chrono::steady_clock::now();
     arma::mat Ytilde = Y;
-    Xtilde = arma::zeros(n*q, p*q);
+    
     arma::vec daggp_logdets = arma::zeros(q);
     
 #ifdef _OPENMP
@@ -146,12 +146,22 @@ void SpIOX::update_B(){
 #endif
     for(unsigned int j=0; j<q; j++){
       Ytilde.col(j) = daggps.at(j).H_times_A(Y.col(j));// * Y.col(j);
-      arma::mat HX = daggps.at(j).H_times_A(X);// * X;
       daggp_logdets(j) = daggps.at(j).precision_logdeterminant;
+      
+      if(HX_needs_updating){
+        HX.slice(j) = daggps.at(j).H_times_A(X);// * X;
+      }
+      
+      
       for(unsigned int i=0; i<q; i++){
         Xtilde.submat(i * n,       j * p,
-                      (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX; 
+                      (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX.slice(j); 
       }
+    }
+    
+    if(HX_needs_updating){
+      // we have updated here, switch off
+      HX_needs_updating = false;
     }
     
     arma::vec ytilde = arma::vectorise(Ytilde * Si);
@@ -215,7 +225,7 @@ void SpIOX::update_BW_asis(arma::mat& B, arma::mat& W, bool sampling){
     tstart = std::chrono::steady_clock::now();
     
     arma::mat Ytilde = eta; // we will whiten this in the loop below
-    Xtilde = arma::zeros(n*q, p*q);
+    //Xtilde = arma::zeros(n*q, p*q);
     arma::vec daggp_logdets = arma::zeros(q);
     // whitening of eta and X
 #ifdef _OPENMP
@@ -223,17 +233,25 @@ void SpIOX::update_BW_asis(arma::mat& B, arma::mat& W, bool sampling){
 #endif
     for(unsigned int j=0; j<q; j++){
       Ytilde.col(j) = daggps.at(j).H_times_A(Y.col(j));// * Y.col(j);
-      arma::mat HX = daggps.at(j).H_times_A(X);// * X;
       daggp_logdets(j) = daggps.at(j).precision_logdeterminant;
+      
+      if(HX_needs_updating){
+        HX.slice(j) = daggps.at(j).H_times_A(X);// * X;
+      }
+  
       for(unsigned int i=0; i<q; i++){
         Xtilde.submat(i * n,       j * p,
-                      (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX; 
+                      (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX.slice(j); 
       }
     }
     arma::vec ytilde = arma::vectorise(Ytilde * Si);
     tend = std::chrono::steady_clock::now();
     timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
-    //Rcpp::Rcout << timed << endl;
+    
+    if(HX_needs_updating){
+      // we have updated here, switch off
+      HX_needs_updating = false;
+    }
     
     //Rcpp::Rcout << "------- builds3 ----" << endl;
     tstart = std::chrono::steady_clock::now();
@@ -1063,6 +1081,23 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
     timings(2) += time_count(tstart); 
   }
   
+  // update atoms for theta
+  tstart = std::chrono::steady_clock::now();
+  arma::uvec theta_has_changed = arma::zeros<arma::uvec>(q);
+  if(update_theta){
+    if(q>2){
+      theta_has_changed = upd_theta_metrop_conditional();
+    } else {
+      bool block_changed = upd_theta_metrop();
+      theta_has_changed += block_changed;
+    }
+    if(arma::any(theta_has_changed != 0)){
+      HX_needs_updating = true;
+    }
+  }
+  timings(4) += time_count(tstart);
+  
+  
   if(sample_beta){
     //Rcpp::Rcout << "B " << endl;
     // sample B 
@@ -1077,20 +1112,6 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
       timings(1) += time_count(tstart);
     }
   }
-  
-  // update atoms for theta
-  tstart = std::chrono::steady_clock::now();
-  arma::uvec theta_has_changed = arma::zeros<arma::uvec>(q);
-  if(update_theta){
-    if(q>2){
-      theta_has_changed = upd_theta_metrop_conditional();
-    } else {
-      bool block_changed = upd_theta_metrop();
-      theta_has_changed += block_changed;
-    }
-  }
-  timings(4) += time_count(tstart);
-  
   if(latent_model > 0){
     tstart = std::chrono::steady_clock::now();
     if(latent_model == 1){

@@ -1,198 +1,192 @@
-// [[Rcpp::depends(RcppArmadillo)]]
 #include <RcppArmadillo.h>
-#include <unordered_map>
 #include <vector>
 #include <algorithm>
-#include <numeric>
-#include <chrono>
-#include <limits>
+#include <cmath>
 
 
-// --------- helpers ---------
-
-static inline std::vector<double> sorted_unique(const arma::vec& x) {
-  arma::vec u = arma::unique(x);
-  std::vector<double> v(u.begin(), u.end());
-  std::sort(v.begin(), v.end());
-  return v;
-}
-
-static inline arma::uvec indexify_col(const arma::vec& x, const std::vector<double>& uniq_sorted) {
-  arma::uvec out(x.n_elem);
-  for (arma::uword i = 0; i < x.n_elem; ++i) {
-    double val = x[i];
-    auto it = std::lower_bound(uniq_sorted.begin(), uniq_sorted.end(), val);
-    if (it == uniq_sorted.end() || std::abs(*it - val) > 0.0) {
-      Rcpp::stop("Non-gridded / mismatched value encountered.");
-    }
-    out[i] = static_cast<arma::uword>(std::distance(uniq_sorted.begin(), it));
-  }
-  return out;
-}
-
-static inline std::vector<arma::uword> grid_strides(const std::vector<arma::uword>& dims) {
-  const arma::uword d = dims.size();
-  std::vector<arma::uword> s(d, 1);
-  for (arma::uword k = 1; k < d; ++k) s[k] = s[k - 1] * dims[k - 1];
-  return s;
-}
-
-// generate all offsets in [-R..R]^d \ {0}, ordered by (dist^2, lex)
-static inline std::vector< std::vector<int> >
-  make_stencil(int d, int R) {
-    std::vector< std::vector<int> > offs;
-    offs.reserve(std::max(1, (int)std::pow(2*R+1, d) - 1));
-    
-    std::vector<int> v(d, -R), mins(d, -R), maxs(d, R);
-    auto dist2 = [&](const std::vector<int>& a){
-      long long s = 0; for (int k = 0; k < d; ++k) s += 1LL*a[k]*a[k]; return s;
-    };
-    auto lex_less = [&](const std::vector<int>& a, const std::vector<int>& b){
-      for (int k = 0; k < d; ++k) { if (a[k] < b[k]) return true; if (a[k] > b[k]) return false; }
-      return false;
-    };
-    
-    while (true) {
-      bool all_zero = true;
-      for (int k = 0; k < d; ++k) if (v[k] != 0) { all_zero = false; break; }
-      if (!all_zero) offs.push_back(v);
-      int k = 0;
-      for (; k < d; ++k) {
-        v[k]++;
-        if (v[k] <= maxs[k]) break;
-        v[k] = mins[k];
-      }
-      if (k == d) break;
-    }
-    std::sort(offs.begin(), offs.end(),
-              [&](const std::vector<int>& a, const std::vector<int>& b){
-                auto da = dist2(a), db = dist2(b);
-                if (da < db) return true;
-                if (da > db) return false;
-                return lex_less(a, b);
-              });
-    return offs;
-  }
-
-static inline arma::uword lin_from_multi(const std::vector<arma::uword>& strides, const arma::Row<arma::uword>& row) {
-  arma::uword s = 0;
-  for (arma::uword k = 0; k < row.n_cols; ++k) s += row[k] * strides[k];
-  return s;
-}
-
-struct UwordHash {
-  std::size_t operator()(const arma::uword& x) const noexcept {
-    return std::hash<unsigned long long>()(static_cast<unsigned long long>(x));
-  }
+// --- Helper: Generate Stencil with Pre-computed Linear Offsets ---
+struct Stencil {
+  arma::imat offsets;       // (d x K) matrix of coordinate offsets
+  arma::vec linear_offsets; // (K) vector of linear index offsets
 };
 
+Stencil get_precomputed_stencil(int d, int m, const arma::uvec& strides) {
+  // 1. Determine Radius
+  int r = 1;
+  while (std::pow(2 * r + 1, d) <= 3 * m + 1) r++; 
+  if (r > 4 && d > 3) r = 4; // Safety cap
+  
+  int side = 2 * r + 1;
+  int n_points = (int)std::pow(side, d);
+  
+  arma::imat offsets(d, n_points);
+  
+  // 2. Generate Offsets
+  for(int i = 0; i < n_points; ++i) {
+    int temp = i;
+    for(int k = 0; k < d; ++k) {
+      offsets(k, i) = (temp % side) - r;
+      temp /= side;
+    }
+  }
+  
+  // 3. Sort by Distance
+  arma::rowvec dists = arma::conv_to<arma::rowvec>::from(arma::sum(arma::square(offsets), 0));
+  arma::uvec sorted_indices = arma::stable_sort_index(dists.t());
+  
+  // Remove self (index 0)
+  if (n_points <= 1) return {arma::imat(), arma::vec()};
+  arma::uvec keep = sorted_indices.subvec(1, n_points - 1);
+  
+  arma::imat sorted_offsets = offsets.cols(keep);
+  
+  // 4. Pre-compute Linear Offsets (dot product with strides)
+  // We use double to prevent overflow during calculation, then cast to long long later
+  arma::vec lin_offs(sorted_offsets.n_cols);
+  for(int k=0; k<sorted_offsets.n_cols; ++k) {
+    double off_val = 0;
+    for(int dim=0; dim<d; ++dim) {
+      off_val += (double)sorted_offsets(dim, k) * (double)strides(dim);
+    }
+    lin_offs(k) = off_val;
+  }
+  
+  return {sorted_offsets, lin_offs};
+}
 
 // [[Rcpp::export]]
 arma::field<arma::uvec> dag_for_gridded_cols(const arma::mat& coords, int m = 20) {
- if (coords.n_rows == 0 || coords.n_cols == 0) Rcpp::stop("coords must be non-empty");
- if (m < 0) Rcpp::stop("m must be >= 0");
- 
- const arma::uword N = coords.n_rows;
- const arma::uword d = coords.n_cols;
- 
- // ---- 1) Grid indexing (0-based) ----
-
- std::vector< std::vector<double> > levels(d);
- std::vector<arma::uword> dims(d);
- arma::Mat<arma::uword> idx(N, d);
- 
- for (arma::uword k = 0; k < d; ++k) {
-   levels[k] = sorted_unique(coords.col(k));
-   if (levels[k].empty()) Rcpp::stop("Empty grid in dimension %u", (unsigned)k);
-   dims[k] = static_cast<arma::uword>(levels[k].size());
-   idx.col(k) = indexify_col(coords.col(k), levels[k]);
- }
- std::vector<arma::uword> strides = grid_strides(dims);
- 
- std::vector<arma::uword> lin(N);
- for (arma::uword i = 0; i < N; ++i) lin[i] = lin_from_multi(strides, idx.row(i));
- 
- std::vector<arma::uword> order_idx(N);
- std::iota(order_idx.begin(), order_idx.end(), 0u);
- std::sort(order_idx.begin(), order_idx.end(),
-           [&](arma::uword a, arma::uword b){ return lin[a] < lin[b]; });
- 
- // If full grid: use flat vector lookup; else use hash map
- const arma::uword M =
-   std::accumulate(dims.begin(), dims.end(), (arma::uword)1, std::multiplies<arma::uword>());
- bool full_grid = (M == N);
- 
- std::vector<arma::uword> lin2id_vec;
- std::unordered_map<arma::uword, arma::uword, UwordHash> lin2id_map;
- 
- if (full_grid) {
-   lin2id_vec.assign(M, std::numeric_limits<arma::uword>::max());
-   for (arma::uword r = 0; r < N; ++r) {
-     arma::uword i = order_idx[r];
-     lin2id_vec[ lin[i] ] = i;
-   }
- } else {
-   lin2id_map.reserve(N * 2);
-   for (arma::uword r = 0; r < N; ++r) {
-     arma::uword i = order_idx[r];
-     lin2id_map.emplace(lin[i], i);
-   }
- }
- 
- int R = 0;
- auto pow_int = [](int a, int b){ int p = 1; for (int i=0;i<b;++i) p*=a; return p; };
- while ( ((pow_int(R+1, (int)d) - 1) < std::max(1, m)) && R < 100000 ) ++R;
- std::vector< std::vector<int> > S = make_stencil((int)d, R);
- 
- arma::field<arma::uvec> parents(N);
- std::vector<arma::uword> cand_ids; cand_ids.reserve(m);
- std::vector<arma::uword> xj(d);
- 
- for (arma::uword rr = 0; rr < N; ++rr) {
-   arma::uword i = order_idx[rr];
-   const arma::uword lin_i = lin[i];
-   
-   cand_ids.clear();
-   
-   // try offsets in S
-   const arma::Row<arma::uword> xi = idx.row(i);
-   for (const auto& off : S) {
-     bool inside = true;
-     for (arma::uword k = 0; k < d; ++k) {
-       long long v = (long long)xi[k] + (long long)off[k];
-       if (v < 0 || v >= (long long)dims[k]) { inside = false; break; }
-       xj[k] = (arma::uword)v;
-     }
-     if (!inside) continue;
-     
-     arma::uword lin_j = 0;
-     for (arma::uword k = 0; k < d; ++k) lin_j += xj[k] * strides[k];
-     if (lin_j >= lin_i) continue;
-     
-     arma::uword j_id;
-     if (full_grid) {
-       j_id = lin2id_vec[lin_j];
-       if (j_id == std::numeric_limits<arma::uword>::max()) continue; // hole (sparse)
-     } else {
-       auto it = lin2id_map.find(lin_j);
-       if (it == lin2id_map.end()) continue;
-       j_id = it->second;
-     }
-     
-     cand_ids.push_back(j_id);
-     if ((int)cand_ids.size() == m) break;
-   }
-   
-   if (cand_ids.empty()) {
-     parents(i) = arma::uvec();
-   } else {
-     if ((int)cand_ids.size() > m) cand_ids.resize(m);
-     arma::uvec par(cand_ids.size());
-     for (size_t t = 0; t < cand_ids.size(); ++t) par[t] = cand_ids[t];
-     parents(i) = par;
-   }
- }
-
- return parents;
+  if (coords.is_empty()) Rcpp::stop("coords is empty");
+  
+  int N = coords.n_rows;
+  int d = coords.n_cols;
+  
+  // --- 1. Grid Discretization ---
+  arma::umat grid_pts(N, d);
+  arma::uvec dims(d);
+  
+  for(int k = 0; k < d; ++k) {
+    arma::vec uniq = arma::unique(coords.col(k));
+    dims(k) = uniq.n_elem;
+    auto begin = uniq.begin();
+    auto end = uniq.end();
+    for(int i = 0; i < N; ++i) {
+      auto it = std::lower_bound(begin, end, coords(i, k));
+      grid_pts(i, k) = (int)(it - begin);
+    }
+  }
+  
+  // --- 2. Strides & Linear Indices ---
+  arma::uvec strides(d);
+  strides(0) = 1;
+  for(int k = 1; k < d; ++k) strides(k) = strides(k - 1) * dims(k - 1);
+  
+  // Calculate max possible linear index to decide lookup strategy
+  double max_lin_idx_d = 0;
+  for(int k=0; k<d; ++k) max_lin_idx_d += (double)(dims(k)-1) * (double)strides(k);
+  
+  // --- 3. Lookup Table Strategy ---
+  // If grid space is reasonable (< 200 million points), use direct vector lookup.
+  // Otherwise fall back to hash map.
+  bool use_direct_lookup = (max_lin_idx_d < 200000000.0); 
+  
+  std::vector<int> direct_lookup;
+  std::unordered_map<int, int> map_lookup;
+  
+  arma::uvec lin_indices(N);
+  
+  if (use_direct_lookup) {
+    int max_idx = (int)max_lin_idx_d;
+    direct_lookup.resize(max_idx + 1, N + 1); // Init with sentinel
+  } else {
+    map_lookup.reserve(N * 2);
+  }
+  
+  for(int i = 0; i < N; ++i) {
+    double lin = 0; 
+    for(int k=0; k<d; ++k) lin += (double)grid_pts(i, k) * (double)strides(k);
+    lin_indices(i) = (int)lin;
+  }
+  
+  // Sort to establish DAG order
+  arma::uvec order = arma::sort_index(lin_indices);
+  
+  // Fill Lookup Table
+  for(int i = 0; i < N; ++i) {
+    int lin = lin_indices(order(i));
+    if (use_direct_lookup) {
+      direct_lookup[lin] = i; // Store 'rank' in sorted order
+    } else {
+      map_lookup[lin] = i;
+    }
+  }
+  
+  // --- 4. Process Stencil ---
+  Stencil sten = get_precomputed_stencil(d, m, strides);
+  arma::field<arma::uvec> parents(N);
+  
+  // Reuse vector to avoid allocation inside loop
+  std::vector<int> found_buffer; 
+  found_buffer.reserve(m + 5);
+  
+  for(int i = 0; i < N; ++i) {
+    int original_idx = order(i);
+    int current_lin = lin_indices(original_idx);
+    
+    // Direct pointer to current grid row for fast access
+    arma::umat grid_pts_orig = grid_pts.row(original_idx);
+    const arma::uword* current_coords = grid_pts_orig.memptr();
+    
+    found_buffer.clear();
+    
+    for(int k = 0; k < sten.offsets.n_cols; ++k) {
+      if (found_buffer.size() >= (size_t)m) break;
+      
+      // 1. Fast Linear Offset Check
+      // Calculate potential linear index using pre-computed offset
+      double potential_lin_d = (double)current_lin + sten.linear_offsets(k);
+      
+      // Basic range check
+      if (potential_lin_d < 0 || potential_lin_d > max_lin_idx_d) continue;
+      
+      int neighbor_lin = (int)potential_lin_d;
+      
+      // 2. Lookup Check (Does a node exist there?)
+      int neighbor_rank = N + 1;
+      
+      if (use_direct_lookup) {
+        neighbor_rank = direct_lookup[neighbor_lin];
+        if (neighbor_rank > N) continue; // Empty slot
+      } else {
+        auto it = map_lookup.find(neighbor_lin);
+        if (it == map_lookup.end()) continue;
+        neighbor_rank = it->second;
+      }
+      
+      // 3. DAG Check (Must be "past")
+      if (neighbor_rank >= i) continue;
+      
+      // 4. Exact Coordinate Boundary Check (Expensive, so done last)
+      // We only do this if we found a candidate in the "past".
+      // This prevents "wrapping" around grid edges.
+      bool valid_coords = true;
+      for(int dim = 0; dim < d; ++dim) {
+        int off = sten.offsets(dim, k);
+        if (off == 0) continue;
+        
+        long long nc = (long long)current_coords[dim] + off;
+        if (nc < 0 || nc >= (long long)dims(dim)) {
+          valid_coords = false; 
+          break;
+        }
+      }
+      
+      if (valid_coords) {
+        found_buffer.push_back(order(neighbor_rank));
+      }
+    }
+    parents(original_idx) = arma::conv_to<arma::uvec>::from(found_buffer);
+  }
+  
+  return parents;
 }
-
