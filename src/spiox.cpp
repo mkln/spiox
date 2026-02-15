@@ -32,7 +32,7 @@ void SpIOX::init_theta_adapt(){
   if(nu_sampling){
     which_theta_elem = arma::join_vert(which_theta_elem, 2*oneuv);
   }
-  if(tausq_sampling){
+  if(alpha_sampling){
     which_theta_elem = arma::join_vert(which_theta_elem, 3*oneuv);
   }
   
@@ -48,7 +48,10 @@ void SpIOX::init_theta_adapt(){
     bounds_all.row(2) = arma::rowvec({1, 2}); // nu
   }
   
-  bounds_all.row(3) = arma::rowvec({1e-16, 100}); // tausq
+  //bounds_all.row(3) = arma::rowvec({1e-16, 100}); // tausq
+  // 1-alpha is the proportion of variance explained by spatial component
+  // alpha is is the proportion explained by nugget effect
+  bounds_all.row(3) = arma::rowvec({1e-10, 1-1e-10}); // alpha
   bounds_all = bounds_all.rows(which_theta_elem);
   theta_unif_bounds = arma::zeros(0, 2);
   
@@ -432,8 +435,9 @@ bool SpIOX::upd_theta_metrop(){
     if(sigmasq_sampling){
       logpriors += invgamma_logdens(theta_alt(1,j), 2, 1) - invgamma_logdens(theta(1,j), 2, 1);
     }
-    if(tausq_sampling){
-      logpriors += expon_logdens(theta_alt(3,j), 25) - expon_logdens(theta(3,j), 25);
+    if(alpha_sampling){
+      // nned to change this prior if alpha is a proportion which we expect ~0
+      //logpriors += expon_logdens(theta_alt(3,j), 25) - expon_logdens(theta(3,j), 25);
     }
   }
   
@@ -515,8 +519,8 @@ arma::uvec SpIOX::upd_theta_metrop_conditional(){
     if(sigmasq_sampling){
       logpriors += invgamma_logdens(theta_alt(1,j), 2, 1) - invgamma_logdens(theta(1,j), 2, 1);
     }
-    if(tausq_sampling){
-      logpriors += expon_logdens(theta_alt(3,j), 25) - expon_logdens(theta(3,j), 25);
+    if(alpha_sampling){
+      //logpriors += expon_logdens(theta_alt(3,j), 25) - expon_logdens(theta(3,j), 25);
     }
     
     // ------------------

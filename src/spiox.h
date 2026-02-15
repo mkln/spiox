@@ -143,7 +143,7 @@ public:
   void cache_blanket_comps(const arma::uvec& theta_changed);
   
   // which theta updates are we doing
-  bool phi_sampling, sigmasq_sampling, nu_sampling, tausq_sampling;
+  bool phi_sampling, sigmasq_sampling, nu_sampling, alpha_sampling;
   
   // adaptive metropolis to update theta atoms
   int theta_mcmc_counter;
@@ -252,7 +252,7 @@ public:
     phi_sampling = update_theta_which(0) == 1;
     sigmasq_sampling = update_theta_which(1) == 1;
     nu_sampling = update_theta_which(2) == 1;
-    tausq_sampling = update_theta_which(3) == 1;
+    alpha_sampling = update_theta_which(3) == 1;
     
     matern = cov_model_matern;
     //Rcpp::Rcout << "Covariance choice: " << matern << endl;
