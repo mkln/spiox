@@ -235,7 +235,7 @@ void SpIOX::update_BW_asis(arma::mat& B, arma::mat& W, bool sampling){
 #pragma omp parallel for num_threads(num_threads)
 #endif
     for(unsigned int j=0; j<q; j++){
-      Ytilde.col(j) = daggps.at(j).H_times_A(Y.col(j));// * Y.col(j);
+      Ytilde.col(j) = daggps.at(j).H_times_A(Ytilde.col(j));// * Y.col(j);
       daggp_logdets(j) = daggps.at(j).precision_logdeterminant;
       
       if(HX_needs_updating){
@@ -820,7 +820,7 @@ void SpIOX::gibbs_w_sequential_byoutcome(){
     arma::vec xguess = W.col(j);
     arma::vec w_sampled = gauss_seidel_solve(post_prec, rhs, xguess, 1e-3, 100);
     
-    W.col(j) = w_sampled - arma::mean(w_sampled);
+    //W.col(j) = w_sampled - arma::mean(w_sampled);
     V.col(j) = daggps.at(j).H_times_A(W.col(j));
   }
   
@@ -880,16 +880,14 @@ void SpIOX::gibbs_w_block(){
 
 void SpIOX::update_Dvec_gibbs(){
   arma::mat E = YXB - W;
-  
+
   // priors fpr tau_sq
-  double a = 2;//1e-5;
-  double b = 1;//1e-5;
+  double a = 2; // 1e-5;
+  double b = 1; // 1e-5;
   
   // Updating each tau_sq
   for(int j=0; j<q; j++){
     arma::uvec ix = avail_by_outcome(j);
-    arma::mat Xj = X.rows(ix);
-    arma::mat XtX = Xj.t() * Xj;
     
     double navail = .0 + avail_by_outcome(j).n_elem;
 
@@ -911,13 +909,11 @@ void SpIOX::update_Dvec_vi(){
   Dvec_UQ = arma::zeros(q);
   
   ETE = arma::zeros(q, q);
-  //for(int ss=0; ss<N_mcvi_samples; ss++){
-    arma::mat E = YXB - W; //W_samples_vi.slice(ss);
-    for(int j=0; j<q; j++){
-      E.col(j) -= arma::mean(E.col(j));
-    }
-    ETE = E.t() * E; //1.0/N_mcvi_samples * E.t() * E;
-  //}
+  arma::mat E = YXB - W; //W_samples_vi.slice(ss);
+  for(int j=0; j<q; j++){
+    E.col(j) -= arma::mean(E.col(j));
+  }
+  ETE = E.t() * E; 
   
   update_running_means(ETE_ma, ETE);
   
@@ -1112,7 +1108,7 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
     // need to recompute V only when V = Y-XB (response model)
     if(latent_model == 0){
       tstart = std::chrono::steady_clock::now();
-      compute_V();
+      //compute_V();
       timings(1) += time_count(tstart);
     }
   }
@@ -1120,14 +1116,14 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
     tstart = std::chrono::steady_clock::now();
     if(latent_model == 1){
       gibbs_w_block();
-      W_centering();
-      compute_V();
+      //W_centering();
+      //compute_V();
     } 
     if(latent_model == 2){
       // redo_cache_blanket runs if update_theta=true
       w_sequential_singlesite(theta_has_changed); 
-      W_centering();
-      compute_V();
+      //W_centering();
+      //compute_V();
     }
     if(latent_model == 3){
       gibbs_w_sequential_byoutcome();
@@ -1136,7 +1132,7 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
     // ASIS
     update_BW_asis(B, W, true); // do sample
     YXB = Y - X*B;
-    W_centering();
+    W_centering(); // move to intercept if we have one
     compute_V();
     
     if(sample_tausq){
