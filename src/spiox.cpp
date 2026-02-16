@@ -86,14 +86,9 @@ void SpIOX::compute_V(){
   // Sigma
   // gibbs for theta
   
-  
   // whiten the residuals from spatial dependence
   if(latent_model>0){
     V = W;
-    //if(vi){
-    //  V_samples_vi = W_samples_vi;
-    //}
-    
   } else {
     V = YXB;
   }
@@ -107,27 +102,9 @@ void SpIOX::compute_V(){
   
   bool do_VTV = vi & (latent_model>0);
   if(do_VTV){
-//#ifdef _OPENMP
-//#pragma omp parallel for num_threads(num_threads)
-//#endif
-//    for(int ss=0; ss<N_mcvi_samples; ss++){
-//      for(int j=0; j<q; j++){
-//        arma::vec Vtemp = V_samples_vi.subcube(0, j, ss, n-1, j, ss);
-//        V_samples_vi.subcube(0, j, ss, n-1, j, ss) = daggps.at(j).H_times_A(Vtemp);
-//      }
-//    }
-    
-//    VTV = arma::zeros(q, q);
-//    for(int ss=0; ss<N_mcvi_samples; ss++){
-//      arma::mat Vtemp = V_samples_vi.slice(ss);
-    VTV = V.t() * V; //1.0/N_mcvi_samples * Vtemp.t() * Vtemp;
-//    }
+    VTV = V.t() * V; 
     update_running_means(VTV_ma, VTV);
-  
   }
-  
-  
-  
 }
 
 void SpIOX::update_B(){
@@ -819,9 +796,6 @@ void SpIOX::gibbs_w_sequential_byoutcome(){
     
     arma::vec xguess = W.col(j);
     arma::vec w_sampled = gauss_seidel_solve(post_prec, rhs, xguess, 1e-3, 100);
-    
-    //W.col(j) = w_sampled - arma::mean(w_sampled);
-    V.col(j) = daggps.at(j).H_times_A(W.col(j));
   }
   
 }
@@ -1108,7 +1082,7 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
     // need to recompute V only when V = Y-XB (response model)
     if(latent_model == 0){
       tstart = std::chrono::steady_clock::now();
-      //compute_V();
+      compute_V();
       timings(1) += time_count(tstart);
     }
   }
