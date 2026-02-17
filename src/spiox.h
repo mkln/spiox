@@ -37,6 +37,7 @@ public:
   // objects that depend on theta RadGP for spatial dependence
   std::vector<DagGP> daggps, daggps_alt;
   arma::mat theta; // each column is one alternative value for theta
+  bool daggp_use_H;
   
   // objects that depend on W
   arma::mat V; 
@@ -112,10 +113,11 @@ public:
   void update_Sigma_gibbs();
   void update_Dvec_gibbs();
   
-  // whitened X (that is, applying the same operation that makes W white noise)
+  // whitened Y and X (that is, applying the same operation that makes W white noise)
+  arma::mat Ytilde;
   arma::mat Xtilde;
   arma::cube HX; 
-  bool HX_needs_updating; // save operations if not needed
+  arma::uvec HYX_need_updating; // save operations if not needed
   
   // utilities for vi
   int vi_it; // internal iteration counter
@@ -232,9 +234,10 @@ public:
     //W_samples_vi = arma::zeros(W.n_rows, W.n_cols, N_mcvi_samples);
     //V_samples_vi = arma::zeros(W.n_rows, W.n_cols, N_mcvi_samples);
     
+    Ytilde = arma::zeros(n, q);
     Xtilde = arma::zeros(n*q, p*q);
     HX = arma::zeros(n, p, q);
-    HX_needs_updating = true;
+    HYX_need_updating = arma::ones<arma::uvec>(q);
     
     
     // continue with other init
@@ -246,6 +249,7 @@ public:
     
     theta = daggp_theta;
     daggps = std::vector<DagGP>(q);
+    daggp_use_H = (latent_model == 1) | (latent_model == 3); // qn-block and n-block use H or Ci so we need to build them
     
     // if multiple nu options, interpret as wanting to sample smoothness for matern
     // otherwise, power exponential with fixed exponent.

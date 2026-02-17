@@ -97,7 +97,7 @@ void SpIOX::compute_V(){
 #pragma omp parallel for num_threads(num_threads)
 #endif
   for(unsigned int j=0; j<q; j++){
-    V.col(j) = daggps.at(j).H_times_A(V.col(j));
+    V.col(j) = daggps.at(j).H_times_A(V.col(j), daggp_use_H);
   }
   
   bool do_VTV = vi & (latent_model>0);
@@ -117,21 +117,22 @@ void SpIOX::update_B(){
     int timed = 0;
     //Rcpp::Rcout << "------- builds0 ----" << endl;
     tstart = std::chrono::steady_clock::now();
-    arma::mat Ytilde = Y;
     
+    // Ytilde = Y;
+  
     arma::vec daggp_logdets = arma::zeros(q);
     
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
     for(unsigned int j=0; j<q; j++){
-      Ytilde.col(j) = daggps.at(j).H_times_A(Y.col(j));// * Y.col(j);
       daggp_logdets(j) = daggps.at(j).precision_logdeterminant;
       
-      if(HX_needs_updating){
-        HX.slice(j) = daggps.at(j).H_times_A(X);// * X;
+      if(HYX_need_updating(j)==1){
+        Ytilde.col(j) = daggps.at(j).H_times_A(Y.col(j), daggp_use_H);// * Y.col(j);
+        HX.slice(j) = daggps.at(j).H_times_A(X, daggp_use_H);// * X;
+        HYX_need_updating(j) = 0;
       }
-      
       
       for(unsigned int i=0; i<q; i++){
         Xtilde.submat(i * n,       j * p,
@@ -139,10 +140,10 @@ void SpIOX::update_B(){
       }
     }
     
-    if(HX_needs_updating){
+    //if(HYX_need_updating){
       // we have updated here, switch off
-      HX_needs_updating = false;
-    }
+    //  HYX_need_updating = false;
+    //}
     
     arma::vec ytilde = arma::vectorise(Ytilde * Si);
     tend = std::chrono::steady_clock::now();
@@ -168,7 +169,7 @@ void SpIOX::update_B(){
   } else {
     // update B via gibbs for the latent model
     // btw we could make this into a conjugate MN update rather than conj N
-    arma::mat Ytilde = Y - W;
+    Ytilde = Y - W;
     arma::mat mvnorm = arma::randn(p, q);
     for(int j=0; j<q; j++){
       arma::mat X_available = X.rows(avail_by_outcome(j));
@@ -204,7 +205,7 @@ void SpIOX::update_BW_asis(arma::mat& B, arma::mat& W, bool sampling){
     //Rcpp::Rcout << " asis eta = XB + W " << endl;
     tstart = std::chrono::steady_clock::now();
     
-    arma::mat Ytilde = eta; // we will whiten this in the loop below
+    arma::mat Yasis = eta; // we will whiten this in the loop below
     //Xtilde = arma::zeros(n*q, p*q);
     arma::vec daggp_logdets = arma::zeros(q);
     // whitening of eta and X
@@ -212,11 +213,11 @@ void SpIOX::update_BW_asis(arma::mat& B, arma::mat& W, bool sampling){
 #pragma omp parallel for num_threads(num_threads)
 #endif
     for(unsigned int j=0; j<q; j++){
-      Ytilde.col(j) = daggps.at(j).H_times_A(Ytilde.col(j));// * Y.col(j);
+      Yasis.col(j) = daggps.at(j).H_times_A(Yasis.col(j), daggp_use_H);// * Y.col(j);
       daggp_logdets(j) = daggps.at(j).precision_logdeterminant;
       
-      if(HX_needs_updating){
-        HX.slice(j) = daggps.at(j).H_times_A(X);// * X;
+      if(HYX_need_updating(j) == 1){
+        HX.slice(j) = daggps.at(j).H_times_A(X, daggp_use_H);// * X;
       }
   
       for(unsigned int i=0; i<q; i++){
@@ -224,14 +225,14 @@ void SpIOX::update_BW_asis(arma::mat& B, arma::mat& W, bool sampling){
                       (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX.slice(j); 
       }
     }
-    arma::vec ytilde = arma::vectorise(Ytilde * Si);
+    arma::vec yasis = arma::vectorise(Yasis * Si);
     tend = std::chrono::steady_clock::now();
     timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
     
-    if(HX_needs_updating){
+    //if(HYX_need_updating){
       // we have updated here, switch off
-      HX_needs_updating = false;
-    }
+    //  HYX_need_updating = false;
+    //}
     
     //Rcpp::Rcout << "------- builds3 ----" << endl;
     tstart = std::chrono::steady_clock::now();
@@ -241,7 +242,7 @@ void SpIOX::update_BW_asis(arma::mat& B, arma::mat& W, bool sampling){
     arma::vec vecB_Var = arma::vectorise(B_Var);
     arma::mat post_precision = arma::diagmat(1.0/vecB_Var) + Xtilde.t() * Xtilde;
     arma::mat pp_ichol = arma::inv(arma::trimatl(arma::chol(post_precision, "lower")));
-    arma::vec beta = pp_ichol.t() * (pp_ichol * Xtilde.t() * ytilde + randnormat);
+    arma::vec beta = pp_ichol.t() * (pp_ichol * Xtilde.t() * yasis + randnormat);
     B = arma::mat(beta.memptr(), p, q);
     
     W = eta - X*B;
@@ -359,7 +360,7 @@ bool SpIOX::upd_theta_metrop(){
   // do not run this in parallel, will be faster this way
   tstart = std::chrono::steady_clock::now();
   for(unsigned int i=0; i<q; i++){
-    daggps_alt[i].update_theta(theta_alt.col(i), true);
+    daggps_alt[i].update_theta(theta_alt.col(i), daggp_use_H);
   }
   tend = std::chrono::steady_clock::now();
   timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
@@ -381,7 +382,7 @@ bool SpIOX::upd_theta_metrop(){
     } else {
       Target = YXB.col(j);
     }
-    V_alt.col(j) = daggps_alt.at(j).H_times_A(Target);// * (Y.col(j) - X * B.col(j));
+    V_alt.col(j) = daggps_alt.at(j).H_times_A(Target, daggp_use_H);// * (Y.col(j) - X * B.col(j));
     daggp_logdets(j) = daggps.at(j).precision_logdeterminant;
     daggp_alt_logdets(j) = daggps_alt.at(j).precision_logdeterminant;
   }
@@ -443,24 +444,43 @@ bool SpIOX::upd_theta_metrop(){
 }
 
 arma::uvec SpIOX::upd_theta_metrop_conditional(){
+  
+  using namespace std::chrono;
+  auto t_start = steady_clock::now();
+  long t_proposal = 0; // update dags with new theta proposals beforehand
+  long t_mcmc  = 0; // sequential portion
+  
   arma::uvec oneuv = arma::ones<arma::uvec>(1);
   arma::uvec accepteds = arma::zeros<arma::uvec>(q);
   
+  // we can prepare the proposals beforehand, then only do the strictly sequential part
+  
+  Rcpp::RNGScope scope;
+  arma::mat U_update = arma::randn(which_theta_elem.n_elem, q);
+  arma::mat phisig_alt = arma::zeros(which_theta_elem.n_elem, q);
+  arma::mat phisig_cur = arma::zeros(which_theta_elem.n_elem, q);
+  arma::mat theta_alt = theta; // proposals
+  
+  auto t0 = steady_clock::now();
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(q) //***
+#endif
   for(int j=0; j<q; j++){
+    
     c_theta_adapt[j].count_proposal();
     
-    arma::vec phisig_cur = theta(which_theta_elem, oneuv*j);
+    phisig_cur.col(j) = theta(which_theta_elem, oneuv*j);
     
-    Rcpp::RNGScope scope;
-    arma::vec U_update = arma::randn(phisig_cur.n_elem);
+    //Rcpp::RNGScope scope;
+    //arma::vec U_update = arma::randn(phisig_cur.n_elem);
     
-    arma::vec phisig_alt = par_huvtransf_back(par_huvtransf_fwd(
-      phisig_cur, c_theta_unif_bounds) + 
-        c_theta_adapt[j].paramsd * U_update, c_theta_unif_bounds);
+    phisig_alt.col(j) = par_huvtransf_back(par_huvtransf_fwd(
+      phisig_cur.col(j), c_theta_unif_bounds) + 
+        c_theta_adapt[j].paramsd * U_update.col(j), c_theta_unif_bounds);
     
     // proposal for theta matrix
-    arma::mat theta_alt = theta;
-    theta_alt(which_theta_elem, oneuv*j) = phisig_alt; 
+    //arma::mat theta_alt = theta;
+    theta_alt(which_theta_elem, oneuv*j) = phisig_alt.col(j); 
     
     if(!theta_alt.is_finite()){
       Rcpp::stop("Some value of theta outside of MCMC search limits.\n");
@@ -468,13 +488,21 @@ arma::uvec SpIOX::upd_theta_metrop_conditional(){
     
     // ---------------------
     // create proposal daggp
-    daggps_alt[j].update_theta(theta_alt.col(j), true);
+    daggps_alt[j].update_theta(theta_alt.col(j), daggp_use_H);
+  }
+  
+  auto t1 = steady_clock::now();
+  t_proposal += duration_cast<microseconds>(t1 - t0).count();
+  
+  // sequential
+  for(int j=0; j<q; j++){
     // conditional density of Y_j | Y_-j (or W depending on target)
     arma::mat V_alt = V;
+    
     if(latent_model>0){
-      V_alt.col(j) = daggps_alt.at(j).H_times_A(W.col(j));// * (Y.col(j) - X * B.col(j));
+      V_alt.col(j) = daggps_alt.at(j).H_times_A(W.col(j), daggp_use_H);// * (Y.col(j) - X * B.col(j));
     } else {
-      V_alt.col(j) = daggps_alt.at(j).H_times_A(YXB.col(j));// * (Y.col(j) - X * B.col(j));
+      V_alt.col(j) = daggps_alt.at(j).H_times_A(YXB.col(j), daggp_use_H);// * (Y.col(j) - X * B.col(j));
     }
     
     double c_daggp_logdet = daggps.at(j).precision_logdeterminant;
@@ -486,6 +514,7 @@ arma::uvec SpIOX::upd_theta_metrop_conditional(){
       Vjc += Q(j, jc)/Q(j,j) * V.col(jc);
       Vjc_alt += Q(j, jc)/Q(j,j) * V_alt.col(jc);
     }
+    
     double core_alt = arma::accu(pow(Vjc_alt, 2.0)); 
     double core = arma::accu(pow(Vjc, 2.0)); 
     double prop_logdens = 0.5 * c_daggp_alt_logdet - Q(j,j)/2.0 * core_alt;
@@ -502,13 +531,13 @@ arma::uvec SpIOX::upd_theta_metrop_conditional(){
     
     // ------------------
     // make move
-    double jacobian  = calc_jacobian(phisig_alt, phisig_cur, c_theta_unif_bounds);
+    double jacobian  = calc_jacobian(phisig_alt.col(j), phisig_cur.col(j), c_theta_unif_bounds);
     double logaccept = prop_logdens - curr_logdens + jacobian + logpriors;
     
     accepteds(j) = do_I_accept(logaccept);
     
     if(accepteds(j)){
-      theta = theta_alt;
+      theta.col(j) = theta_alt.col(j);
       std::swap(daggps.at(j), daggps_alt.at(j));
       //std::swap(V, V_alt);
       V.col(j) = V_alt.col(j);
@@ -517,11 +546,19 @@ arma::uvec SpIOX::upd_theta_metrop_conditional(){
     c_theta_adapt[j].update_ratios();
     
     if(theta_adapt_active){
-      c_theta_adapt[j].adapt(U_update, exp(logaccept), theta_mcmc_counter); 
+      c_theta_adapt[j].adapt(U_update.col(j), exp(logaccept), theta_mcmc_counter); 
     }
     
     theta_mcmc_counter++;
   }
+  
+  auto t2 = steady_clock::now();
+  t_mcmc += duration_cast<microseconds>(t2 - t1).count();
+  
+  // --- PRINT RESULTS ---
+  //Rcpp::Rcout << "--- Conditional Update Timing (microseconds) ---" << std::endl;
+  //Rcpp::Rcout << "Proposal build:   " << t_proposal << std::endl;
+  //Rcpp::Rcout << "MCMC seq:      " << t_mcmc << std::endl;
   
   return accepteds;
 }
@@ -1066,7 +1103,7 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
       theta_has_changed += block_changed;
     }
     if(arma::any(theta_has_changed != 0)){
-      HX_needs_updating = true;
+      HYX_need_updating = theta_has_changed;
     }
   }
   timings(4) += time_count(tstart);
@@ -1172,8 +1209,8 @@ void SpIOX::map(){
 #pragma omp parallel for num_threads(num_threads)
 #endif
   for(unsigned int j=0; j<q; j++){
-    Ytilde.col(j) = daggps.at(j).H_times_A(Y.col(j)); // whitening
-    arma::mat HX = daggps.at(j).H_times_A(X);         // whitened X
+    Ytilde.col(j) = daggps.at(j).H_times_A(Y.col(j), daggp_use_H); // whitening
+    arma::mat HX = daggps.at(j).H_times_A(X, daggp_use_H);         // whitened X
     for(unsigned int i=0; i<q; i++){
       Xtilde.submat(i * n,       j * p,
                     (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX;
@@ -1222,7 +1259,7 @@ double SpIOX::logdens_eval(){
   arma::vec daggp_logdets = arma::zeros(q);
   for(unsigned int j=0; j<q; j++){
     arma::mat vYtlocal = vecYtilde.subvec(j*n, (j+1)*n-1);
-    vecYtilde.subvec(j*n, (j+1)*n-1) = daggps.at(j).H_times_A(vYtlocal);
+    vecYtilde.subvec(j*n, (j+1)*n-1) = daggps.at(j).H_times_A(vYtlocal, daggp_use_H);
     daggp_logdets(j) = daggps.at(j).precision_logdeterminant;
   }
   
