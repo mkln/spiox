@@ -192,6 +192,11 @@ spiox <- function(Y, X, coords, m=15,
                 stop("Unknown method/fit combo")
   )
   
+  # drop internal sigma2 for consistency
+  if("Theta" %in% names(out)){
+    out$Theta <- out$Theta[-2,,,drop=F]
+  }
+  
   out$call    <- match.call()
   out$method  <- method
   out$fit     <- fit

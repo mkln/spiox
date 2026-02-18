@@ -38,6 +38,7 @@ public:
   std::vector<DagGP> daggps, daggps_alt;
   arma::mat theta; // each column is one alternative value for theta
   bool daggp_use_H;
+  bool gridded;
   
   // objects that depend on W
   arma::mat V; 
@@ -262,8 +263,8 @@ public:
     //Rcpp::Rcout << "Covariance choice: " << matern << endl;
     
     // make n_threads depend on whether data are gridded, since behavior is opposite
-    
-    int daggp_n_threads = dag_opts == -1? 1 : num_threads;
+    gridded = dag_opts==-1;
+    int daggp_n_threads = gridded ? 1 : num_threads;
     for(unsigned int i=0; i<q; i++){
       daggps[i] = DagGP(_coords, theta.col(i), custom_dag, 
                                dag_opts,

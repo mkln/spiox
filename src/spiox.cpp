@@ -355,6 +355,7 @@ bool SpIOX::upd_theta_metrop(){
   }
   
   // ---------------------
+  // by default this runs when q=1 or q=2, no need for omp
   // create proposal daggp
   // this can run in parallel but update_theta already uses omp
   // do not run this in parallel, will be faster this way
@@ -480,17 +481,18 @@ arma::uvec SpIOX::upd_theta_metrop_conditional(){
   }
   auto t0 = steady_clock::now();
   
-  if((q > 4) & (num_threads > 0)){
+  if(gridded){
+    // gridded data -- 
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(q) //***
 #endif
     for(int j=0; j<q; j++){
-      // create proposal daggp
+      // create proposal daggp // 1 thread here
       daggps_alt[j].update_theta(theta_alt.col(j), daggp_use_H);
     }
   } else {
     for(int j=0; j<q; j++){
-      // create proposal daggp // omp inside here
+      // create proposal daggp // omp inside here -- its slightly faster
       daggps_alt[j].update_theta(theta_alt.col(j), daggp_use_H);
     }
   }
@@ -901,7 +903,7 @@ void SpIOX::gibbs_w_block(){
 void SpIOX::update_Dvec_gibbs(){
   arma::mat E = YXB - W;
 
-  // priors fpr tau_sq
+  // priors for tau_sq
   double a = 2; // 1e-5;
   double b = 1; // 1e-5;
   
@@ -913,51 +915,41 @@ void SpIOX::update_Dvec_gibbs(){
 
     // MCMC - sample with inverse gamma for each tau_sq
     arma::vec ej = E.col(j);
+    arma::vec ej_sub = ej(ix);
     
-    double ssq = arma::accu(arma::square(ej.rows(ix)));
+    double ssq = arma::accu(arma::square(ej_sub));
     Dvec(j) = 1.0/R::rgamma(navail/2 + a, 1.0/(b + 0.5 * ssq));
   
   }
 }
 
 void SpIOX::update_Dvec_vi(){
+  arma::mat E = YXB - W;
   
-  // priors fpr tau_sq
+  // priors for tau_sq
   double a = 2;//1e-5;
   double b = 1;//1e-5;
   
   Dvec_UQ = arma::zeros(q);
-  
   ETE = arma::zeros(q, q);
-  arma::mat E = YXB - W; //W_samples_vi.slice(ss);
-  for(int j=0; j<q; j++){
-    E.col(j) -= arma::mean(E.col(j));
+
+  for(int j = 0; j < q; j++){
+    arma::uvec ix = avail_by_outcome(j);
+    arma::vec ej = E.col(j);
+    arma::vec ej_sub = ej(ix);
+    
+    if(ej_sub.n_elem > 0){
+      ej_sub -= arma::mean(ej_sub);
+      ETE(j, j) = arma::accu(arma::square(ej_sub)); 
+    }
   }
-  ETE = E.t() * E; 
-  
   update_running_means(ETE_ma, ETE);
   
   // Updating each tau_sq
   for(int j=0; j<q; j++){
-    arma::uvec ix = avail_by_outcome(j);
-    arma::mat Xj = X.rows(ix);
-    arma::mat XtX = Xj.t() * Xj;
-    
-    Dvec_UQ(j) = 0;//arma::accu(arma::square(ej.rows(ix)));
     double navail = .0 + avail_by_outcome(j).n_elem;
-  
-    // add sum_i Var(W_{i,j}) for the uncertainty of W
-    Dvec_UQ(j) += ETE_ma(j,j);
-
-    // posterior precision 
-    
-    //arma::mat post_precision = arma::diagmat(1.0 / B_Var.col(j)) + X.t() * X;
-    //arma::mat Sbj = arma::inv_sympd(post_precision);
-    //Dvec_UQ(j) += arma::trace(Sbj * XtX);
-    
-    // VI - posterior mean update for each tau_sq
+    Dvec_UQ(j) = ETE_ma(j,j);
     Dvec(j) = (b + 0.5 * Dvec_UQ(j)) / (navail/2 + a - 1);
-
   }
 }
 

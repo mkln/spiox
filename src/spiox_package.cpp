@@ -21,8 +21,6 @@ Rcpp::List spiox_response(const arma::mat& Y,
                     const arma::uvec& update_Theta = arma::ones<arma::uvec>(4),
                     int num_threads = 1){
   
-  Rcpp::Rcout << "GP-IOX response model." << endl;
-  
 #ifdef _OPENMP
   omp_set_num_threads(num_threads);
 #else
@@ -39,9 +37,15 @@ Rcpp::List spiox_response(const arma::mat& Y,
   
   int sample_precision = 2 * sample_Sigma;
   
+  std::string fit_descr = "with posterior sampling of Theta";
+  if(arma::all(update_Theta == 0)){
+    fit_descr = "with fixed Theta";
+  } 
+
   if(print_every > 0){
-    Rcpp::Rcout << "Preparing..." << endl;
+    Rcpp::Rcout << "Preparing for GP-IOX response model, MCMC " << fit_descr << endl;
   }
+  
   
   // tausq not needed in this model
   arma::vec tausq_not_needed = arma::zeros(q);
@@ -137,18 +141,15 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   
   
   if(sampling==0){
-    Rcpp::stop("Run the GP-IOX response model via spiox_response()");
+    Rcpp::stop("Invalid MCMC sampling option. Choose 1/2/3.");
   }
   
-  Rcpp::Rcout << "GP-IOX latent model, ";
+  std::string fit_descr = "single-site sampler (n sequential, q block)";
   if(sampling==1){
-    Rcpp::Rcout << "nq block sampler (full block sampler)" << endl;
-  }
-  if(sampling==2){
-    Rcpp::Rcout << "n sequential, q block sampler (single-site sampler)" << endl;
+    fit_descr = "block sampler (nq block) ~ slow!";
   }
   if(sampling==3){
-    Rcpp::Rcout << "n block, q sequential sampler (single-outcome sampler)" << endl;
+    fit_descr = "single-outcome sampler (q sequential, n block)";
   }
   
 #ifdef _OPENMP
@@ -165,9 +166,11 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   
   int sample_precision = 2 * sample_Sigma;
   
+  
   if(print_every > 0){
-    Rcpp::Rcout << "Preparing..." << endl;
+    Rcpp::Rcout << "Preparing for GP-IOX latent model, MCMC " << fit_descr << endl;
   }
+  
   
   SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   sampling,
@@ -216,8 +219,6 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     }
   }
   
-  //arma::sp_mat Ci = iox_model.daggps[0].H.t() * iox_model.daggps[0].H;
-  
   return Rcpp::List::create(
     Rcpp::Named("Beta") = Beta,
     Rcpp::Named("Sigma") = Sigma,
@@ -252,7 +253,11 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
   
   bool do_vi = true;
 
-  Rcpp::Rcout << "GP-IOX response model." << endl;
+  // missing data not allowed here
+  arma::uvec y_missing_ix = arma::find_nonfinite(Y);
+  if(y_missing_ix.n_elem > 0){
+    Rcpp::stop("Missing values in Y not allowed in response-vi. Choose response-mcmc or a latent model.");
+  }
   
 #ifdef _OPENMP
   omp_set_num_threads(num_threads);
@@ -270,7 +275,7 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
   unsigned int n = Y.n_rows;
   
   if(print_every > 0){
-    Rcpp::Rcout << "Preparing..." << endl;
+    Rcpp::Rcout << "Preparing for GP-IOX response model, VI fit..." << endl;
   }
   
   // tausq not needed in this model
@@ -293,7 +298,7 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
   arma::mat Sigma = arma::zeros(q, q);
   
   if(print_every > 0){
-    Rcpp::Rcout << "Starting VI" << endl;
+    Rcpp::Rcout << "Starting VI." << endl;
   }
   
   bool stop=false;
@@ -372,11 +377,6 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   int latent_model = 2; 
   bool do_vi = true;
   
-  // print method
-  Rcpp::Rcout << "GP-IOX latent VI model,\n "
-              << "n sequential, q block updates (single-site updates)\n"
-              << endl;
-  
 #ifdef _OPENMP
   omp_set_num_threads(num_threads);
 #else
@@ -391,8 +391,9 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   unsigned int n = Y.n_rows;
   
   if(print_every > 0){
-    Rcpp::Rcout << "Preparing..." << endl;
+    Rcpp::Rcout << "Preparing for GP-IOX latent model, VI fit..." << endl;
   }
+  
   
   arma::uvec not_updating_theta = arma::zeros<arma::uvec>(4); //
   
@@ -421,7 +422,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   
   
   if(print_every > 0){
-    Rcpp::Rcout << "Starting VI" << endl;
+    Rcpp::Rcout << "Starting VI." << endl;
   }
   
   bool stop=false; // stopping flag

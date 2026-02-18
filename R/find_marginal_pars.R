@@ -16,10 +16,10 @@ find_marginal_pars <- function(Y, X, coords, m = 15, nu=0.5, return_full=FALSE) 
   for(j in seq_len(q)){
     cat(j, " ")
     y_j  <- Y[, j]
-    out  <- GpGp::fit_model(y = y_j, locs = coords,
+    suppressWarnings(out  <- GpGp::fit_model(y = y_j, locs = coords,
                             X = X, m_seq = m, 
                             covfun_name = covfun_name,
-                            silent = TRUE)
+                            silent = TRUE))
     # nugget = sigma * alpha, like in IOX
     if(covfun_name == "matern_isotropic"){
       sigmasq <- out$covparms[1]
