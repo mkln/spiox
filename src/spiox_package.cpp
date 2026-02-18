@@ -224,9 +224,9 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     Rcpp::Named("Theta") = theta,
     Rcpp::Named("W") = W,
     Rcpp::Named("Ddiag") = Ddiag,
-    Rcpp::Named("timings") = iox_model.timings
+    Rcpp::Named("timings") = iox_model.timings,
+    Rcpp::Named("markov_blanket") = iox_model.daggps[0].mblanket
   );
-  
 }
 
 
@@ -509,7 +509,8 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
       Rcpp::Named("rel_W")     = rel_W_store,
       Rcpp::Named("rel_Ddiag") = rel_D_store
     ),
-    Rcpp::Named("n_iter") = i
+    Rcpp::Named("n_iter") = i,
+    Rcpp::Named("markov_blanket") = iox_model.daggps[0].mblanket
   );
   
 }

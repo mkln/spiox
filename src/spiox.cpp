@@ -461,23 +461,15 @@ arma::uvec SpIOX::upd_theta_metrop_conditional(){
   arma::mat phisig_cur = arma::zeros(which_theta_elem.n_elem, q);
   arma::mat theta_alt = theta; // proposals
   
-  auto t0 = steady_clock::now();
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(q) //***
-#endif
+  // easy
   for(int j=0; j<q; j++){
-    
     c_theta_adapt[j].count_proposal();
-    
     phisig_cur.col(j) = theta(which_theta_elem, oneuv*j);
-    
-    //Rcpp::RNGScope scope;
-    //arma::vec U_update = arma::randn(phisig_cur.n_elem);
     
     phisig_alt.col(j) = par_huvtransf_back(par_huvtransf_fwd(
       phisig_cur.col(j), c_theta_unif_bounds) + 
         c_theta_adapt[j].paramsd * U_update.col(j), c_theta_unif_bounds);
-    
+  
     // proposal for theta matrix
     //arma::mat theta_alt = theta;
     theta_alt(which_theta_elem, oneuv*j) = phisig_alt.col(j); 
@@ -485,11 +477,25 @@ arma::uvec SpIOX::upd_theta_metrop_conditional(){
     if(!theta_alt.is_finite()){
       Rcpp::stop("Some value of theta outside of MCMC search limits.\n");
     }
-    
-    // ---------------------
-    // create proposal daggp
-    daggps_alt[j].update_theta(theta_alt.col(j), daggp_use_H);
   }
+  auto t0 = steady_clock::now();
+  
+  if((q > 4) & (num_threads > 0)){
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(q) //***
+#endif
+    for(int j=0; j<q; j++){
+      // create proposal daggp
+      daggps_alt[j].update_theta(theta_alt.col(j), daggp_use_H);
+    }
+  } else {
+    for(int j=0; j<q; j++){
+      // create proposal daggp // omp inside here
+      daggps_alt[j].update_theta(theta_alt.col(j), daggp_use_H);
+    }
+  }
+  
+
   
   auto t1 = steady_clock::now();
   t_proposal += duration_cast<microseconds>(t1 - t0).count();
@@ -659,7 +665,10 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
   
   arma::field<arma::mat> Hw(n);
   arma::field<arma::mat> Rw(n);
-  arma::field<arma::mat> invcholP(n);
+  
+  arma::cube Postcov = arma::zeros(q, q, n);
+  arma::mat randcomp = arma::randn(q, n);
+  //arma::mat mvnorm = arma::randn(q, n);
   
   // V = whitened Y-XB or W
   {
@@ -697,7 +706,9 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
       }
       
       Hw(i) = - Pblanket;
-      invcholP(i) = arma::inv(arma::trimatl(arma::chol(Rw(i) + Di_obs, "lower")));
+      arma::mat invcholP = arma::inv(arma::trimatl(arma::chol(Rw(i) + Di_obs, "lower")));
+      Postcov.slice(i) = invcholP.t() * invcholP;
+      randcomp.col(i) = invcholP.t() * randcomp.col(i);
     }
     
     ms_omp_for += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -707,8 +718,6 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
     auto t0 = std::chrono::steady_clock::now();
     // visit every location and sample from latent effects 
     // conditional on data and markov blanket
-  
-    arma::mat mvnorm = arma::randn(q, n);
     for(int c=0; c < daggps[0].colors.n_elem; c++){
       arma::uvec nodes_in_color = daggps[0].colors(c);
 #ifdef _OPENMP
@@ -728,8 +737,8 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
         arma::uvec mblanket = daggps[0].mblanket(i);
       
         // sample
-        arma::vec W_mean = invcholP(i).t()*invcholP(i) * ( Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di_YXB );
-        W.row(i) = arma::trans(  W_mean + invcholP(i).t()*mvnorm.col(i) );
+        arma::vec W_mean = Postcov.slice(i) * ( Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di_YXB );
+        W.row(i) = arma::trans(  W_mean + randcomp.col(i) );
         
         if(W.has_nan()){
           Rcpp::stop("Found nan in W.\n");
