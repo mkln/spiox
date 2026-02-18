@@ -118,7 +118,10 @@ void SpIOX::update_B(){
     //Rcpp::Rcout << "------- builds0 ----" << endl;
     tstart = std::chrono::steady_clock::now();
     
-    // Ytilde = Y;
+    if(Y_needs_filling){
+      // misaligned data response model changes Y so we must recompute HY
+      HYX_need_updating = arma::ones<arma::uvec>(q);
+    }
   
     arma::vec daggp_logdets = arma::zeros(q);
     
@@ -1082,6 +1085,9 @@ void SpIOX::sample_Y_misaligned(const arma::uvec& theta_changed){
   }
   
   YXB = Y - X*B;
+  
+  // we are changing Y and so we will need HY
+  HYX_need_updating = arma::ones<arma::uvec>(q);
 }
 
 
@@ -1157,6 +1163,7 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
     if(Y_needs_filling){
       // redo_cache_blanket runs if update_theta=true
       sample_Y_misaligned(theta_has_changed);
+      compute_V();
     }
     timings(5) += time_count(tstart);
   }
