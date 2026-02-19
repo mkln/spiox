@@ -102,41 +102,42 @@ public:
   void w_sequential_singlesite(const arma::uvec& theta_changed);
   void gibbs_w_sequential_byoutcome();
   void gibbs_w_block();
-  arma::vec Dvec;
+  arma::vec Ddiag;
   
   // centering of W and move to intercept (if there is one)
   void W_centering();
   // update running means
-  void update_running_means(arma::mat&, arma::mat&); 
+  void update_running_means(arma::mat&, const arma::mat&, bool pr=false); 
   
   // utilities for gibbs 
   void update_BW_asis(arma::mat&, arma::mat&, bool sampling); 
   void update_Sigma_gibbs();
-  void update_Dvec_gibbs();
+  void update_Ddiag_gibbs();
   
   // whitened Y and X (that is, applying the same operation that makes W white noise)
   arma::mat Ytilde;
   arma::mat Xtilde;
   arma::cube HX; 
-  arma::uvec HYX_need_updating; // save operations if not needed
+  //arma::uvec HYX_need_updating; // save operations if not needed
   
   // utilities for vi
+  int vi_min_iter; // burn-in for vi in latent models
   int vi_it; // internal iteration counter
   //void update_B_vi();
   void update_Sigma_vi();
-  void update_Dvec_vi();
+  void update_Ddiag_vi();
   bool vi;
   //arma::mat B_post_cov;
   arma::mat VTV, VTV_ma; // ma for moving average
   arma::mat ETE, ETE_ma;  
   arma::mat E_B; 
+  arma::mat W_RB;
   arma::mat E_W;
-  //arma::cube W_samples_vi;
-  //arma::cube V_samples_vi;
+  
   void vi_Beta_UQ(); // for computing Beta_UQ
   arma::vec delta_t, beta_running_mean;
   arma::mat Beta_UQ;
-  arma::vec Dvec_UQ;
+  arma::vec Ddiag_UQ;
   arma::mat Sigma_UQ;
   
   
@@ -168,7 +169,7 @@ public:
   void latent_vi();
   void map();
   double logdens_eval();
-  //double logdens_eval_latent();
+  double latent_fit_eval();
   
   std::chrono::steady_clock::time_point tstart;
   arma::vec timings;
@@ -181,12 +182,13 @@ public:
         int dag_opts,
         int latent_model_choice,
         const arma::mat& Beta_start,
+        const arma::mat& W_start,
         const arma::mat& Sigma_start,
         const arma::mat& daggp_theta, 
         const arma::uvec& update_theta_which,
         const arma::vec& tausq_start,
         int cov_model_matern,
-        int num_threads_in, bool do_vi=false) 
+        int num_threads_in, int _vi_min_iter=100) 
   {
     num_threads = num_threads_in;
     
@@ -211,17 +213,19 @@ public:
     manage_missing_data();
     
     if(latent_model>0){
-      W = Y;
+      W = W_start;
       W(arma::find_nonfinite(W)).fill(0);
       E_W = W;
-      Dvec = tausq_start;
+      W_RB = W;
+      Ddiag = tausq_start;
     }
     
     
     // mcvi params
-    vi = do_vi;
+    vi = _vi_min_iter > 0;
+    vi_min_iter = _vi_min_iter;
     vi_it = 0;
-    //N_mcvi_samples = vi? 100 : 1; // if mcmc, we still need to run that loop once
+    
     VTV = arma::zeros(q, q);
     ETE = arma::zeros(q, q);
     delta_t = arma::zeros(p*q);
@@ -230,16 +234,10 @@ public:
     
     VTV_ma = arma::zeros(q, q);
     ETE_ma = arma::zeros(q, q);
-    //ETE_ma_initialized = false;
-    //VTV_ma_initialized = false;
-    //W_samples_vi = arma::zeros(W.n_rows, W.n_cols, N_mcvi_samples);
-    //V_samples_vi = arma::zeros(W.n_rows, W.n_cols, N_mcvi_samples);
     
     Ytilde = arma::zeros(n, q);
     Xtilde = arma::zeros(n*q, p*q);
     HX = arma::zeros(n, p, q);
-    HYX_need_updating = arma::ones<arma::uvec>(q);
-    
     
     // continue with other init
     B = Beta_start;

@@ -98,8 +98,26 @@ spiox <- function(Y, X, coords, m=15,
   
   `%||%` <- function(a, b) if (!is.null(a)) a else b
   
-  Beta_start  <- starting$Beta  %||% matrix(0, p, q)
-  Sigma_start <- starting$Sigma %||% diag(q)
+  # set good? starting values
+  Yfill <- Y
+  if(any(is.na(Y))){
+    for(j in seq_len(q)){
+      ix_na <- is.na(Yfill[,j])
+      n_na <- sum(ix_na)
+      mu_j = mean(Yfill[,j], na.rm=TRUE)
+      sd_j = sd(Yfill[,j], na.rm=TRUE)
+      Yfill[ix_na, j] <- rnorm(n_na, mean = mu_j, sd = sd_j)
+    }  
+  }
+
+  Beta_start  <- starting$Beta  %||% solve(crossprod(X), crossprod(X, Yfill)) # ols guess
+  if(method == "latent") {
+    W_start  <- starting$W      %||% (Yfill - X %*% Beta_start) # ols residual guess
+    Sigma_start <- starting$Sigma %||% cov(W_start) # resid cov guess
+    Ddiag_start <- starting$Ddiag %||% diag(Sigma_start)
+  } else {
+    Sigma_start <- starting$Sigma %||% diag(q)
+  }
   
   # Theta: 3 rows (phi, nu, alpha), q columns
   Theta_user <- starting$Theta %||% NULL
@@ -131,10 +149,6 @@ spiox <- function(Y, X, coords, m=15,
   )
   update_Theta_full <- as.integer(c(opts$update_Theta[1], 0L, opts$update_Theta[2], opts$update_Theta[3]))
   
-  
-  # latent-only
-  Ddiag_start <- starting$Ddiag %||% rep(1, q)
-  
   # ---- dispatch ----
   out <- switch(paste(method, fit, sep=":"),
                 "response:mcmc" = spiox_response(
@@ -154,6 +168,7 @@ spiox <- function(Y, X, coords, m=15,
                 "latent:mcmc" = spiox_latent(
                   Y, X, coords, custom_dag,
                   Beta_start, 
+                  W_start,
                   Sigma_start, 
                   Theta_start, 
                   Ddiag_start,
@@ -183,6 +198,7 @@ spiox <- function(Y, X, coords, m=15,
                   Theta=Theta_start, 
                   Sigma_start=Sigma_start, 
                   Beta_start=Beta_start,
+                  W_start=W_start,
                   Ddiag_start=Ddiag_start,
                   matern=opts$matern, 
                   num_threads=as.integer(opts$num_threads),

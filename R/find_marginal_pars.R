@@ -12,7 +12,7 @@ find_marginal_pars <- function(Y, X, coords, m = 15, nu=0.5, return_full=FALSE) 
   q <- ncol(Y)
   theta <- matrix(0, nrow=4, ncol=q)
   
-  cat("Processing ", q, " outcomes... ")
+  cat("Processing ", q, " outcomes... \n")
   for(j in seq_len(q)){
     cat(j, " ")
     y_j  <- Y[, j]
@@ -20,15 +20,20 @@ find_marginal_pars <- function(Y, X, coords, m = 15, nu=0.5, return_full=FALSE) 
                             X = X, m_seq = m, 
                             covfun_name = covfun_name,
                             silent = TRUE))
-    # nugget = sigma * alpha, like in IOX
+    # nugget = sigma * tsq
+    # spatial variance = sigma
+    # total = sigma (1+tsq)
+    # alpha (portion of meas error): tsq/(1+tsq)
     if(covfun_name == "matern_isotropic"){
       sigmasq <- out$covparms[1]
-      alpha   <- out$covparms[4]
+      tsq     <- out$covparms[4]
+      alpha   <- tsq / (1+tsq)
       phi     <- 1 / out$covparms[2]
       nu      <- out$covparms[3]
     } else {
       sigmasq <- out$covparms[1]
-      alpha   <- out$covparms[3]
+      tsq     <- out$covparms[3]
+      alpha   <- tsq / (1+tsq)
       phi     <- 1 / out$covparms[2]
       nu      <- nu
     }

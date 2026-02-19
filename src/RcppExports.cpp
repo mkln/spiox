@@ -217,8 +217,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // spiox_latent
-Rcpp::List spiox_latent(const arma::mat& Y, const arma::mat& X, const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, const arma::mat& Beta_start, const arma::mat& Sigma_start, const arma::mat& Theta_start, const arma::vec& Ddiag_start, int mcmc, int print_every, int matern, int dag_opts, bool sample_Beta, bool sample_Sigma, bool sample_Ddiag, const arma::uvec& update_Theta, int num_threads, int sampling);
-RcppExport SEXP _spiox_spiox_latent(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP Beta_startSEXP, SEXP Sigma_startSEXP, SEXP Theta_startSEXP, SEXP Ddiag_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP maternSEXP, SEXP dag_optsSEXP, SEXP sample_BetaSEXP, SEXP sample_SigmaSEXP, SEXP sample_DdiagSEXP, SEXP update_ThetaSEXP, SEXP num_threadsSEXP, SEXP samplingSEXP) {
+Rcpp::List spiox_latent(const arma::mat& Y, const arma::mat& X, const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, const arma::mat& Beta_start, const arma::mat& W_start, const arma::mat& Sigma_start, const arma::mat& Theta_start, const arma::vec& Ddiag_start, int mcmc, int print_every, int matern, int dag_opts, bool sample_Beta, bool sample_Sigma, bool sample_Ddiag, const arma::uvec& update_Theta, int num_threads, int sampling);
+RcppExport SEXP _spiox_spiox_latent(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP Beta_startSEXP, SEXP W_startSEXP, SEXP Sigma_startSEXP, SEXP Theta_startSEXP, SEXP Ddiag_startSEXP, SEXP mcmcSEXP, SEXP print_everySEXP, SEXP maternSEXP, SEXP dag_optsSEXP, SEXP sample_BetaSEXP, SEXP sample_SigmaSEXP, SEXP sample_DdiagSEXP, SEXP update_ThetaSEXP, SEXP num_threadsSEXP, SEXP samplingSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -227,6 +227,7 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
     Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type custom_dag(custom_dagSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type Beta_start(Beta_startSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type W_start(W_startSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type Sigma_start(Sigma_startSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type Theta_start(Theta_startSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type Ddiag_start(Ddiag_startSEXP);
@@ -240,7 +241,7 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::uvec& >::type update_Theta(update_ThetaSEXP);
     Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
     Rcpp::traits::input_parameter< int >::type sampling(samplingSEXP);
-    rcpp_result_gen = Rcpp::wrap(spiox_latent(Y, X, coords, custom_dag, Beta_start, Sigma_start, Theta_start, Ddiag_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, sample_Ddiag, update_Theta, num_threads, sampling));
+    rcpp_result_gen = Rcpp::wrap(spiox_latent(Y, X, coords, custom_dag, Beta_start, W_start, Sigma_start, Theta_start, Ddiag_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, sample_Ddiag, update_Theta, num_threads, sampling));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -266,8 +267,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // spiox_latent_vi
-Rcpp::List spiox_latent_vi(const arma::mat& Y, const arma::mat& X, const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, int dag_opts, const arma::mat& Theta, const arma::mat& Sigma_start, const arma::mat& Beta_start, const arma::vec& Ddiag_start, int matern, int num_threads, int print_every, double tol, int max_iter);
-RcppExport SEXP _spiox_spiox_latent_vi(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP dag_optsSEXP, SEXP ThetaSEXP, SEXP Sigma_startSEXP, SEXP Beta_startSEXP, SEXP Ddiag_startSEXP, SEXP maternSEXP, SEXP num_threadsSEXP, SEXP print_everySEXP, SEXP tolSEXP, SEXP max_iterSEXP) {
+Rcpp::List spiox_latent_vi(const arma::mat& Y, const arma::mat& X, const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, int dag_opts, const arma::mat& Theta, const arma::mat& Sigma_start, const arma::mat& Beta_start, const arma::mat& W_start, const arma::vec& Ddiag_start, int matern, int num_threads, int print_every, double tol, int max_iter);
+RcppExport SEXP _spiox_spiox_latent_vi(SEXP YSEXP, SEXP XSEXP, SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP dag_optsSEXP, SEXP ThetaSEXP, SEXP Sigma_startSEXP, SEXP Beta_startSEXP, SEXP W_startSEXP, SEXP Ddiag_startSEXP, SEXP maternSEXP, SEXP num_threadsSEXP, SEXP print_everySEXP, SEXP tolSEXP, SEXP max_iterSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -279,13 +280,14 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::mat& >::type Theta(ThetaSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type Sigma_start(Sigma_startSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type Beta_start(Beta_startSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type W_start(W_startSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type Ddiag_start(Ddiag_startSEXP);
     Rcpp::traits::input_parameter< int >::type matern(maternSEXP);
     Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
     Rcpp::traits::input_parameter< int >::type print_every(print_everySEXP);
     Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
     Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
-    rcpp_result_gen = Rcpp::wrap(spiox_latent_vi(Y, X, coords, custom_dag, dag_opts, Theta, Sigma_start, Beta_start, Ddiag_start, matern, num_threads, print_every, tol, max_iter));
+    rcpp_result_gen = Rcpp::wrap(spiox_latent_vi(Y, X, coords, custom_dag, dag_opts, Theta, Sigma_start, Beta_start, W_start, Ddiag_start, matern, num_threads, print_every, tol, max_iter));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -369,9 +371,9 @@ static const R_CallMethodDef CallEntries[] = {
     {"_spiox_Sigma_to_correl", (DL_FUNC) &_spiox_Sigma_to_correl, 1},
     {"_spiox_Sigma_identify", (DL_FUNC) &_spiox_Sigma_identify, 2},
     {"_spiox_spiox_response", (DL_FUNC) &_spiox_spiox_response, 15},
-    {"_spiox_spiox_latent", (DL_FUNC) &_spiox_spiox_latent, 18},
+    {"_spiox_spiox_latent", (DL_FUNC) &_spiox_spiox_latent, 19},
     {"_spiox_spiox_response_vi", (DL_FUNC) &_spiox_spiox_response_vi, 11},
-    {"_spiox_spiox_latent_vi", (DL_FUNC) &_spiox_spiox_latent_vi, 14},
+    {"_spiox_spiox_latent_vi", (DL_FUNC) &_spiox_spiox_latent_vi, 15},
     {"_spiox_spiox_predict", (DL_FUNC) &_spiox_spiox_predict, 11},
     {"_spiox_spiox_predict_part", (DL_FUNC) &_spiox_spiox_predict_part, 12},
     {"_spiox_spiox_latent_predict", (DL_FUNC) &_spiox_spiox_latent_predict, 11},

@@ -49,10 +49,12 @@ Rcpp::List spiox_response(const arma::mat& Y,
   
   // tausq not needed in this model
   arma::vec tausq_not_needed = arma::zeros(q);
+  arma::mat W_not_needed = arma::zeros(1,1);
   
   SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   latent_model,
                   Beta_start,
+                  W_not_needed, // not used
                    Sigma_start,
                    Theta_start, 
                    update_Theta,
@@ -124,6 +126,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           const arma::field<arma::uvec>& custom_dag,
                           
                           const arma::mat& Beta_start,
+                          const arma::mat& W_start,
                           const arma::mat& Sigma_start,
                           const arma::mat& Theta_start, 
                           const arma::vec& Ddiag_start,
@@ -171,10 +174,10 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     Rcpp::Rcout << "Preparing for GP-IOX latent model, MCMC " << fit_descr << endl;
   }
   
-  
   SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   sampling,
                   Beta_start,
+                  W_start,
                   Sigma_start,
                   Theta_start, 
                   update_Theta,
@@ -202,7 +205,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     Beta.slice(m) = iox_model.B;
     Sigma.slice(m) = iox_model.Sigma;
     theta.slice(m) = iox_model.theta;
-    Ddiag.col(m) = iox_model.Dvec;
+    Ddiag.col(m) = iox_model.Ddiag;
     W.slice(m) = iox_model.W;
 
     bool print_condition = (print_every>0);
@@ -251,8 +254,6 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
   int min_iter = 1;
   int max_iter = 500;
   
-  bool do_vi = true;
-
   // missing data not allowed here
   arma::uvec y_missing_ix = arma::find_nonfinite(Y);
   if(y_missing_ix.n_elem > 0){
@@ -281,17 +282,19 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
   // tausq not needed in this model
   arma::vec tausq_not_needed = arma::zeros(q);
   arma::uvec not_updating_theta = arma::zeros<arma::uvec>(4);
+  arma::mat W_not_needed = arma::zeros(1,1);
   
   SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   latent_model,
                   
                   Beta_start,
+                  W_not_needed, 
                   Sigma_start,
                   Theta, 
                   not_updating_theta,
                   tausq_not_needed,
                   matern,
-                  num_threads, do_vi);
+                  num_threads, min_iter);
   
   // storage
   arma::mat Beta = arma::zeros(p, q);
@@ -335,8 +338,11 @@ Rcpp::List spiox_response_vi(const arma::mat& Y,
     }
   }
   
-  arma::vec vecBeta_UQ = iox_model.Beta_UQ.diag();
-  arma::mat Beta_UQ = arma::mat(vecBeta_UQ.memptr(), p, q);
+  // mfvi
+  arma::mat Beta_UQ = iox_model.Beta_UQ;
+  
+  //arma::vec vecBeta_UQ = iox_model.Beta_UQ.diag();
+  //arma::mat Beta_UQ = arma::mat(vecBeta_UQ.memptr(), p, q);
   
   return Rcpp::List::create(
     Rcpp::Named("Beta") = Beta,
@@ -360,6 +366,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
                            
                            const arma::mat& Sigma_start,
                            const arma::mat& Beta_start,
+                           const arma::mat& W_start,
                            const arma::vec& Ddiag_start,
                            
                            int matern = 1,
@@ -369,13 +376,13 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
                            int max_iter = 500){
   
   // do min_iter iterations at least
-  int min_iter = 100; 
+  int min_iter = 25; 
   // then check maximum relative change. if it's <tol for this time then stop
   int wait_time_before_stop = 2;
   
   // for artifacts in other subfunctions.
   int latent_model = 2; 
-  bool do_vi = true;
+  
   
 #ifdef _OPENMP
   omp_set_num_threads(num_threads);
@@ -401,12 +408,15 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
                   latent_model,
                   
                   Beta_start,
+                  W_start,
                   Sigma_start,
                   Theta, 
                   not_updating_theta,
                   Ddiag_start, // Need tau_sq for latent VI 
                   matern,
-                  num_threads, do_vi);
+                  num_threads, min_iter);
+  
+  double ll_pre = iox_model.latent_fit_eval();
   
   // storage
   arma::mat Beta = arma::zeros(p, q);
@@ -419,7 +429,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   arma::vec rel_Sigma_store(max_iter, arma::fill::zeros);
   arma::vec rel_W_store(max_iter, arma::fill::zeros);
   arma::vec rel_D_store(max_iter, arma::fill::zeros);
-  
+  arma::vec rel_ll_store(max_iter, arma::fill::zeros);
   
   if(print_every > 0){
     Rcpp::Rcout << "Starting VI." << endl;
@@ -434,22 +444,27 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
     
     arma::mat Beta_pre = Beta;
     arma::mat Sigma_pre = Sigma;
-    arma::mat W_pre = iox_model.E_W;
-    arma::vec D_pre = iox_model.Dvec;
+    arma::mat W_pre = iox_model.E_W; 
+    arma::vec D_pre = iox_model.Ddiag;
+    
     
     iox_model.latent_vi();
     
     Beta = iox_model.E_B;
     Sigma = iox_model.Sigma;
     W = iox_model.E_W;
-    Ddiag = iox_model.Dvec;
+    Ddiag = iox_model.Ddiag;
+    double ll = iox_model.latent_fit_eval();
     
     // monitoring convergence of the parameters
-    arma::vec rel_change = arma::zeros(4);
-    rel_change(0) = arma::norm(Beta - Beta_pre, 2) / (arma::norm(Beta_pre, 2)  + 1e-12);
+    arma::vec rel_change = arma::zeros(5);
+    rel_change(0) = arma::norm(Beta - Beta_pre, "fro") / (arma::norm(Beta_pre, "fro")  + 1e-12);
     rel_change(1) = arma::norm(Sigma - Sigma_pre, "fro") / (arma::norm(Sigma_pre, "fro") + 1e-12);
     rel_change(2) = arma::norm(W - W_pre, "fro") / (arma::norm(W_pre, "fro") + 1e-12);
     rel_change(3) = arma::norm(Ddiag - D_pre, 2) / (arma::norm(D_pre, 2) + 1e-12);
+    rel_change(4) = abs(ll - ll_pre) / (abs(ll_pre) + 1e-12);
+    
+    ll_pre = ll;
     
     double max_rel_change = rel_change.max();
     
@@ -466,6 +481,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
     rel_Sigma_store(i - 1) = rel_change(1);
     rel_W_store(i - 1) = rel_change(2);
     rel_D_store(i - 1) = rel_change(3);
+    rel_ll_store(i - 1) = rel_change(4);
     
     if(i > min_iter){
       if(max_rel_change < tol){
@@ -481,20 +497,23 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
     if(interrupted){
       Rcpp::stop("Interrupted by the user.");
     }
-  
+    
     // stopping?
     stop = about_to_exit > wait_time_before_stop;
     if (i >= max_iter) stop = true;
   }
   
-  arma::vec vecBeta_UQ = iox_model.Beta_UQ.diag() / (i-1.0);
-  arma::mat Beta_UQ = arma::mat(vecBeta_UQ.memptr(), p, q);
+  //arma::vec vecBeta_UQ = iox_model.Beta_UQ.diag() / (i-1.0);
+  //arma::mat Beta_UQ = arma::mat(vecBeta_UQ.memptr(), p, q);
   
   // cut off the unused(NA) elements
   rel_B_store = rel_B_store.head(i);
   rel_Sigma_store = rel_Sigma_store.head(i);
   rel_W_store = rel_W_store.head(i);
   rel_D_store = rel_D_store.head(i);
+  rel_ll_store = rel_ll_store.head(i);
+  
+  arma::mat Beta_UQ = iox_model.Beta_UQ/(i-1.0-min_iter);
   
   return Rcpp::List::create(
     Rcpp::Named("Beta") = Beta,
@@ -503,12 +522,13 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
     Rcpp::Named("Sigma_UQ") = iox_model.Sigma_UQ,
     Rcpp::Named("W") = W,
     Rcpp::Named("Ddiag") = Ddiag,
-    Rcpp::Named("Ddiag_UQ") = iox_model.Dvec_UQ,
+    Rcpp::Named("Ddiag_UQ") = iox_model.Ddiag_UQ,
     Rcpp::Named("rel_change") = Rcpp::List::create(
       Rcpp::Named("rel_Beta")  = rel_B_store,
       Rcpp::Named("rel_Sigma") = rel_Sigma_store,
       Rcpp::Named("rel_W")     = rel_W_store,
-      Rcpp::Named("rel_Ddiag") = rel_D_store
+      Rcpp::Named("rel_Ddiag") = rel_D_store,
+      Rcpp::Named("rel_ll") = rel_ll_store
     ),
     Rcpp::Named("n_iter") = i,
     Rcpp::Named("markov_blanket") = iox_model.daggps[0].mblanket
