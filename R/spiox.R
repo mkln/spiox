@@ -39,7 +39,7 @@ spiox <- function(Y, X, coords, m=15,
                   method = c("response","latent"),
                   fit = c("mcmc","vi"),
                   iter = 1000, print_every = 100, 
-                  starting=NULL, opts=NULL, debug=NULL){
+                  starting="auto", opts=NULL, debug=NULL){
   
   method <- match.arg(method)
   fit    <- match.arg(fit)
@@ -69,19 +69,12 @@ spiox <- function(Y, X, coords, m=15,
     update_Theta = default_update_theta,
     num_threads  = 1L,
     tol          = 1e-2,
-    matern       = 1
+    matern       = 1,
+    nu           = 0.5
   )
   opts <- modifyList(opts_defaults, if (is.null(opts)) list() else opts)
   stopifnot(length(opts$update_Theta) == 3L)
   
-  # must initialize theta if we're not updating it
-  if (all(opts$update_Theta == 0L) && (is.null(starting) || is.null(starting$Theta))) {
-    stop("starting$Theta must be supplied when update_Theta = c(0,0,0).")
-  }
-  # vi does not update theta: must supply
-  if (fit == "vi" && (is.null(starting) || is.null(starting$Theta))) {
-    stop("starting$Theta (3 x q with rows phi, nu, alpha) must be supplied for fit='vi'.")
-  }
   
   # debug controls MCMC 
   debug_defaults <- list(
@@ -94,59 +87,74 @@ spiox <- function(Y, X, coords, m=15,
   debug <- modifyList(debug_defaults, if (is.null(debug)) list() else debug)
   
   # ---- starting values ----
-  if (is.null(starting)) starting <- list()
-  
-  `%||%` <- function(a, b) if (!is.null(a)) a else b
-  
-  # set good? starting values
-  Yfill <- Y
-  if(any(is.na(Y))){
-    for(j in seq_len(q)){
-      ix_na <- is.na(Yfill[,j])
-      n_na <- sum(ix_na)
-      mu_j = mean(Yfill[,j], na.rm=TRUE)
-      sd_j = sd(Yfill[,j], na.rm=TRUE)
-      Yfill[ix_na, j] <- rnorm(n_na, mean = mu_j, sd = sd_j)
-    }  
+  auto_do <- is.character(starting) && length(starting) == 1 && starting == "auto"
+  if (!auto_do && !is.list(starting)) {
+    stop("Invalid input for 'starting'. You must either specify 'auto' or provide a list of starting values.")
   }
-
-  Beta_start  <- starting$Beta  %||% solve(crossprod(X), crossprod(X, Yfill)) # ols guess
-  if(method == "latent") {
-    W_start  <- starting$W      %||% (Yfill - X %*% Beta_start) # ols residual guess
-    Sigma_start <- starting$Sigma %||% cov(W_start) # resid cov guess
-    Ddiag_start <- starting$Ddiag %||% diag(Sigma_start)
+  if(auto_do){
+    starting <- autostart(Y, X, coords, method, m = m, opts$nu)
+    Beta_start <- starting$Beta
+    Sigma_start <- starting$Sigma
+    Theta <- starting$Theta
+    if(method == "latent"){
+      W_start <- starting$W
+      Ddiag_start <- starting$Ddiag
+    }
   } else {
+    # ok let's deal with this
+    `%||%` <- function(a, b) if (!is.null(a)) a else b
+    
+    # common
+    Beta_start  <- starting$Beta  %||% matrix(0, nrow=p, ncol=q)
     Sigma_start <- starting$Sigma %||% diag(q)
-  }
-  
-  # Theta: 3 rows (phi, nu, alpha), q columns
-  Theta_user <- starting$Theta %||% NULL
-  
-  if (!is.null(Theta_user)) {
-    Theta_user <- as.matrix(Theta_user)
-    stopifnot(nrow(Theta_user) == 3L, ncol(Theta_user) == q)
-  } else {
-    # only allowed if you're updating at least one theta (and not VI),
-    # due to checks above
-    alpha_default <- ifelse(method == "latent", 0, 0.1)
-    Theta_user <- rbind(10, 0.5, alpha_default)
-  }
-  rownames(Theta_user) <- c("phi","nu","alpha")
-  
-  # checking user supplied values
-  if (method == "latent" && !is.null(Theta_user)) {
-    alpha <- as.numeric(Theta_user[3, ])
-    if (any(abs(alpha) > 0)) {
-      warning("In method='latent', alpha (last row of starting$Theta) should be 0; nonzero values were supplied.")
+    
+    # latent only
+    if(method == "latent") {
+      W_start  <- starting$W      %||% matrix(0, nrow=n, ncol=q)
+      Ddiag_start <- starting$Ddiag %||% diag(q)
+    } 
+    
+    # must initialize theta if we're not updating it
+    if (all(opts$update_Theta == 0L) && (is.null(starting) || is.null(starting$Theta))) {
+      stop("starting$Theta must be supplied when update_Theta = c(0,0,0).")
+    }
+    # vi does not update theta: must supply
+    if (fit == "vi" && (is.null(starting) || is.null(starting$Theta))) {
+      stop("starting$Theta (3 x q with rows phi, nu, alpha) must be supplied for fit='vi'.")
+    }
+    
+    # Theta: 3 rows (phi, nu, alpha), q columns
+    Theta <- starting$Theta %||% NULL
+    
+    if (!is.null(Theta)) {
+      Theta <- as.matrix(Theta)
+      stopifnot(nrow(Theta) == 3L, ncol(Theta) == q)
+    } else {
+      # only allowed if you're updating at least one theta (and not VI),
+      # due to checks above
+      alpha_default <- ifelse(method == "latent", 0, 0.1)
+      Theta <- rbind(10, 0.5, alpha_default)
+    }
+    rownames(Theta) <- c("phi","nu","alpha")
+    
+    # checking user supplied values
+    if (method == "latent" && !is.null(Theta)) {
+      alpha <- as.numeric(Theta[3, ])
+      if (any(abs(alpha) > 0)) {
+        warning("In method='latent', alpha (last row of starting$Theta) should be 0; nonzero values were supplied.")
+      }
     }
   }
   
+  
+  
   Theta_start <- rbind(
-    phi   = Theta_user[1, , drop=FALSE],
+    phi   = Theta[1, , drop=FALSE],
     sigmasq = rep(1, q),                 # not used
-    nu    = Theta_user[2, , drop=FALSE],
-    alpha = Theta_user[3, , drop=FALSE]
+    nu    = Theta[2, , drop=FALSE],
+    alpha = Theta[3, , drop=FALSE]
   )
+  
   update_Theta_full <- as.integer(c(opts$update_Theta[1], 0L, opts$update_Theta[2], opts$update_Theta[3]))
   
   # ---- dispatch ----
