@@ -107,7 +107,7 @@ spiox <- function(Y, X, coords, m = 15,
   }
   
   gridded <- is_gridded(coords)
-  custom_dag <- dag_vecchia(coords, m, gridded)
+  dag <- dag_vecchia_o(coords, m, gridded)
   dag_opts <- if (gridded) -1L else 0L
   
   # ---------------------------------------------------------------------------
@@ -226,7 +226,8 @@ spiox <- function(Y, X, coords, m = 15,
     paste(method, fit, sep = ":"),
     
     "response:mcmc" = spiox_response(
-      Y, X, coords, custom_dag,
+      Y[dag$order,,drop=F], X[dag$order,,drop=F], coords[dag$order,,drop=F], 
+      dag$dag,
       Beta_start, Sigma_start, Theta_start,
       mcmc         = iter, 
       print_every  = print_every, 
@@ -239,8 +240,11 @@ spiox <- function(Y, X, coords, m = 15,
     ),
     
     "latent:mcmc" = spiox_latent(
-      Y, X, coords, custom_dag,
-      Beta_start, W_start, Sigma_start, Theta_start, Ddiag_start,
+      Y[dag$order,,drop=F], X[dag$order,,drop=F], coords[dag$order,,drop=F], 
+      dag$dag,
+      Beta_start, 
+      W_start[dag$order,,drop=F], 
+      Sigma_start, Theta_start, Ddiag_start,
       mcmc         = iter, 
       print_every  = print_every, 
       matern       = opts$matern, 
@@ -254,7 +258,8 @@ spiox <- function(Y, X, coords, m = 15,
     ),
     
     "response:vi" = spiox_response_vi(
-      Y, X, coords, custom_dag, dag_opts,
+      Y[dag$order,,drop=F], X[dag$order,,drop=F], coords[dag$order,,drop=F],  
+      dag$dag, dag_opts,
       Theta        = Theta_start, 
       Sigma_start  = Sigma_start, 
       Beta_start   = Beta_start,
@@ -264,11 +269,12 @@ spiox <- function(Y, X, coords, m = 15,
     ),
     
     "latent:vi" = spiox_latent_vi(
-      Y, X, coords, custom_dag, dag_opts,
+      Y[dag$order,,drop=F], X[dag$order,,drop=F], coords[dag$order,,drop=F], 
+      dag$dag, dag_opts,
       Theta        = Theta_start, 
       Sigma_start  = Sigma_start, 
       Beta_start   = Beta_start,
-      W_start      = W_start,
+      W_start      = W_start[dag$order,,drop=F],
       Ddiag_start  = Ddiag_start,
       matern       = opts$matern, 
       num_threads  = as.integer(opts$num_threads),
@@ -289,6 +295,18 @@ spiox <- function(Y, X, coords, m = 15,
   } else {
     out$Theta <- Theta_start[-2, , drop = FALSE]
   }
+  
+  # reorder W
+  if ("W" %in% names(out)) {
+    if(fit == "mcmc"){
+      # an array with samples in the third dimension
+      out$W <- out$W[order(dag$order),,,drop=FALSE]  
+    } else {
+      # not an array
+      out$W <- out$W[order(dag$order),,drop=FALSE]
+    }
+    
+  } 
   
   # Append metadata to the output object
   out$call     <- match.call()

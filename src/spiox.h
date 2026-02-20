@@ -1,5 +1,5 @@
 #include "omp_import.h"
-#include "gssolver.h"
+#include "sparse_solvers.h"
 #include "daggp.h"
 #include "ramadapt.h"
 
@@ -248,7 +248,7 @@ public:
     
     theta = daggp_theta;
     daggps = std::vector<DagGP>(q);
-    daggp_use_H = (latent_model == 1) | (latent_model == 3); // qn-block and n-block use H or Ci so we need to build them
+    daggp_use_H = true;//(latent_model == 1) | (latent_model == 3); // qn-block and n-block use H or Ci so we need to build them
     
     // if multiple nu options, interpret as wanting to sample smoothness for matern
     // otherwise, power exponential with fixed exponent.
