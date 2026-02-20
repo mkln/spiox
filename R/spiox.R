@@ -67,7 +67,7 @@ spiox <- function(Y, X, coords, m=15,
   
   opts_defaults <- list(
     update_Theta = default_update_theta,
-    num_threads  = 1L,
+    num_threads  = RhpcBLASctl::get_num_cores(),
     tol          = 1e-2,
     matern       = 1,
     nu           = 0.5
@@ -75,6 +75,12 @@ spiox <- function(Y, X, coords, m=15,
   opts <- modifyList(opts_defaults, if (is.null(opts)) list() else opts)
   stopifnot(length(opts$update_Theta) == 3L)
   
+  if(opts$num_threads > 1){
+    RhpcBLASctl::blas_set_num_threads(1)
+    message(paste0("BLAS threads set to 1, OMP threads set to ", opts$num_threads))
+  } else {
+    message("OMP threads set to 1.")
+  }
   
   # debug controls MCMC 
   debug_defaults <- list(
@@ -219,6 +225,8 @@ spiox <- function(Y, X, coords, m=15,
   # drop internal sigma2 for consistency
   if("Theta" %in% names(out)){
     out$Theta <- out$Theta[-2,,,drop=F]
+  } else {
+    out$Theta <- Theta_start[-2,,drop=F]
   }
   
   out$call    <- match.call()

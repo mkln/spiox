@@ -1,4 +1,4 @@
-autostart <- function(Y, X, coords, method=c("response", "latent"), m=15, nu=0.5){
+autostart <- function(Y, X, coords, method=c("response", "latent"), m=15, nu=0.5, verbose=TRUE){
   
   method <- match.arg(method)
   
@@ -29,7 +29,7 @@ autostart <- function(Y, X, coords, method=c("response", "latent"), m=15, nu=0.5
     W <- matrix(0, 1, 1)
   }
   
-  cat("Processing ", q, " outcomes... \n")
+  if(verbose) cat("Processing ", q, " outcomes... [ ")
   
   if(nu==0.5){
     covfun_name = "exponential_isotropic"
@@ -41,7 +41,7 @@ autostart <- function(Y, X, coords, method=c("response", "latent"), m=15, nu=0.5
   }
   
   for(j in seq_len(q)){
-    cat(j, " ")
+    if(verbose) cat(j, " ")
     y_j  <- Y[, j]
     invisible(capture.output({out  <- GpGp::fit_model(y = y_j, locs = coords,
                                              X = X, m_seq = m, 
@@ -76,6 +76,8 @@ autostart <- function(Y, X, coords, method=c("response", "latent"), m=15, nu=0.5
       Theta[,j] <- c(phi, nu, alpha)
     }
   }
+  
+  if(verbose) cat("]\n")
 
   if(method == "response"){
     out <- list(
