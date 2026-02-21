@@ -73,6 +73,17 @@ spiox <- function(Y, X, coords, m = 15,
   X <- as.matrix(X)
   coords <- as.matrix(coords)
   
+  if( (fit == "vi") & (method == "response") ){
+    cc <- complete.cases(Y)
+    
+    Y <- Y[cc,,drop=FALSE]
+    X <- X[cc,,drop=FALSE]
+    coords <- coords[cc,,drop=FALSE]
+    
+    nava <- sum(cc)
+    warning(paste0("Fitting on ", nava, " points (others are partly missing)"))
+  }
+  
   n <- nrow(Y)
   q <- ncol(Y)
   p <- ncol(X)
