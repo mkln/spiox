@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <string>
 
-//#include "nnsearch.h"
 #include "covariance.h"
 
 using namespace std;
@@ -41,6 +40,7 @@ public:
   arma::field<arma::vec> h;
   void compute_comps(bool update_H=false);
   arma::mat H_times_A(const arma::mat& A, bool use_spmat=true);
+  arma::mat H_solve_A(const arma::mat& A, bool use_spmat=true);
   
   // info about covariance model:
   int matern; // 0: pexp; 1: matern; 2: wave

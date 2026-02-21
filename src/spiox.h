@@ -111,6 +111,7 @@ public:
   
   // utilities for gibbs 
   void update_BW_asis(arma::mat&, arma::mat&, bool sampling); 
+  void update_BWSigma_px();
   void update_Sigma_gibbs();
   void update_Ddiag_gibbs();
   
@@ -164,7 +165,8 @@ public:
   
   
   // -------------- run 1 gibbs iteration based on current values
-  void gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta, bool sample_tausq=false);
+  void response_gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta, bool sample_tausq=false);
+  void latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta, bool sample_tausq=false);
   void response_vi();
   void latent_vi();
   void map();
@@ -248,7 +250,7 @@ public:
     
     theta = daggp_theta;
     daggps = std::vector<DagGP>(q);
-    daggp_use_H = true;//(latent_model == 1) | (latent_model == 3); // qn-block and n-block use H or Ci so we need to build them
+    daggp_use_H = (latent_model == 1) | (latent_model == 3); // qn-block and n-block use H or Ci so we need to build them
     
     // if multiple nu options, interpret as wanting to sample smoothness for matern
     // otherwise, power exponential with fixed exponent.

@@ -2,7 +2,6 @@
 
 using namespace std;
 
-
 int time_count(std::chrono::steady_clock::time_point tstart){
   return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - tstart).count();
 }
@@ -19,8 +18,6 @@ void SpIOX::update_running_means(arma::mat& E_A, const arma::mat& A, bool pr){
     double alpha = vi_it < vi_min_iter ? 1 : 1.0/pow(vi_it - vi_min_iter + 1.0, gamma); // weight for present
     E_A = (1-alpha) * E_A + alpha * A;
   }
-  
-  
 }
 
 void SpIOX::init_theta_adapt(){
@@ -109,7 +106,6 @@ void SpIOX::compute_V(){
   bool do_VTV = vi & (latent_model>0);
   if(do_VTV){
     VTV = V.t() * V; 
-    update_running_means(VTV_ma, VTV);
   }
 }
 
@@ -978,10 +974,9 @@ void SpIOX::update_Sigma_iwishart(){
 }
 
 void SpIOX::update_Sigma_vi(){
-
   if(latent_model > 0){
+    update_running_means(VTV_ma, VTV);
     Sigma_UQ = arma::eye(q,q) + VTV_ma;
-    
   } else {
     // trace terms
     arma::mat E2 = arma::zeros(q, q);
@@ -1080,14 +1075,45 @@ void SpIOX::sample_Y_misaligned(const arma::uvec& theta_changed){
   
 }
 
-
-void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta, bool sample_tausq){
+void SpIOX::update_BWSigma_px(){
+  arma::mat A = arma::zeros(q,q);
+  arma::mat randnormmat = arma::randn(p+q, q);
   
-  if(sample_sigma > 0){
-    tstart = std::chrono::steady_clock::now();
-    update_Sigma_iwishart();
-    timings(2) += time_count(tstart); 
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+  for(unsigned int j=0; j<q; j++){
+    arma::uvec ix = avail_by_outcome(j);
+    
+    arma::vec yj = Y.col(j);
+    arma::mat Zj = daggps[j].H_solve_A(V, daggp_use_H);
+    
+    yj = yj.rows(ix);
+    arma::mat ZZ = arma::join_horiz(X.rows(ix), Zj.rows(ix));
+    
+    arma::mat prior_precision = arma::zeros(p+q, p+q);
+    prior_precision.submat(0, 0, p-1, p-1) = arma::diagmat(1.0/B_Var.col(j));
+    
+    arma::mat post_precision = prior_precision + ZZ.t() * ZZ / Ddiag(j);
+    arma::mat cholP = arma::chol(post_precision, "lower");
+    
+    arma::mat cholV = arma::inv(arma::trimatl(cholP));
+    arma::vec BAj = cholV.t() * ( cholV * ZZ.t() * yj / Ddiag(j) + randnormmat.col(j));
+    
+    B.col(j) = BAj.head_rows(p);
+    A.col(j) = BAj.tail_rows(q);
+    
+    W.col(j) = Zj * A.col(j);
+    YXB.col(j) = Y.col(j) - X * B.col(j);
   }
+  
+  Sigma = A.t() * Sigma * A;
+  S = arma::chol(Sigma, "upper");
+  Si = arma::inv(arma::trimatu(S));
+  Q = Si * Si.t();
+}
+
+void SpIOX::response_gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta, bool sample_tausq){
   
   // update atoms for theta
   tstart = std::chrono::steady_clock::now();
@@ -1102,60 +1128,110 @@ void SpIOX::gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta,
   }
   timings(4) += time_count(tstart);
   
-  
   if(sample_beta){
-    //Rcpp::Rcout << "B " << endl;
     // sample B 
     tstart = std::chrono::steady_clock::now();
     update_B();
     timings(0) += time_count(tstart);  
     
     // need to recompute V only when V = Y-XB (response model)
-    if(latent_model == 0){
-      tstart = std::chrono::steady_clock::now();
-      compute_V();
-      timings(1) += time_count(tstart);
-    }
-  }
-  if(latent_model > 0){
+
     tstart = std::chrono::steady_clock::now();
-    if(latent_model == 1){
-      gibbs_w_block();
-      //W_centering();
-      //compute_V();
-    } 
-    if(latent_model == 2){
-      // redo_cache_blanket runs if update_theta=true
-      w_sequential_singlesite(theta_has_changed); 
-      //W_centering();
-      //compute_V();
-    }
-    if(latent_model == 3){
-      gibbs_w_sequential_byoutcome();
-    }
-    
-    // ASIS
-    update_BW_asis(B, W, true); // do sample
-    YXB = Y - X*B;
-    W_centering(); // move to intercept if we have one
     compute_V();
-    
-    if(sample_tausq){
-      update_Ddiag_gibbs();
-    }
-    timings(5) += time_count(tstart);
-  } else {
-    tstart = std::chrono::steady_clock::now();
-    // response model -- do we have missing data? if so, impute
-    if(Y_needs_filling){
-      // redo_cache_blanket runs if update_theta=true
-      sample_Y_misaligned(theta_has_changed);
-      compute_V();
-    }
-    timings(5) += time_count(tstart);
+    timings(1) += time_count(tstart);
+  
   }
+
+  
+  tstart = std::chrono::steady_clock::now();
+  // response model -- do we have missing data? if so, impute
+  if(Y_needs_filling){
+    // redo_cache_blanket runs if update_theta=true
+    sample_Y_misaligned(theta_has_changed);
+    compute_V();
+  }
+  timings(5) += time_count(tstart);
+
+  
+  if(sample_sigma > 0){
+    tstart = std::chrono::steady_clock::now();
+    update_Sigma_iwishart();
+    timings(2) += time_count(tstart); 
+  }
+  
 }
 
+void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta, bool sample_tausq){
+  
+  //Rcpp::Rcout << "theta " << endl;
+  // update atoms for theta
+  tstart = std::chrono::steady_clock::now();
+  arma::uvec theta_has_changed = arma::zeros<arma::uvec>(q);
+  if(update_theta){
+    if(q>2){
+      theta_has_changed = upd_theta_metrop_conditional();
+    } else {
+      bool block_changed = upd_theta_metrop();
+      theta_has_changed += block_changed;
+    }
+  }
+  timings(4) += time_count(tstart);
+  
+  //Rcpp::Rcout << "B " << endl;
+  if(sample_beta){
+    // sample B 
+    tstart = std::chrono::steady_clock::now();
+    //update_B();
+    timings(0) += time_count(tstart);  
+  }
+
+  //Rcpp::Rcout << "w " << endl;
+  tstart = std::chrono::steady_clock::now();
+  if(latent_model == 1){
+    gibbs_w_block();
+    //W_centering();
+    //compute_V();
+  } 
+  if(latent_model == 2){
+    // redo_cache_blanket runs if update_theta=true
+    w_sequential_singlesite(theta_has_changed); 
+    //W_centering();
+    //compute_V();
+  }
+  if(latent_model == 3){
+    gibbs_w_sequential_byoutcome();
+  }
+  timings(5) += time_count(tstart);
+
+  //Rcpp::Rcout << "B asis " << endl;
+  if(sample_beta){
+    update_BW_asis(B, W, true); // do sample
+    YXB = Y - X*B;
+  }
+
+  compute_V(); // keep 
+  
+  if(sample_sigma){
+    //Rcpp::Rcout << "Sigma centered " << endl;
+    tstart = std::chrono::steady_clock::now();
+    update_Sigma_iwishart();
+    
+    //Rcpp::Rcout << "Sigma PX " << endl;
+    // PX W~Sigma
+    update_BWSigma_px();
+    timings(2) += time_count(tstart); 
+  }
+
+  //Rcpp::Rcout << "W centering " << endl;
+  W_centering(); // move to intercept if we have one
+  compute_V();
+  
+  //Rcpp::Rcout << "Tausq " << endl;
+  if(sample_tausq){
+    update_Ddiag_gibbs();
+  }
+  
+}
 
 void SpIOX::response_vi(){
   update_B();
@@ -1176,11 +1252,18 @@ void SpIOX::latent_vi(){
   update_BW_asis(B, W, true); // with sampling
   // center W and place on intercept, if applicable
   W_centering();
+  
   // working V with sampled B and W
   compute_V();
-
+  
+  // PX
+  update_BWSigma_px();
+  W_centering();
+  compute_V();
+  
   // Update E(Sigma) using MC approx of E(quad forms)
   update_Sigma_vi();
+  
   // Update E(Ddiag) using MC approx of E(quad forms)
   update_Ddiag_vi(); 
   

@@ -82,7 +82,7 @@ Rcpp::List spiox_response(const arma::mat& Y,
   
   for(unsigned int m=0; m<mcmc; m++){
     
-    iox_model.gibbs(m, sample_precision, sample_Beta, theta_needs_updating);
+    iox_model.response_gibbs(m, sample_precision, sample_Beta, theta_needs_updating);
 
     Beta.slice(m) = iox_model.B;
     Sigma.slice(m) = iox_model.Sigma;
@@ -200,7 +200,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   
   for(unsigned int m=0; m<mcmc; m++){
     
-    iox_model.gibbs(m, sample_precision, sample_Beta, theta_needs_updating, sample_Ddiag);
+    iox_model.latent_gibbs(m, sample_precision, sample_Beta, theta_needs_updating, sample_Ddiag);
     
     Beta.slice(m) = iox_model.B;
     Sigma.slice(m) = iox_model.Sigma;

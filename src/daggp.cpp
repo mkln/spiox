@@ -699,6 +699,53 @@ void DagGP::initialize_H(){
   }
 }
 
+arma::mat DagGP::H_solve_A(const arma::mat& A, bool use_spmat){
+  if(!use_spmat){
+    // solve using rows of H stored in hrows and indexes in ax
+    arma::mat Y = A; 
+    for (arma::uword i = 0; i < nr; ++i) {
+      double diag_val = 0.0;
+      bool diag_found = false;
+      const arma::vec& row_vals = hrows(i);
+      const arma::uvec& row_cols = ax(i);
+      for (arma::uword idx = 0; idx < row_vals.n_elem; ++idx) {
+        arma::uword k = row_cols(idx);
+        double val = row_vals(idx);
+        if (k < i) {
+          Y.row(i) -= val * Y.row(k);
+        } else if (k == i) {
+          diag_val = val;
+          diag_found = true;
+        }
+      }
+      Y.row(i) /= diag_val;
+    }
+    return Y;
+  } else {
+    // solve using H matrix 
+    arma::mat Y = A; 
+    for (arma::uword j = 0; j < nr; ++j) {
+      arma::sp_mat::const_col_iterator it = H.begin_col(j);
+      arma::sp_mat::const_col_iterator it_end = H.end_col(j);
+      double diag_val = 0.0;
+      for (arma::sp_mat::const_col_iterator diag_it = it; diag_it != it_end; ++diag_it) {
+        if (diag_it.row() == j) {
+          diag_val = *diag_it;
+          break;
+        }
+      }
+      Y.row(j) /= diag_val;
+      for (; it != it_end; ++it) {
+        arma::uword i = it.row();
+        if (i > j) { 
+          Y.row(i) -= (*it) * Y.row(j);
+        }
+      }
+    }
+    return Y;
+  }
+}
+
 arma::mat DagGP::H_times_A(const arma::mat& A, bool use_spmat){
   // this function avoids building H since H is always used to multiply a matrix A
   if(!use_spmat){
