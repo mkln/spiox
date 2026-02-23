@@ -1,5 +1,38 @@
 #include "spiox.h"
 #include "interrupt.h"
+#include <RcppArmadillo.h>
+#include <chrono>
+using namespace Rcpp;
+
+
+//[[Rcpp::export]]
+arma::mat spiox_simulate(const arma::mat& coords,
+                          const arma::field<arma::uvec>& custom_dag,
+                          const arma::mat& Sigma,
+                          const arma::mat& Theta,
+                          int covariance_matern = 1,
+                          int num_threads = 1){
+  
+  unsigned int n = coords.n_rows;
+  unsigned int q = Theta.n_cols;
+  
+  // generate white noise and correlate across margins
+  arma::mat St = arma::chol(Sigma, "upper");
+  arma::mat U = arma::randn(n, q);
+  arma::mat V = U * St;
+  
+  arma::mat W = arma::zeros(n, q);
+  
+  // induce spatial dependence
+  for(unsigned int j=0; j<q; j++){
+    DagGP daggp(coords, Theta.col(j), custom_dag, 0, covariance_matern, false, num_threads);
+    
+    W.col(j) = daggp.H_solve_A(V.col(j));
+    W.col(j) -= arma::mean(W.col(j));
+  }
+  
+  return(W);
+}
 
 // [[Rcpp::export]]
 Rcpp::List spiox_response(const arma::mat& Y, 
@@ -116,6 +149,8 @@ Rcpp::List spiox_response(const arma::mat& Y,
   );
   
 }
+
+
 
 
 // [[Rcpp::export]]
@@ -376,9 +411,10 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
                            int max_iter = 500){
   
   // do min_iter iterations at least
-  int min_iter = 25; 
+  int nq = Y.n_cols * Y.n_rows;
+  int min_iter = 200; //min(50, nq / 1000); 
   // then check maximum relative change. if it's <tol for this time then stop
-  int wait_time_before_stop = 2;
+  int wait_time_before_stop = 5;
   
   // for artifacts in other subfunctions.
   int latent_model = 2; 
