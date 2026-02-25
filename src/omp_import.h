@@ -1,4 +1,4 @@
-#define ARMA_USE_SUPERLU
+//#define ARMA_USE_SUPERLU
 
 #ifdef _OPENMP
 #include <omp.h>

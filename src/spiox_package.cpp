@@ -4,6 +4,21 @@
 #include <chrono>
 using namespace Rcpp;
 
+//[[Rcpp::export]]
+arma::field<arma::sp_mat> spiox_H_list(const arma::mat& coords,
+                                       const arma::field<arma::uvec>& custom_dag,
+                                       const arma::mat& Theta,
+                                       int covariance_matern = 1,
+                                       int num_threads = 1){
+  
+  int q = Theta.n_cols;
+  arma::field<arma::sp_mat> Hlist(q);
+  for(int j=0; j<q; j++){
+    DagGP daggp(coords, Theta.col(j), custom_dag, 0, covariance_matern, false, num_threads);
+    Hlist(j) = daggp.H;
+  }
+  return Hlist;
+}
 
 //[[Rcpp::export]]
 arma::mat spiox_simulate(const arma::mat& coords,

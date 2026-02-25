@@ -803,11 +803,6 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed, bool vi=fal
 void SpIOX::gibbs_w_sequential_byoutcome(){
   
   std::vector<arma::sp_mat> prior_precs(q);
-  //std::vector<arma::spsolve_factoriser> factoriser(q);
-  arma::uvec statuses = arma::ones<arma::uvec>(q);
-  
-  //arma::superlu_opts opts;
-  //opts.symmetric  = true;
   
   arma::mat urands = arma::randn(n, q);
   arma::mat vrands = arma::randn(n, q);
@@ -816,34 +811,49 @@ void SpIOX::gibbs_w_sequential_byoutcome(){
   arma::uvec r1q = arma::regspace<arma::uvec>(0,q-1);
   
   for(int j=0; j<q; j++){
-    // compute prior precision
-    arma::sp_mat post_prec = Q(j,j) * daggps[j].Ci; //daggps[j].H.t() * daggps[j].H;
-    // compute posterior precision
-    post_prec.diag() += 1.0/Ddiag(j);
+    // build per-location diagonal contribution for this column j
+    arma::vec invD(n, arma::fill::zeros);
+    arma::vec invSqrtD(n, arma::fill::zeros);
+    for(int i = 0; i < n; i++){
+      if(!missing_mat(i,j)){
+        invD(i)      = 1.0 / Ddiag(j);
+        invSqrtD(i)  = 1.0 / std::sqrt(Ddiag(j));
+      }
+    }
     
-    // this does not need sequential
-    HDs.col(j) = YXB.col(j)/Ddiag(j) + 
-      urands.col(j)/sqrt(Ddiag(j)) + 
-      sqrt(Q(j,j)) * daggps[j].H.t() * vrands.col(j);
-  
+    // prior precision
+    arma::sp_mat post_prec = Q(j,j) * daggps[j].Ci;
+    
+    // posterior precision: add only where observed
+    post_prec.diag() += invD;
+    
+    // data/noise contribution: zeroed out where missing
+    // (elementwise multiply by invD / invSqrtD vectors)
+    HDs.col(j) =
+      YXB.col(j) % invD
+      + urands.col(j) % invSqrtD
+      + std::sqrt(Q(j,j)) * daggps[j].H.t() * vrands.col(j);
+    
     arma::vec x = arma::zeros(n);
     arma::uvec notj = arma::find(r1q != j);
     arma::uvec jx = arma::zeros<arma::uvec>(1) + j;
+    
     // V is whitened W as we want
     arma::vec Mi_m_prior = - daggps[j].H.t() * V.cols(notj) * Q.submat(notj, jx);
     arma::vec rhs = Mi_m_prior + HDs.col(j);
     
-    arma::vec xguess = W.col(j);
-    arma::vec w_sampled = gauss_seidel_solve(post_prec, rhs, xguess, 1e-3, 100);
+    W.col(j) = pcg_diag_solve(post_prec, rhs, W.col(j), 1e-3, 200);
+    V.col(j) = daggps[j].H_times_A(W.col(j)); // keep here
   }
   
 }
+
 
 void SpIOX::gibbs_w_block(){
   // ------------------ slow 
   
   if(q*n > 5000){
-    Rcpp::stop("Use another sampler. This block sampler was not coded for data this size.\n");
+    Rcpp::stop("This block sampler is too slow on data this size.\n");
   }
   
   // precision matrix via hadamard product
@@ -885,8 +895,8 @@ void SpIOX::gibbs_w_block(){
   arma::vec post_meansample = post_Cmean + arma::vectorise(Unorm) + vnorm;
   
   arma::vec wbefore = arma::vectorise(W);
-  arma::vec w = gauss_seidel_solve(post_prec, post_meansample, wbefore, 1e-3, 100);
-
+  arma::vec w = pcg_diag_solve(post_prec, post_meansample, wbefore, 1e-3, 200);
+  
   W = arma::mat(w.memptr(), n, q);
   
 }

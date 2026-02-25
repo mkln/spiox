@@ -191,6 +191,21 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// spiox_H_list
+arma::field<arma::sp_mat> spiox_H_list(const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, const arma::mat& Theta, int covariance_matern, int num_threads);
+RcppExport SEXP _spiox_spiox_H_list(SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP ThetaSEXP, SEXP covariance_maternSEXP, SEXP num_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
+    Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type custom_dag(custom_dagSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Theta(ThetaSEXP);
+    Rcpp::traits::input_parameter< int >::type covariance_matern(covariance_maternSEXP);
+    Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(spiox_H_list(coords, custom_dag, Theta, covariance_matern, num_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
 // spiox_simulate
 arma::mat spiox_simulate(const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, const arma::mat& Sigma, const arma::mat& Theta, int covariance_matern, int num_threads);
 RcppExport SEXP _spiox_spiox_simulate(SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP SigmaSEXP, SEXP ThetaSEXP, SEXP covariance_maternSEXP, SEXP num_threadsSEXP) {
@@ -386,6 +401,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_spiox_S_to_Q", (DL_FUNC) &_spiox_S_to_Q, 1},
     {"_spiox_Sigma_to_correl", (DL_FUNC) &_spiox_Sigma_to_correl, 1},
     {"_spiox_Sigma_identify", (DL_FUNC) &_spiox_Sigma_identify, 2},
+    {"_spiox_spiox_H_list", (DL_FUNC) &_spiox_spiox_H_list, 5},
     {"_spiox_spiox_simulate", (DL_FUNC) &_spiox_spiox_simulate, 6},
     {"_spiox_spiox_response", (DL_FUNC) &_spiox_spiox_response, 15},
     {"_spiox_spiox_latent", (DL_FUNC) &_spiox_spiox_latent, 19},

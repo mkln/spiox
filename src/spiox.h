@@ -85,8 +85,8 @@ public:
     }
     rows_with_missing = arma::find(row_miss_01 == 1);
     
-    if(Y.has_nonfinite() & (latent_model!=2)){
-      Rcpp::stop("nq block and single outcome samplers not implemented for misaligned data.\n");
+    if(Y.has_nonfinite() & (latent_model==1)){
+      Rcpp::stop("nq block not implemented for misaligned data.\n");
     }
     if(arma::accu(missing_mat)>0){
       Y_needs_filling = true;

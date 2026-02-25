@@ -68,6 +68,10 @@ Sigma_identify <- function(Sigma, theta) {
     .Call(`_spiox_Sigma_identify`, Sigma, theta)
 }
 
+spiox_H_list <- function(coords, custom_dag, Theta, covariance_matern = 1L, num_threads = 1L) {
+    .Call(`_spiox_spiox_H_list`, coords, custom_dag, Theta, covariance_matern, num_threads)
+}
+
 spiox_simulate <- function(coords, custom_dag, Sigma, Theta, covariance_matern = 1L, num_threads = 1L) {
     .Call(`_spiox_spiox_simulate`, coords, custom_dag, Sigma, Theta, covariance_matern, num_threads)
 }
