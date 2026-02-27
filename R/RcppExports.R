@@ -9,8 +9,20 @@ dag_for_gridded_cols <- function(coords, m = 20L) {
     .Call(`_spiox_dag_for_gridded_cols`, coords, m)
 }
 
-daggp_build <- function(coords, dag, phi, sigmasq, nu, tausq, matern = 1L, num_threads = 1L, dag_opts = 0L) {
-    .Call(`_spiox_daggp_build`, coords, dag, phi, sigmasq, nu, tausq, matern, num_threads, dag_opts)
+daggp_build <- function(coords, dag, phi, sigmasq, nu, alpha, matern = 1L, num_threads = 1L, dag_opts = 0L) {
+    .Call(`_spiox_daggp_build`, coords, dag, phi, sigmasq, nu, alpha, matern, num_threads, dag_opts)
+}
+
+daggpXd_build <- function(cx, dag, M_s, Theta_x, alpha, num_threads = 1L, dag_opts = 0L) {
+    .Call(`_spiox_daggpXd_build`, cx, dag, M_s, Theta_x, alpha, num_threads, dag_opts)
+}
+
+daggp_fit_matern_halfint_fisher <- function(coords, dag, y, phi, sigmasq, nu, alpha, num_threads = 1L, dag_opts = 0L, n_iter = 100L, step0 = 1.0, lambda_lphi = 1e-2, lambda_lsig = 1e-2, lambda_a = 1e-2, verbose = FALSE) {
+    .Call(`_spiox_daggp_fit_matern_halfint_fisher`, coords, dag, y, phi, sigmasq, nu, alpha, num_threads, dag_opts, n_iter, step0, lambda_lphi, lambda_lsig, lambda_a, verbose)
+}
+
+daggp_fit_matern_halfint <- function(coords, dag, y, phi, sigmasq, nu, alpha, num_threads = 1L, dag_opts = 0L, n_iter = 200L, lr = 0.02, lambda_lphi = 1e-2, lambda_lsig = 1e-2, lambda_a = 1e-2, verbose = FALSE) {
+    .Call(`_spiox_daggp_fit_matern_halfint`, coords, dag, y, phi, sigmasq, nu, alpha, num_threads, dag_opts, n_iter, lr, lambda_lphi, lambda_lsig, lambda_a, verbose)
 }
 
 iox <- function(x, y, i, j, S, theta, matern = TRUE, diag_only = FALSE, at_limit = FALSE) {

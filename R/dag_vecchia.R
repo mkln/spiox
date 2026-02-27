@@ -20,6 +20,12 @@ dag_vecchia_orig_order <- function(coords, m=15, gridded=FALSE){
 dag_vecchia_o <- function(coords, m=15, gridded=FALSE){
   # returns the dag on the new order
   # this makes the H matrices lower triangular : good for using sparse triangular solver
+  
+  d <- ncol(coords)
+  if(d > 2){
+    coords <- coords[,1:d,drop=FALSE]
+  }
+  
   if(gridded){
     nn_dag <- dag_for_gridded_cols(coords, m)
     return(list(dag=nn_dag, order=seq_len(nrow(coords))))

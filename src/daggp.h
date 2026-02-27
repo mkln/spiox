@@ -43,8 +43,38 @@ public:
   arma::mat H_solve_A(const arma::mat& A, bool use_spmat=true);
   
   // info about covariance model:
-  int matern; // 0: pexp; 1: matern; 2: wave
+  int matern; // 0: pexp; 1: matern; 2: wave; 3: sqexpcovariates
   double * bessel_ws;
+  
+  // gradients
+  // fast log density using hrows/ax (no sparse H multiply)
+  double logdens_fast(const arma::vec& x) const;
+  
+  // gradient wrt theta = (phi, sigmasq, nu, alpha) for matern half-integers
+  arma::vec grad_theta_loglik_matern_halfint(const arma::vec& y);
+  
+  // adam
+  Rcpp::List adam_fit_matern_halfint(const arma::vec& y,
+                                     int n_iter = 200,
+                                     double initial_lr = 0.1,
+                                     double beta1 = 0.9,
+                                     double beta2 = 0.999,
+                                     double eps = 1e-8,
+                                     double lambda_lphi = 1e-2,
+                                     double lambda_lsig = 1e-2,
+                                     double lambda_a    = 1e-2,
+                                     bool verbose = false);
+  
+  // fs
+  Rcpp::List score_and_opg_matern_halfint(const arma::vec& y);
+  Rcpp::List fit_fisher_matern_halfint(const arma::vec& y,
+                            int n_iter,
+                            double step0,
+                            double lambda_lphi,
+                            double lambda_lsig,
+                            double lambda_a,
+                            bool verbose);
+  
   
   //double ldens;
   DagGP(){};
@@ -72,6 +102,9 @@ public:
   void color_from_mblanket();
   
   arma::mat Corr_export(const arma::mat& cx, const arma::uvec& ix, const arma::uvec& jx, int matern, bool same);
+  
+  // gradient
+  arma::vec grad_theta_loglik(const arma::vec& y);
 };
 
 
@@ -189,5 +222,6 @@ static inline std::string key_from_offsets(const arma::Mat<arma::uword>& idx,
   }
   return s;
 }
+
 
 #endif

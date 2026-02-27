@@ -39,8 +39,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // daggp_build
-Rcpp::List daggp_build(const arma::mat& coords, const arma::field<arma::uvec>& dag, double phi, double sigmasq, double nu, double tausq, int matern, int num_threads, int dag_opts);
-RcppExport SEXP _spiox_daggp_build(SEXP coordsSEXP, SEXP dagSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP tausqSEXP, SEXP maternSEXP, SEXP num_threadsSEXP, SEXP dag_optsSEXP) {
+Rcpp::List daggp_build(const arma::mat& coords, const arma::field<arma::uvec>& dag, double phi, double sigmasq, double nu, double alpha, int matern, int num_threads, int dag_opts);
+RcppExport SEXP _spiox_daggp_build(SEXP coordsSEXP, SEXP dagSEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP alphaSEXP, SEXP maternSEXP, SEXP num_threadsSEXP, SEXP dag_optsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -49,11 +49,78 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type phi(phiSEXP);
     Rcpp::traits::input_parameter< double >::type sigmasq(sigmasqSEXP);
     Rcpp::traits::input_parameter< double >::type nu(nuSEXP);
-    Rcpp::traits::input_parameter< double >::type tausq(tausqSEXP);
+    Rcpp::traits::input_parameter< double >::type alpha(alphaSEXP);
     Rcpp::traits::input_parameter< int >::type matern(maternSEXP);
     Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
     Rcpp::traits::input_parameter< int >::type dag_opts(dag_optsSEXP);
-    rcpp_result_gen = Rcpp::wrap(daggp_build(coords, dag, phi, sigmasq, nu, tausq, matern, num_threads, dag_opts));
+    rcpp_result_gen = Rcpp::wrap(daggp_build(coords, dag, phi, sigmasq, nu, alpha, matern, num_threads, dag_opts));
+    return rcpp_result_gen;
+END_RCPP
+}
+// daggpXd_build
+Rcpp::List daggpXd_build(const arma::mat& cx, const arma::field<arma::uvec>& dag, const arma::mat& M_s, const arma::mat& Theta_x, const double alpha, int num_threads, int dag_opts);
+RcppExport SEXP _spiox_daggpXd_build(SEXP cxSEXP, SEXP dagSEXP, SEXP M_sSEXP, SEXP Theta_xSEXP, SEXP alphaSEXP, SEXP num_threadsSEXP, SEXP dag_optsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type cx(cxSEXP);
+    Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type dag(dagSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type M_s(M_sSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Theta_x(Theta_xSEXP);
+    Rcpp::traits::input_parameter< const double >::type alpha(alphaSEXP);
+    Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
+    Rcpp::traits::input_parameter< int >::type dag_opts(dag_optsSEXP);
+    rcpp_result_gen = Rcpp::wrap(daggpXd_build(cx, dag, M_s, Theta_x, alpha, num_threads, dag_opts));
+    return rcpp_result_gen;
+END_RCPP
+}
+// daggp_fit_matern_halfint_fisher
+Rcpp::List daggp_fit_matern_halfint_fisher(const arma::mat& coords, const arma::field<arma::uvec>& dag, const arma::vec& y, double phi, double sigmasq, double nu, double alpha, int num_threads, int dag_opts, int n_iter, double step0, double lambda_lphi, double lambda_lsig, double lambda_a, bool verbose);
+RcppExport SEXP _spiox_daggp_fit_matern_halfint_fisher(SEXP coordsSEXP, SEXP dagSEXP, SEXP ySEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP alphaSEXP, SEXP num_threadsSEXP, SEXP dag_optsSEXP, SEXP n_iterSEXP, SEXP step0SEXP, SEXP lambda_lphiSEXP, SEXP lambda_lsigSEXP, SEXP lambda_aSEXP, SEXP verboseSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
+    Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type dag(dagSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< double >::type phi(phiSEXP);
+    Rcpp::traits::input_parameter< double >::type sigmasq(sigmasqSEXP);
+    Rcpp::traits::input_parameter< double >::type nu(nuSEXP);
+    Rcpp::traits::input_parameter< double >::type alpha(alphaSEXP);
+    Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
+    Rcpp::traits::input_parameter< int >::type dag_opts(dag_optsSEXP);
+    Rcpp::traits::input_parameter< int >::type n_iter(n_iterSEXP);
+    Rcpp::traits::input_parameter< double >::type step0(step0SEXP);
+    Rcpp::traits::input_parameter< double >::type lambda_lphi(lambda_lphiSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda_lsig(lambda_lsigSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda_a(lambda_aSEXP);
+    Rcpp::traits::input_parameter< bool >::type verbose(verboseSEXP);
+    rcpp_result_gen = Rcpp::wrap(daggp_fit_matern_halfint_fisher(coords, dag, y, phi, sigmasq, nu, alpha, num_threads, dag_opts, n_iter, step0, lambda_lphi, lambda_lsig, lambda_a, verbose));
+    return rcpp_result_gen;
+END_RCPP
+}
+// daggp_fit_matern_halfint
+Rcpp::List daggp_fit_matern_halfint(const arma::mat& coords, const arma::field<arma::uvec>& dag, const arma::vec& y, double phi, double sigmasq, double nu, double alpha, int num_threads, int dag_opts, int n_iter, double lr, double lambda_lphi, double lambda_lsig, double lambda_a, bool verbose);
+RcppExport SEXP _spiox_daggp_fit_matern_halfint(SEXP coordsSEXP, SEXP dagSEXP, SEXP ySEXP, SEXP phiSEXP, SEXP sigmasqSEXP, SEXP nuSEXP, SEXP alphaSEXP, SEXP num_threadsSEXP, SEXP dag_optsSEXP, SEXP n_iterSEXP, SEXP lrSEXP, SEXP lambda_lphiSEXP, SEXP lambda_lsigSEXP, SEXP lambda_aSEXP, SEXP verboseSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type coords(coordsSEXP);
+    Rcpp::traits::input_parameter< const arma::field<arma::uvec>& >::type dag(dagSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< double >::type phi(phiSEXP);
+    Rcpp::traits::input_parameter< double >::type sigmasq(sigmasqSEXP);
+    Rcpp::traits::input_parameter< double >::type nu(nuSEXP);
+    Rcpp::traits::input_parameter< double >::type alpha(alphaSEXP);
+    Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
+    Rcpp::traits::input_parameter< int >::type dag_opts(dag_optsSEXP);
+    Rcpp::traits::input_parameter< int >::type n_iter(n_iterSEXP);
+    Rcpp::traits::input_parameter< double >::type lr(lrSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda_lphi(lambda_lphiSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda_lsig(lambda_lsigSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda_a(lambda_aSEXP);
+    Rcpp::traits::input_parameter< bool >::type verbose(verboseSEXP);
+    rcpp_result_gen = Rcpp::wrap(daggp_fit_matern_halfint(coords, dag, y, phi, sigmasq, nu, alpha, num_threads, dag_opts, n_iter, lr, lambda_lphi, lambda_lsig, lambda_a, verbose));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -391,6 +458,9 @@ static const R_CallMethodDef CallEntries[] = {
     {"_spiox_Correlationc", (DL_FUNC) &_spiox_Correlationc, 5},
     {"_spiox_dag_for_gridded_cols", (DL_FUNC) &_spiox_dag_for_gridded_cols, 2},
     {"_spiox_daggp_build", (DL_FUNC) &_spiox_daggp_build, 9},
+    {"_spiox_daggpXd_build", (DL_FUNC) &_spiox_daggpXd_build, 7},
+    {"_spiox_daggp_fit_matern_halfint_fisher", (DL_FUNC) &_spiox_daggp_fit_matern_halfint_fisher, 15},
+    {"_spiox_daggp_fit_matern_halfint", (DL_FUNC) &_spiox_daggp_fit_matern_halfint, 15},
     {"_spiox_iox", (DL_FUNC) &_spiox_iox, 9},
     {"_spiox_sfact", (DL_FUNC) &_spiox_sfact, 5},
     {"_spiox_Sigma_x_sfact_cpp", (DL_FUNC) &_spiox_Sigma_x_sfact_cpp, 6},

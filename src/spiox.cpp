@@ -41,7 +41,9 @@ void SpIOX::init_theta_adapt(){
   
   int n_theta_par = q * which_theta_elem.n_elem;
   
-  arma::mat bounds_all = arma::zeros(4, 2); // make bounds for all, then subset
+  arma::mat bounds_all;
+  
+  bounds_all = arma::zeros(4, 2); // make bounds for all, then subset
   bounds_all.row(0) = arma::rowvec({.3, 100}); // phi
   bounds_all.row(1) = arma::rowvec({1e-6, 100}); // sigma
   if(matern){
