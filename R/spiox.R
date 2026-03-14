@@ -229,6 +229,12 @@ spiox <- function(Y, X, coords, m = 15,
   update_Theta_full <- as.integer(
     c(opts$update_Theta[1], 0L, opts$update_Theta[2], opts$update_Theta[3])
   )
+  if(method == "latent"){
+    if(opts$update_Theta[3] == 1){
+      update_Theta_full[4] <- 0
+      warning("MCMC for alpha disabled because method = 'latent' (opts$update_Theta[3] forced to 0)")
+    }
+  }
   
   # ---------------------------------------------------------------------------
   # 5. Model Dispatch
