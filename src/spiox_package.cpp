@@ -108,7 +108,7 @@ Rcpp::List spiox_response(const arma::mat& Y,
                    update_Theta,
                    tausq_not_needed,
                    matern,
-                   num_threads);
+                   num_threads, 0); // 0 for vi_min_iter
   
   int nmiss = 0;
   if(iox_model.Y_needs_filling){
@@ -233,7 +233,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                   update_Theta,
                   Ddiag_start,
                   matern,
-                  num_threads);
+                  num_threads, 0); // 0 for vi_min_iter
   
   // storage
   arma::cube Beta = arma::zeros(iox_model.p, q, mcmc);
