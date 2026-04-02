@@ -331,6 +331,7 @@ spiox <- function(Y, X, coords, m = 15,
   out$fit      <- fit
   out$gridded  <- gridded
   out$dag_opts <- dag_opts
+  out$dag_info <- dag
   
   return(out)
 }
