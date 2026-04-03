@@ -57,6 +57,8 @@ public:
   arma::field<arma::uvec> avail_by_outcome;
   arma::umat missing_mat;
   arma::uvec rows_with_missing;
+  arma::uvec rows_some;
+  int n_some; // n where at least one is nonmissing
   bool Y_needs_filling;
   arma::uvec Y_na_indices;
   void manage_missing_data(){
@@ -65,6 +67,7 @@ public:
     avail_by_outcome = arma::field<arma::uvec>(q);
     missing_mat = arma::zeros<arma::umat>(n, q);
     arma::uvec row_miss_01 = arma::zeros<arma::uvec>(n);
+    arma::uvec row_complete_miss_01 = arma::zeros<arma::uvec>(n);
     Y_na_indices = arma::find_nonfinite(Y);
     for(int j=0; j<q; j++){
       avail_by_outcome(j) = arma::find_finite(Y.col(j));
@@ -82,9 +85,14 @@ public:
     
     for(int i=0; i<n; i++){
       row_miss_01(i) = arma::any(missing_mat.row(i) == 1);
+      row_complete_miss_01(i) = arma::all(missing_mat.row(i) == 1); 
     }
     rows_with_missing = arma::find(row_miss_01 == 1);
-    
+    rows_some = arma::find(row_complete_miss_01 == 0);
+    n_some = rows_some.n_elem;
+    if(n_some < n){
+      Rcpp::stop("Fully missing rows in Y detected. Exclude from data and rerun.\n");
+    }
     if(Y.has_nonfinite() & (latent_model==1)){
       Rcpp::stop("nq block not implemented for misaligned data.\n");
     }

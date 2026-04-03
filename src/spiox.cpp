@@ -42,7 +42,7 @@ void SpIOX::init_theta_adapt(){
   int n_theta_par = q * which_theta_elem.n_elem;
   
   arma::mat bounds_all = arma::zeros(4, 2); // make bounds for all, then subset
-  bounds_all.row(0) = arma::rowvec({.3, 100}); // phi
+  bounds_all.row(0) = arma::rowvec({.3, 200}); // phi
   bounds_all.row(1) = arma::rowvec({1e-6, 100}); // sigma
   if(matern){
     bounds_all.row(2) = arma::rowvec({1e-5, 2.1}); // nu  
@@ -967,14 +967,15 @@ void SpIOX::W_centering(){
 void SpIOX::update_Sigma_iwishart(){
   arma::mat Smean = V.t() * V + arma::eye(V.n_cols, V.n_cols);
   arma::mat Q_mean_post;
+  
   try { 
     Q_mean_post = arma::inv_sympd(Smean);
   } catch (...) {
-    Rcpp::Rcout << Smean << endl;
-    Rcpp::Rcout << theta << endl;
+    Rcpp::Rcout << Smean << std::endl;
+    // Rcpp::Rcout << theta << std::endl; // uncomment if theta is in scope
     Rcpp::stop("Error in inv_sympd within sample_Sigma_iwishart \n");
   }
-   
+  
   double df_post = n + (V.n_cols);
   
   Q = arma::wishrnd(Q_mean_post, df_post);
