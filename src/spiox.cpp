@@ -1030,10 +1030,11 @@ void SpIOX::sample_Y_misaligned(const arma::uvec& theta_changed){
 
   arma::field<arma::mat> Hw(nfill);
   arma::field<arma::mat> Rw(nfill);
-  arma::field<arma::mat> cholP(nfill);
+  arma::field<arma::mat> invcholP(nfill);
   
   
   if(arma::any(theta_changed != 0)){
+    
     // perform this update if theta has changed and we need to recompute the
     // GP-related matrices that depend on it
     cache_blanket_comps(theta_changed);
@@ -1057,8 +1058,8 @@ void SpIOX::sample_Y_misaligned(const arma::uvec& theta_changed){
       Pblanket.cols(startcol, endcol) = arma::diagmat(Q.col(s)) * Pblanket_no_Q(ix).cols(startcol, endcol);
     }
     Hw(ix) = - Pblanket;
-    cholP(ix) = //arma::inv(
-      arma::trimatl(arma::chol(Rw(ix), "lower")); //);
+    invcholP(ix) = arma::inv(
+      arma::trimatl(arma::chol(Rw(ix), "lower")));
   }
   
   // visit every location with missing data and fill 
@@ -1073,52 +1074,28 @@ void SpIOX::sample_Y_misaligned(const arma::uvec& theta_changed){
     arma::uvec which_missing = arma::find(missing_mat.row(i) == 1);
     if(which_missing.n_elem == q){
       // everything missing!
-      
-      // mean = P^{-1} * Hw * rhs  via two triangular solves
-      arma::vec rhs_hw = Hw(ix) * arma::vectorise(YXB_others);
-      arma::vec joint_mean = arma::solve(arma::trimatl(cholP(ix)), rhs_hw);
-      joint_mean = arma::solve(arma::trimatu(cholP(ix).t()), joint_mean);
-      
-      // sample = mean + L^{-T} z  via one triangular solve
-      arma::vec samp = joint_mean + 
-        arma::solve(arma::trimatu(cholP(ix).t()), rnormq);
-      
-      Y.row(i) = samp.t() + X.row(i) * B;
-      
+      arma::mat meancomp = invcholP(ix) * Hw(ix) * arma::vectorise( YXB_others );
+      Y.row(i) = arma::trans(invcholP(ix).t() * (meancomp + rnormq)) + X.row(i) * B;
     } else {
+      // some data available at this location
+      arma::mat joint_cov = invcholP(ix).t() * invcholP(ix);
+      arma::vec joint_mean = joint_cov * Hw(ix) * arma::vectorise( YXB_others );
+      
       arma::uvec which_availab = arma::find(missing_mat.row(i) == 0);
       
-      // invcholP(ix) is L^{-1} where precision P = L L^T
-      // recover L by inverting the triangular factor (stable)
+      arma::mat Ckk = joint_cov(which_availab, which_availab);
+      arma::mat Ckx = joint_cov(which_availab, which_missing);
+      arma::mat Cxx = joint_cov(which_missing, which_missing);
+      arma::mat HmatT = arma::solve(Ckk, Ckx);
       
-      // precision subblocks without forming full Q
-      arma::mat Lm = cholP(ix).rows(which_missing);
-      arma::mat Lo = cholP(ix).rows(which_availab);
+      arma::mat cholRmat = arma::chol(arma::symmatu(Cxx - Ckx.t() * HmatT), "lower");
       
-      arma::mat Qmm = Lm * Lm.t();
-      arma::mat Qmo = Lm * Lo.t();
-      
-      // conditional mean: need joint_mean, which also uses joint_cov
-      // joint_mean = P^{-1} * Hw * rhs = L^{-T} L^{-1} * Hw * rhs
-      // so compute it via two triangular solves:
-      arma::vec rhs_hw = Hw(ix) * arma::vectorise(YXB_others);
-      arma::vec joint_mean = arma::solve(arma::trimatl(cholP(ix)), rhs_hw);
-      joint_mean = arma::solve(arma::trimatu(cholP(ix).t()), joint_mean);
-      
-      // sample missing given observed
       arma::vec Yall = arma::trans(YXB.row(i));
-      arma::vec resid = Yall(which_availab) - joint_mean(which_availab);
+      Yall(which_missing) = joint_mean(which_missing) + 
+        HmatT.t() * (Yall(which_availab) - joint_mean(which_availab)) + 
+        cholRmat * rnormq(which_missing);
       
-      arma::mat cholQmm = arma::chol(Qmm, "lower");
-      arma::vec rhs2 = -Qmo * resid;
-      arma::vec delta = arma::solve(arma::trimatl(cholQmm), rhs2);
-      delta = arma::solve(arma::trimatu(cholQmm.t()), delta);
-      
-      arma::vec rand_comp = arma::solve(arma::trimatu(cholQmm.t()), rnormq(which_missing));
-      
-      Yall(which_missing) = joint_mean(which_missing) + delta + rand_comp;
       Y.row(i) = Yall.t() + X.row(i) * B;
-      
     }
     
     // for numerical stability 
