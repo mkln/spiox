@@ -586,4 +586,3 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   );
   
 }
-

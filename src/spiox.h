@@ -184,6 +184,37 @@ public:
   std::chrono::steady_clock::time_point tstart;
   arma::vec timings;
   
+  // -------------- constructor for building C (dense! beware)
+  SpIOX(const arma::mat& _coords,
+        const arma::field<arma::uvec>& custom_dag,
+        int dag_opts,
+        const arma::mat& daggp_theta, 
+        const arma::mat& Sigma,
+        int cov_model_matern,
+        int num_threads_in){
+    
+    theta = daggp_theta;
+    
+    q = theta.n_cols;
+    n = _coords.n_rows;
+    
+    daggps = std::vector<DagGP>(q);
+    //daggp_use_H = false;
+    
+    matern = cov_model_matern;
+    
+    // make n_threads depend on whether data are gridded, since behavior is opposite
+    gridded = dag_opts==-1;
+    int daggp_n_threads = gridded ? 1 : num_threads;
+    for(unsigned int i=0; i<q; i++){
+      daggps[i] = DagGP(_coords, theta.col(i), custom_dag, 
+                        dag_opts,
+                        matern, 
+                        false, // with q blocks, make Ci
+                        daggp_n_threads);
+    }
+  }
+  
   // -------------- constructor
   SpIOX(const arma::mat& _Y, 
         const arma::mat& _X, 

@@ -68,6 +68,14 @@ Sigma_identify <- function(Sigma, theta) {
     .Call(`_spiox_Sigma_identify`, Sigma, theta)
 }
 
+iox_make_fij <- function(i, j, coords, custom_dag, dag_opts, theta, cov_model_matern, num_threads) {
+    .Call(`_spiox_iox_make_fij`, i, j, coords, custom_dag, dag_opts, theta, cov_model_matern, num_threads)
+}
+
+iox_make_fij0 <- function(coords, custom_dag, dag_opts, theta, cov_model_matern, num_threads) {
+    .Call(`_spiox_iox_make_fij0`, coords, custom_dag, dag_opts, theta, cov_model_matern, num_threads)
+}
+
 spiox_H_list <- function(coords, custom_dag, Theta, covariance_matern = 1L, num_threads = 1L) {
     .Call(`_spiox_spiox_H_list`, coords, custom_dag, Theta, covariance_matern, num_threads)
 }
