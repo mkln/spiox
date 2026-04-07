@@ -326,7 +326,8 @@ spiox <- function(Y, X, coords, m = 15,
   
   # indices of imputed, response:mcmc
   if ( (method == "response") & (fit == "mcmc") & any(is.na(Y)) ) {
-    cur <- which(is.na(Y[dag$order, ]))
+    ord <- dag$order
+    cur <- which(is.na(Y[ord, ]))
     tgt <- as.numeric(which(is.na(Y)))
     
     # map current indices to original-space indices
