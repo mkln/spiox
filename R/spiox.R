@@ -322,8 +322,27 @@ spiox <- function(Y, X, coords, m = 15,
       # not an array
       out$W <- out$W[order(dag$order),,drop=FALSE]
     }
-    
   } 
+  
+  # indices of imputed, response:mcmc
+  if ( (method == "response") & (fit == "mcmc") & any(is.na(Y)) ) {
+    cur <- which(is.na(Y[dag$order, ]))
+    tgt <- as.numeric(which(is.na(Y)))
+    
+    # map current indices to original-space indices
+    n <- nrow(Y)
+    row_reord <- ((cur - 1) %% n) + 1
+    col_idx   <- ((cur - 1) %/% n) + 1
+    row_orig  <- ord[row_reord]
+    orig_idx  <- row_orig + (col_idx - 1) * n
+    
+    # orig_idx is a permutation of tgt; find the reordering
+    reorder <- match(tgt, orig_idx)
+    
+    out$Y_missing_indices <- tgt
+    out$Y_missing_samples <- out$Y_missing_samples[reorder, , drop=FALSE]
+    out$Y_missing_col <- ((tgt - 1) %/% n) + 1
+  }
   
   # Append metadata to the output object
   out$call     <- match.call()

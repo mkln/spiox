@@ -192,8 +192,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // iox_make_fij
-Rcpp::List iox_make_fij(int i, int j, const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, int dag_opts, const arma::cube& theta, int cov_model_matern, int num_threads);
-RcppExport SEXP _spiox_iox_make_fij(SEXP iSEXP, SEXP jSEXP, SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP dag_optsSEXP, SEXP thetaSEXP, SEXP cov_model_maternSEXP, SEXP num_threadsSEXP) {
+Rcpp::List iox_make_fij(int i, int j, const arma::mat& coords, const arma::field<arma::uvec>& custom_dag, int dag_opts, const arma::cube& theta, int cov_model_matern, int num_threads, int n_bins, double max_range);
+RcppExport SEXP _spiox_iox_make_fij(SEXP iSEXP, SEXP jSEXP, SEXP coordsSEXP, SEXP custom_dagSEXP, SEXP dag_optsSEXP, SEXP thetaSEXP, SEXP cov_model_maternSEXP, SEXP num_threadsSEXP, SEXP n_binsSEXP, SEXP max_rangeSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -205,7 +205,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::cube& >::type theta(thetaSEXP);
     Rcpp::traits::input_parameter< int >::type cov_model_matern(cov_model_maternSEXP);
     Rcpp::traits::input_parameter< int >::type num_threads(num_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(iox_make_fij(i, j, coords, custom_dag, dag_opts, theta, cov_model_matern, num_threads));
+    Rcpp::traits::input_parameter< int >::type n_bins(n_binsSEXP);
+    Rcpp::traits::input_parameter< double >::type max_range(max_rangeSEXP);
+    rcpp_result_gen = Rcpp::wrap(iox_make_fij(i, j, coords, custom_dag, dag_opts, theta, cov_model_matern, num_threads, n_bins, max_range));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -435,7 +437,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_spiox_S_to_Q", (DL_FUNC) &_spiox_S_to_Q, 1},
     {"_spiox_Sigma_to_correl", (DL_FUNC) &_spiox_Sigma_to_correl, 1},
     {"_spiox_Sigma_identify", (DL_FUNC) &_spiox_Sigma_identify, 2},
-    {"_spiox_iox_make_fij", (DL_FUNC) &_spiox_iox_make_fij, 8},
+    {"_spiox_iox_make_fij", (DL_FUNC) &_spiox_iox_make_fij, 10},
     {"_spiox_iox_make_fij0", (DL_FUNC) &_spiox_iox_make_fij0, 6},
     {"_spiox_spiox_H_list", (DL_FUNC) &_spiox_spiox_H_list, 5},
     {"_spiox_spiox_simulate", (DL_FUNC) &_spiox_spiox_simulate, 6},

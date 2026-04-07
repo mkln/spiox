@@ -1,5 +1,5 @@
 iox_fij <- function(iox_obj, i, j, 
-                    n_threads=1, matern=1, tail_mcmc=NULL){
+                    n_threads=1, matern=1, tail_mcmc=NULL, max_dist=1000, max_range=1){
   
   if(!is.null(tail_mcmc)){
     iox_obj$Theta <- tail(iox_obj$Theta, c(NA, NA, tail_mcmc))
@@ -18,7 +18,7 @@ iox_fij <- function(iox_obj, i, j,
   result <- spiox:::iox_make_fij(i-1, j-1, c_o, 
                                 iox_obj$dag_info$dag, 
                                 iox_obj$dag_opts, 
-                                Theta4, matern, n_threads)
+                                Theta4, matern, n_threads, max_dist, max_range)
 
   return(result)
 }

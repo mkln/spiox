@@ -61,63 +61,77 @@ arma::cube Sigma_identify(const arma::cube& Sigma, const arma::cube& theta){
 // iox cross covariance computed at pairs of locs of reference set
 //[[Rcpp::export]]
 Rcpp::List iox_make_fij(int i, int j,
-                       const arma::mat& coords,
-                       const arma::field<arma::uvec>& custom_dag,
-                       int dag_opts, 
-                       const arma::cube& theta, 
-                       int cov_model_matern,
-                       int num_threads){
+                        const arma::mat& coords,
+                        const arma::field<arma::uvec>& custom_dag,
+                        int dag_opts, 
+                        const arma::cube& theta, 
+                        int cov_model_matern,
+                        int num_threads,
+                        int n_bins = 1000,
+                        double max_range = 0.5){
   
   int n = coords.n_rows;
   int q = theta.n_cols;
   int mcmc = theta.n_slices;
   
-  
-  //    Round to avoid floating-point duplicates
-  double tol = 1e-6;
-  arma::imat bin_id(n, n);  // integer bin key for each pair
-  std::map<int, int> key_to_idx;  // map rounded-dist key -> contiguous index
-  std::vector<int> pair_count;    // number of ordered pairs per bin
-  std::vector<double> dist_value; // actual distance per bin
+  // Assign each pair to a uniform bin in [0, max_range]
+  double bin_width = max_range / n_bins;
+  arma::imat bin_id(n, n);
+  arma::ivec pair_count(n_bins, arma::fill::zeros);
   
   for (int s1 = 0; s1 < n; s1++) {
     for (int s2 = s1; s2 < n; s2++) {
       double d = arma::norm(coords.row(s1) - coords.row(s2));
-      int key = (int)std::round(d / tol);
-      bin_id(s1, s2) = key;
-      bin_id(s2, s1) = key;
-      
-      if (key_to_idx.find(key) == key_to_idx.end()) {
-        int idx = key_to_idx.size();
-        key_to_idx[key] = idx;
-        pair_count.push_back(0);
-        dist_value.push_back(d);
+      if (d > max_range) {
+        bin_id(s1, s2) = -1;
+        bin_id(s2, s1) = -1;
+      } else {
+        int b = (int)(d / bin_width);
+        if (b >= n_bins) b = n_bins - 1;  // edge case: d == max_range
+        bin_id(s1, s2) = b;
+        bin_id(s2, s1) = b;
+        pair_count(b) += (s1 == s2) ? 1 : 2;
       }
-      int idx = key_to_idx[key];
-      pair_count[idx] += (s1 == s2) ? 1 : 2;  // ordered pair count
     }
   }
   
-  int n_dist = key_to_idx.size();
-  arma::vec unique_dists(n_dist);
-  for (auto& [key, idx] : key_to_idx) {
-    unique_dists(idx) = dist_value[idx];
+  // Bin midpoints as reported distances; drop empty bins
+  std::vector<int> kept_bins;
+  for (int b = 0; b < n_bins; b++) {
+    if (pair_count(b) > 0) kept_bins.push_back(b);
+  }
+  int n_kept = kept_bins.size();
+  
+  // Map original bin index -> compact index; -1 for empty
+  arma::ivec bin_remap(n_bins);
+  bin_remap.fill(-1);
+  arma::vec unique_dists(n_kept);
+  arma::ivec kept_pair_count(n_kept);
+  for (int k = 0; k < n_kept; k++) {
+    bin_remap(kept_bins[k]) = k;
+    unique_dists(k) = (kept_bins[k] + 0.5) * bin_width;
+    kept_pair_count(k) = pair_count(kept_bins[k]);
   }
   
-  arma::mat f_ij(n_dist, mcmc, arma::fill::zeros);
-  //arma::cube R_ij_full(n, n, mcmc, arma::fill::zeros);
+  // Remap bin_id to compact indices
+  for (int s1 = 0; s1 < n; s1++) {
+    for (int s2 = s1; s2 < n; s2++) {
+      int b = bin_id(s1, s2);
+      int new_b = (b >= 0) ? bin_remap(b) : -1;
+      bin_id(s1, s2) = new_b;
+      bin_id(s2, s1) = new_b;
+    }
+  }
+  
+  arma::mat f_ij(n_kept, mcmc, arma::fill::zeros);
   
   int n_batches = 10;
   int batch_size = mcmc / n_batches;
   int remainder = mcmc % n_batches;
   
-  arma::mat Ones = arma::ones(q,q);
-  arma::mat theta_m = theta.slice(0);
-
   for (int b = 0; b < n_batches; b++) {
     int m_start = b * batch_size + std::min(b, remainder);
     int m_end = m_start + batch_size + (b < remainder ? 1 : 0);
-
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
@@ -129,20 +143,21 @@ Rcpp::List iox_make_fij(int i, int j,
       for (int ii = 0; ii < q; ii++) {
         arma::vec theta_m_j = theta_m.col(ii);
         DagGP daggp(coords, theta_m_j, custom_dag, 
-                     dag_opts,
-                     cov_model_matern, 
-                     false, // with q blocks, make Ci
-                     num_threads);
+                    dag_opts,
+                    cov_model_matern, 
+                    false,
+                    1);
         
         L[ii] = daggp.H_solve_A(arma::eye(n, n), false);
       }
       
       arma::mat M = L[i] * L[j].t();
       
-      arma::vec bin_sum(n_dist, arma::fill::zeros);
+      arma::vec bin_sum(n_kept, arma::fill::zeros);
       for (int s1 = 0; s1 < n; s1++) {
         for (int s2 = s1; s2 < n; s2++) {
-          int idx = key_to_idx[bin_id(s1, s2)];
+          int idx = bin_id(s1, s2);
+          if (idx < 0) continue;
           if (s1 == s2) {
             bin_sum(idx) += M(s1, s2);
           } else {
@@ -151,19 +166,16 @@ Rcpp::List iox_make_fij(int i, int j,
         }
       }
       
-      for (int h = 0; h < n_dist; h++) {
-        f_ij(h, m) = bin_sum(h) / pair_count[h];
+      for (int h = 0; h < n_kept; h++) {
+        f_ij(h, m) = bin_sum(h) / kept_pair_count(h);
       }
-      
-      
-      //R_ij_full.slice(m) = M;
     }
     
     Rcpp::Rcout << "Batch " << (b + 1) << "/" << n_batches
                 << " done (" << m_end << "/" << mcmc << " iterations)\n";
+    Rcpp::checkUserInterrupt();
   }
   
-  //Rcpp::Named("R_ij") = R_ij_full
   return Rcpp::List::create(
     Rcpp::Named("dists") = unique_dists,
     Rcpp::Named("f_ij") = f_ij
@@ -218,3 +230,4 @@ arma::cube iox_make_fij0(const arma::mat& coords,
   
   return result;
 }
+
