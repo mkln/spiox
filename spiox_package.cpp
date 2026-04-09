@@ -615,16 +615,31 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
     
     if(collecting){
       if(collect_counter < vi_missing_smp){
-        Beta_post_samples.slice(collect_counter) = Beta;
-        W_post_samples.slice(collect_counter) = W;
-        Ddiag_post_samples.col(collect_counter) = Ddiag;
+        arma::mat Beta_draw = iox_model.B;
+        arma::mat W_draw    = iox_model.W;
+        //arma::vec Ddiag_draw = iox_model.Ddiag;
+        
+        Beta_post_samples.slice(collect_counter) = Beta_draw;
+        W_post_samples.slice(collect_counter) = W_draw;
+        
+        arma::vec Ddiag_draw(q);
+        
+        for(unsigned int j = 0; j < q; j++){
+          double shape = (iox_model.avail_by_outcome(j).n_elem - 1.0) / 2.0 + 2.0;
+          double rate  = 1.0 + 0.5 * iox_model.Ddiag_UQ(j);
+          
+          // generate IG draws for Ddiag
+          Ddiag_draw(j) = 1.0 / R::rgamma(shape, 1.0 / rate);
+        }
+        
+        Ddiag_post_samples.col(collect_counter) = Ddiag_draw;
         
         //sample the error 
         arma::mat noise = arma::randn(n, q);
-        noise.each_row() %= arma::sqrt(Ddiag).t();
+        noise.each_row() %= arma::sqrt(Ddiag_draw).t();
         
         //Yhat_samples.slice(collect_counter) = X*Beta + W + noise;
-        arma::mat Yhat = X * Beta + W + noise;
+        arma::mat Yhat = X * Beta_draw + W_draw + noise;
         
         if(nmiss > 0){
           Y_missing_samples.col(collect_counter) = Yhat(iox_model.Y_na_indices);
