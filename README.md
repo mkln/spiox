@@ -9,7 +9,6 @@ In R, `devtools::install_github("mkln/spiox")` to compile from source.
 
 ## Inside-out cross-covariance for spatial multivariate data
 
-### [arXiv:2412.12407](https://arxiv.org/abs/2412.12407) 
 
 As the spatial features of multivariate data are increasingly central in researchers' applied problems, 
 there is a growing demand for novel spatially-aware methods that are flexible, easily interpretable, 
@@ -24,4 +23,21 @@ scalable models for noisy vector data as well as flexible latent models. For lar
 Vecchia approximations and related process-based methods based on sparse graphical models. 
 We demonstrate superior performance of IOX on synthetic datasets as well as on colorectal cancer proteomics data.
 
-Code to reproduce analyses in the paper: [https://github.com/mkln/spiox-paper](https://github.com/mkln/spiox-paper) 
+
+#### Links to the article
+
+- [doi.org/10.1080/01621459.2026.2640644](https://doi.org/10.1080/01621459.2026.2640644)
+- [arXiv:2412.12407](https://arxiv.org/abs/2412.12407) 
+
+
+### Citation
+
+```
+@article{,
+  author  = {Michele Peruzzi},
+  title   = {Inside-out cross-covariance for spatial multivariate data},
+  journal = {Journal of the American Statistical Association (Forthcoming).},
+  year    = {2026},
+  doi     = {10.1080/01621459.2026.2640644}
+}
+```
