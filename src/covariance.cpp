@@ -99,7 +99,6 @@ void powerexp_inplace(arma::mat& res,
   }
 }
 
-// powered exponential nu<2
 void wave_inplace(arma::mat& res, 
                       const arma::mat& coords,
                       const arma::uvec& ix, const arma::uvec& iy, 

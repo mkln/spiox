@@ -26,7 +26,8 @@ DagGP::DagGP(
   n_threads = num_threads_in;
   
   int bessel_ws_inc = MAT_NU_MAX;//see bessel_k.c for working space needs
-  bessel_ws = (double *) R_alloc(n_threads*bessel_ws_inc, sizeof(double));
+  int max_threads = omp_get_max_threads(); // outer parallelism
+  bessel_ws = (double *) R_alloc(max_threads * bessel_ws_inc, sizeof(double));
   
   //
   mblanket = arma::field<arma::uvec>(nr);
