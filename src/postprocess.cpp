@@ -68,7 +68,8 @@ Rcpp::List iox_make_fij(int i, int j,
                         int cov_model_matern,
                         int num_threads,
                         int n_bins = 1000,
-                        double max_range = 0.5){
+                        double max_range = 0.5,
+                        bool silent=true){
   
   int n = coords.n_rows;
   int q = theta.n_cols;
@@ -171,8 +172,11 @@ Rcpp::List iox_make_fij(int i, int j,
       }
     }
     
-    Rcpp::Rcout << "Batch " << (b + 1) << "/" << n_batches
-                << " done (" << m_end << "/" << mcmc << " iterations)\n";
+    if(!silent){
+      Rcpp::Rcout << "Batch " << (b + 1) << "/" << n_batches
+                  << " done (" << m_end << "/" << mcmc << " iterations)\n";
+    }
+    
     Rcpp::checkUserInterrupt();
   }
   
