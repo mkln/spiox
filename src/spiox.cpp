@@ -810,6 +810,8 @@ void SpIOX::gibbs_w_sequential_byoutcome(){
   arma::mat HDs = arma::zeros(n, q);
   arma::uvec r1q = arma::regspace<arma::uvec>(0,q-1);
   
+  YXB.elem(find(missing_mat)).zeros();
+    
   for(int j=0; j<q; j++){
     // build per-location diagonal contribution for this column j
     arma::vec invD(n, arma::fill::zeros);
@@ -842,7 +844,7 @@ void SpIOX::gibbs_w_sequential_byoutcome(){
     arma::vec Mi_m_prior = - daggps[j].H.t() * V.cols(notj) * Q.submat(notj, jx);
     arma::vec rhs = Mi_m_prior + HDs.col(j);
     
-    W.col(j) = pcg_diag_solve(post_prec, rhs, W.col(j), 1e-3, 200);
+    W.col(j) = pcg_diag_solve(post_prec, rhs, W.col(j), 1e-8, 200);
     V.col(j) = daggps[j].H_times_A(W.col(j)); // keep here
   }
   
@@ -850,56 +852,102 @@ void SpIOX::gibbs_w_sequential_byoutcome(){
 
 
 void SpIOX::gibbs_w_block(){
-  // ------------------ slow 
   
-  if(q*n > 5000){
-    Rcpp::stop("This block sampler is too slow on data this size.\n");
-  }
+  //if(q*n > 5000){
+  //  Rcpp::stop("This block sampler is too slow on data this size.\n");
+  //}
   
-  // precision matrix via hadamard product
+  auto t0 = std::chrono::steady_clock::now();
+  auto lap = [&](const char* label){
+    auto t1 = std::chrono::steady_clock::now();
+    double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    //Rcpp::Rcout << "[gibbs_w_block] " << label << ": " << ms << " ms\n";
+    t0 = t1;
+  };
+  
   arma::sp_mat Hvert(q*n, n);
-  
-  // Offset for placing each matrix
   arma::uword row_offset = 0;
-  arma::uword col_offset = 0;
   
-  arma::mat Unorm = arma::randn(n,q) * Si.t();
-  
+  arma::mat Unorm = arma::randn(n, q) * Si.t();
   
   for (int i=0; i<q; i++) {
-    // Insert the matrix at the correct block position
-    Hvert.submat(row_offset, 0, row_offset + n - 1, n - 1) = 
-      daggps[i].H.t();
+    Hvert.submat(row_offset, 0, row_offset + n - 1, n - 1) = daggps[i].H.t();
     row_offset += n;
-    
     Unorm.col(i) = daggps[i].H.t() * Unorm.col(i);
   }
-  // U = {+Li^T} (Si %x% In) * rnorm(nq)
+  lap("assemble Hvert + Unorm");
   
-  arma::sp_mat post_prec = Hvert*Hvert.t();
-  for (arma::sp_mat::iterator it = post_prec.begin(); it != post_prec.end(); ++it) {
-    int r = it.row();  // Row index of the nonzero element
-    int s = it.col();  // Column index of the nonzero element
-    int i = r / n;  
-    int j = s / n;  
-    post_prec(r, s) = Q(i, j) * post_prec(r, s);
-    if(r == s){
-      post_prec(r, s) += 1/Ddiag(i);
+  // Per-entry inverse noise variance, zeroed at missing entries.
+  arma::mat invD_mat(n, q, arma::fill::zeros);
+  arma::mat invSqrtD_mat(n, q, arma::fill::zeros);
+  for(int j=0; j<q; j++){
+    const double invDj  = 1.0 / Ddiag(j);
+    const double invSDj = 1.0 / std::sqrt(Ddiag(j));
+    for(int i=0; i<n; i++){
+      if(!missing_mat(i,j)){
+        invD_mat(i,j)     = invDj;
+        invSqrtD_mat(i,j) = invSDj;
+      }
+    }
+  }
+  arma::vec invD_vec = arma::vectorise(invD_mat);
+  lap("build invD / invSqrtD");
+  
+  // Per-outcome column-squared-norms of H_i, used to build Mdiag.
+  // (diag(H_i^T H_i)(c) = sum_k H_i(k,c)^2)
+  arma::mat H_col_sq(n, q, arma::fill::zeros);
+  for(int i = 0; i < q; ++i){
+    daggps[i].H.sync();
+    const double*      vals = daggps[i].H.values;
+    const arma::uword* cols = daggps[i].H.col_ptrs;
+    double* dst = H_col_sq.colptr(i);
+    for(arma::uword c = 0; c < n; ++c){
+      double s = 0.0;
+      for(arma::uword k = cols[c]; k < cols[c+1]; ++k) s += vals[k]*vals[k];
+      dst[c] = s;
     }
   }
   
-  arma::mat Di = arma::diagmat(1/Ddiag);
-  arma::vec post_Cmean = arma::vectorise(YXB * Di);
-  arma::vec vnorm = arma::vectorise( arma::randn(n, q) * arma::diagmat(sqrt(1.0/Ddiag)) );
+  // Diagonal preconditioner: M = Q(i,i)*diag(H_i^T H_i) + invD_mat
+  arma::mat Mdiag_mat(n, q);
+  for(int i = 0; i < q; ++i){
+    Mdiag_mat.col(i) = Q(i,i) * H_col_sq.col(i) + invD_mat.col(i);
+  }
+  arma::vec Mdiag_vec = arma::vectorise(Mdiag_mat);
   
+  // Matrix-vector callable: y = post_prec * x  (x, y are vectorise of n x q)
+  auto post_prec_mv = [&](const arma::vec& x_in, arma::vec& y_out){
+    arma::mat X(const_cast<double*>(x_in.memptr()), n, q, false, true);
+    arma::mat Y(y_out.memptr(),                     n, q, false, true);
+    
+    arma::mat Hx(n, q);
+#pragma omp parallel for num_threads(num_threads)
+    for(int j = 0; j < q; ++j) Hx.col(j) = daggps[j].H * X.col(j);
+    
+    // Couple outcomes via Q (small dense q x q multiply)
+    arma::mat HxQ = Hx * Q;
+    
+#pragma omp parallel for num_threads(num_threads)
+    for(int i = 0; i < q; ++i)
+      Y.col(i) = daggps[i].H.t() * HxQ.col(i) + invD_mat.col(i) % X.col(i);
+  };
+  
+  // Zero YXB at missing so NaN does not propagate through 0 * NaN
+  arma::mat YXB_safe = YXB;
+  YXB_safe.elem( arma::find(missing_mat) ).zeros();
+  
+  arma::vec post_Cmean = arma::vectorise(YXB_safe % invD_mat);
+  arma::vec vnorm = arma::vectorise( arma::randn(n, q) % invSqrtD_mat );
   arma::vec post_meansample = post_Cmean + arma::vectorise(Unorm) + vnorm;
   
   arma::vec wbefore = arma::vectorise(W);
-  arma::vec w = pcg_diag_solve(post_prec, post_meansample, wbefore, 1e-3, 200);
+  arma::vec w = pcg_diag_solve_mf(post_prec_mv, post_meansample, Mdiag_vec,
+                                  wbefore, 1e-6, 200, 1e-14, num_threads);
   
   W = arma::mat(w.memptr(), n, q);
   
 }
+
 
 void SpIOX::update_Ddiag_gibbs(){
   arma::mat E = YXB - W;

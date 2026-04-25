@@ -93,9 +93,9 @@ public:
     if(n_some < n){
       Rcpp::stop("Fully missing rows in Y detected. Exclude from data and rerun.\n");
     }
-    if(Y.has_nonfinite() & (latent_model==1)){
-      Rcpp::stop("nq block not implemented for misaligned data.\n");
-    }
+    //if(Y.has_nonfinite() & (latent_model==1)){
+    //  Rcpp::stop("nq block not implemented for misaligned data.\n");
+    //}
     if(arma::accu(missing_mat)>0){
       Y_needs_filling = true;
     } else {

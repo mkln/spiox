@@ -676,18 +676,18 @@ void DagGP::initialize_H(){
   }
   H = arma::sp_mat(H_locs, H_values, nr, nr);
   
-  // compute precision just to get the markov blanket
-  arma::sp_mat Ci_temp = H.t() * H;
+  // compute precision  to get the markov blanket
+  Ci = H.t() * H;
   
   // comp markov blanket
   for(int i=0; i<nr; i++){
     int nonzeros_in_col = 0;
-    for (arma::sp_mat::const_iterator it = Ci_temp.begin_col(i); it != Ci_temp.end_col(i); ++it) {
+    for (arma::sp_mat::const_iterator it = Ci.begin_col(i); it != Ci.end_col(i); ++it) {
       nonzeros_in_col ++;
     }
     mblanket(i) = arma::zeros<arma::uvec>(nonzeros_in_col-1); // not the diagonal
     int ix = 0;
-    for (arma::sp_mat::const_iterator it = Ci_temp.begin_col(i); it != Ci_temp.end_col(i); ++it) {
+    for (arma::sp_mat::const_iterator it = Ci.begin_col(i); it != Ci.end_col(i); ++it) {
       if(it.row() != i){ 
         mblanket(i)(ix) = it.row();
         ix ++;
@@ -695,9 +695,6 @@ void DagGP::initialize_H(){
     }
   }
   
-  if(use_Ci){
-    Ci = Ci_temp;
-  }
 }
 
 arma::mat DagGP::H_solve_A(const arma::mat& A, bool use_spmat){
