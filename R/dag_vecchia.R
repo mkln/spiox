@@ -21,8 +21,10 @@ dag_vecchia_o <- function(coords, m=15, gridded=FALSE){
   # returns the dag on the new order
   # this makes the H matrices lower triangular : good for using sparse triangular solver
   if(gridded){
-    nn_dag <- dag_for_gridded_cols(coords, m)
-    return(list(dag=nn_dag, order=seq_len(nrow(coords))))
+    d <- ncol(coords)
+    ord <- do.call(order, lapply(d:1, function(k) coords[, k]))
+    nn_dag <- dag_for_gridded_cols(coords[ord, , drop = FALSE], m)
+    return(list(dag = nn_dag, order = ord))
   } else {
     ixmm <- MaxMincpp(coords)
     ixmm_order <- order(ixmm)

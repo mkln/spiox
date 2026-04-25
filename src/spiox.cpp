@@ -1221,7 +1221,7 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
   if(sample_beta){
     // sample B 
     tstart = std::chrono::steady_clock::now();
-    //update_B();
+    update_B();
     timings(0) += time_count(tstart);  
   }
 

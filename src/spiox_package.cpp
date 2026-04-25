@@ -279,7 +279,8 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     Rcpp::Named("W") = W,
     Rcpp::Named("Ddiag") = Ddiag,
     Rcpp::Named("timings") = iox_model.timings,
-    Rcpp::Named("markov_blanket") = iox_model.daggps[0].mblanket
+    Rcpp::Named("markov_blanket") = iox_model.daggps[0].mblanket,
+    Rcpp::Named("cache_map") = iox_model.daggps[0].cache_map
   );
 }
 
