@@ -1,7 +1,7 @@
 #' Simulate GP-IOX data 
 #'
 #' @description
-#' Simulates GP-IOX data over a set of coordinates 
+#' Simulates GP-IOX data over a set of coordinates.
 #'
 #' @param coords A numeric matrix of spatial coordinates. 
 #'   Must not contain missing values (`NA`).
@@ -11,10 +11,14 @@
 #' @param m A single positive integer specifying the number of nearest neighbors 
 #'   to condition on for the Vecchia approximation. Default is `15`.
 #' @param matern A single numeric value indicating the covariance 
-#'   specification. Default is `1` for Matern
-#' @param silent Print stuff or not
+#'   specification. Default is `1` for Matern.
+#' @param silent Logical. If `FALSE`, prints progress messages to the console. 
+#'   Default is `TRUE`.
+#' @param num_threads Integer. Number of OpenMP threads to use for the simulation. 
+#'   Defaults to the number of available cores via `RhpcBLASctl::get_num_cores()`.
 #'
-#' @return A numeric matrix of simulated values.
+#' @return A numeric matrix of simulated values with dimensions `n x q`, ordered 
+#'   to match the original input `coords`.
 #'
 #' @export
 rgpiox <- function(coords, Sigma, Theta, m=15, matern=1, silent=TRUE, num_threads  = RhpcBLASctl::get_num_cores()){

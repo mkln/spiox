@@ -9,7 +9,6 @@ importFrom(FNN, "get.knnx")
 
 export("spiox", "rgpiox", "autostart",
        "spiox_predict", "spiox_predict_part",
-       #"spiox_latent", 
        "spiox_latent_predict",
        "scaling_factor_at_zero", 
        "dag_vecchia_predict",

@@ -429,7 +429,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   
   // do min_iter iterations at least
   int nq = Y.n_cols * Y.n_rows;
-  int min_iter = 200; //min(50, nq / 1000); 
+  int min_iter = 40;
   // then check maximum relative change. if it's <tol for this time then stop
   int wait_time_before_stop = 5;
   
