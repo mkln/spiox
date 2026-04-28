@@ -744,6 +744,58 @@ arma::mat DagGP::H_solve_A(const arma::mat& A, bool use_spmat){
   }
 }
 
+arma::mat DagGP::Ht_solve_A(const arma::mat& A, bool use_spmat){
+  if(!use_spmat){
+    // Solve H^T Y = A using rows of H (column-oriented back substitution).
+    // At step jj (going from nr-1 down to 0): divide Y.row(jj) by H(jj,jj),
+    // then propagate -H(jj,k) * Y.row(jj) into Y.row(k) for each k < jj
+    // stored in row jj of H. Row storage is the natural fit for this.
+    arma::mat Y = A;
+    for (arma::uword jj = nr; jj-- > 0; ) {
+      const arma::vec&  row_vals = hrows(jj);
+      const arma::uvec& row_cols = ax(jj);
+      
+      // First pass: find the diagonal so we can divide before propagating.
+      double diag_val = 0.0;
+      for (arma::uword idx = 0; idx < row_vals.n_elem; ++idx) {
+        if (row_cols(idx) == jj) { diag_val = row_vals(idx); break; }
+      }
+      Y.row(jj) /= diag_val;
+      
+      // Second pass: push solved Y.row(jj) onto earlier rows.
+      for (arma::uword idx = 0; idx < row_vals.n_elem; ++idx) {
+        arma::uword k = row_cols(idx);
+        if (k < jj) {
+          Y.row(k) -= row_vals(idx) * Y.row(jj);
+        }
+      }
+    }
+    return Y;
+  } else {
+    // Solve H^T Y = A using columns of H (row-oriented back substitution).
+    // At step ii: pull contributions from already-solved rows j > ii in
+    // column ii of H, then divide by the diagonal. CSC storage is natural here.
+    arma::mat Y = A;
+    for (arma::uword ii = nr; ii-- > 0; ) {
+      arma::sp_mat::const_col_iterator it     = H.begin_col(ii);
+      arma::sp_mat::const_col_iterator it_end = H.end_col(ii);
+      
+      double diag_val = 0.0;
+      for (; it != it_end; ++it) {
+        arma::uword j = it.row();
+        if (j == ii) {
+          diag_val = *it;
+        } else if (j > ii) {
+          Y.row(ii) -= (*it) * Y.row(j);
+        }
+        // j < ii cannot occur: H is lower triangular.
+      }
+      Y.row(ii) /= diag_val;
+    }
+    return Y;
+  }
+}
+
 arma::mat DagGP::H_times_A(const arma::mat& A, bool use_spmat){
   // this function avoids building H since H is always used to multiply a matrix A
   if(!use_spmat){

@@ -41,6 +41,7 @@ public:
   void compute_comps(bool update_H=false);
   arma::mat H_times_A(const arma::mat& A, bool use_spmat=true);
   arma::mat H_solve_A(const arma::mat& A, bool use_spmat=true);
+  arma::mat Ht_solve_A(const arma::mat& A, bool use_spmat);
   
   // info about covariance model:
   int matern; // 0: pexp; 1: matern; 2: wave

@@ -109,8 +109,21 @@ public:
   arma::mat W;
   void w_sequential_singlesite(const arma::uvec& theta_changed);
   void gibbs_w_sequential_byoutcome();
-  void gibbs_w_block();
+  void gibbs_w_block_Jacobi(int&);
+  void gibbs_w_block_PPCG(int&);
   arma::vec Ddiag;
+  
+  // adaptively choosing the preconditioner for block updates:
+  enum PrecondChoice { PRECOND_PROBE = 0, PRECOND_JACOBI = 1, PRECOND_PPCG = 2 };
+  PrecondChoice precond_choice = PRECOND_PROBE;
+  int           probe_count    = 0;
+  int           probe_max      = 10;    // 5 each 
+  double        cost_jacobi    = 0.0;   // sum of weighted iterations
+  double        cost_ppcg      = 0.0;
+  int           n_probe_jac    = 0;
+  int           n_probe_ppcg   = 0;
+  double        ppcg_iter_cost = 2.0;   // 1 PPCG iter ≈ this many Jacobi iters
+  
   
   // centering of W and move to intercept (if there is one)
   void W_centering();
