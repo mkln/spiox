@@ -289,11 +289,7 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling){
       }
     }
   }
-  
-  // recover safe Y (NaN-zeroed) without a separate Y member
-  arma::mat Y_safe = YXB + X * B;
-  Y_safe.elem(arma::find(missing_mat)).zeros();
-  
+
   const arma::uword Nb = p * q;
   const arma::uword Nw = n * q;
   
@@ -398,9 +394,7 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling){
     };
   }
   
-  // ----- RHS = c + perturbations -----
-  // c_W = invD ⊙ Y_safe ;   c_B[:,j] = X^T c_W[:,j]
-  arma::mat cW = invD_mat % Y_safe;
+  arma::mat cW = invD_mat % Y;
   arma::mat cB = X.t() * cW;
   
   // prior noise on W (same Unorm trick as gibbs_w_block)

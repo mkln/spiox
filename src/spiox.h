@@ -73,15 +73,9 @@ public:
       avail_by_outcome(j) = arma::find_finite(Y.col(j));
       for(int i=0; i<n; i++){
         missing_mat(i,j) = !arma::is_finite(Y(i,j));
-        if(latent_model==0){
-          // response model: rnorm fill missing in Y
-          if(missing_mat(i,j)){
-            Y(i,j) = arma::randn();
-          }
-        }
       }
-      
     }
+    Y.elem(arma::find(missing_mat)).zeros(); // set missing to zero
     
     for(int i=0; i<n; i++){
       row_miss_01(i) = arma::any(missing_mat.row(i) == 1);
