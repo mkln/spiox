@@ -41,7 +41,7 @@ arma::vec pcg_mf(
   double rz_old = arma::dot(r, z);
   
   double target = std::sqrt(std::max(rz_old, 0.0)) / b_prec_safe;
-  if(target <= tol){ Rcpp::Rcout << 0 << " " << target << "\n"; return x; }
+  //if(target <= tol){ Rcpp::Rcout << 0 << " " << target << "\n"; return x; }
   
   k = 0;
   for(; k < maxit; ++k){

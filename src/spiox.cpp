@@ -182,62 +182,264 @@ void SpIOX::update_B(){
   
 }
 
-void SpIOX::update_BW_asis(arma::mat& B, arma::mat& W, bool sampling){
-  if(latent_model>0){
-    // update B via gibbs for the response model
-    //Rcpp::Rcout << "+++++++++++++++++ ORIG +++++++++++++++++++" << endl;
-    //S^T * S = Sigma
-    std::chrono::steady_clock::time_point tstart;
-    std::chrono::steady_clock::time_point tend;
-    int timed = 0;
-    
-    //
-    arma::mat eta = X * B + W;
-    
-    //Rcpp::Rcout << " asis eta = XB + W " << endl;
-    tstart = std::chrono::steady_clock::now();
-    
-    arma::mat Yasis = eta; // we will whiten this in the loop below
-    //Xtilde = arma::zeros(n*q, p*q);
-    arma::vec daggp_logdets = arma::zeros(q);
-    // whitening of eta and X
+void SpIOX::update_BW_asis(int& cg_iter, arma::mat& B, arma::mat& W, bool sampling){
+  // Hold eta = XB + W constant; resample B then recover W = eta - XB.
+  arma::mat eta = X * B + W;
+  
+  // whiten Yasis and X; HX[j] = H_j X 
+  arma::mat Yasis(n, q);
+  arma::vec daggp_logdets(q, arma::fill::zeros);
+  
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
-    for(unsigned int j=0; j<q; j++){
-      Yasis.col(j) = daggps.at(j).H_times_A(Yasis.col(j), daggp_use_H);// * Y.col(j);
-      daggp_logdets(j) = daggps.at(j).precision_logdeterminant;
-    
-        HX.slice(j) = daggps.at(j).H_times_A(X, daggp_use_H);// * X;
-
+  for(unsigned int j = 0; j < q; ++j){
+    Yasis.col(j)     = daggps.at(j).H_times_A(eta.col(j), daggp_use_H);
+    HX.slice(j)      = daggps.at(j).H_times_A(X,          daggp_use_H);
+    daggp_logdets(j) = daggps.at(j).precision_logdeterminant;
+  }
   
-      for(unsigned int i=0; i<q; i++){
-        Xtilde.submat(i * n,       j * p,
-                      (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX.slice(j); 
+  //  Jacobi preconditioner 
+  // P[j,j] diagonal at column c: Q(j,j) * ||HX[j].col(c)||^2 + 1/B_Var(c,j)
+  arma::mat Mdiag_mat(p, q);
+  for(unsigned int j = 0; j < q; ++j){
+    arma::vec colsq(p);
+    for(unsigned int c = 0; c < p; ++c){
+      const arma::vec h = HX.slice(j).col(c);
+      colsq(c) = arma::dot(h, h);
+    }
+    Mdiag_mat.col(j) = Q(j,j) * colsq + 1.0 / B_Var.col(j);
+  }
+  arma::vec Mdiag_vec = arma::vectorise(Mdiag_mat);
+  
+  const double diag_floor = 1e-12;
+  for(arma::uword i = 0; i < Mdiag_vec.n_elem; ++i)
+    if(!(Mdiag_vec(i) > diag_floor)) Mdiag_vec(i) = diag_floor;
+  
+  auto apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){
+    z_out = r_in / Mdiag_vec;
+  };
+  
+  
+  // ----- Posterior precision multiply -----
+  // (P b)[:,j] = HX[j]^T * (HX b * Q)[:,j] + (1/B_Var[:,j]) % b[:,j]
+  arma::mat invBVar = 1.0 / B_Var;
+
+  auto post_prec_mv = [&](const arma::vec& x_in, arma::vec& y_out){
+    arma::mat Bin (const_cast<double*>(x_in.memptr()), p, q, false, true);
+    arma::mat Bout(y_out.memptr(),                     p, q, false, true);
+    
+    arma::mat HXb(n, q);
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+    for(unsigned int j = 0; j < q; ++j) HXb.col(j) = HX.slice(j) * Bin.col(j);
+    
+    arma::mat HXbQ = HXb * Q;
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+    for(unsigned int j = 0; j < q; ++j)
+      Bout.col(j) = HX.slice(j).t() * HXbQ.col(j) + invBVar.col(j) % Bin.col(j);
+  };
+  
+  arma::mat YasisQ = Yasis * Q;
+  
+  arma::mat Wsamp, Z2;
+  if(sampling){
+    Wsamp = arma::randn(n, q) * Si.t();
+    Z2 = arma::randn(p, q);
+  } else {
+    Wsamp = arma::zeros(n, q);
+    Z2 = arma::zeros(p, q);
+}
+
+  arma::mat invSqrtBVar = 1.0 / arma::sqrt(B_Var);
+  arma::mat RHS_mat(p, q);
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+  for(unsigned int j = 0; j < q; ++j){
+    RHS_mat.col(j) = HX.slice(j).t() * (YasisQ.col(j) + Wsamp.col(j))
+    + invSqrtBVar.col(j) % Z2.col(j);
+  }
+  arma::vec post_meansample = arma::vectorise(RHS_mat);
+
+  // ----- PCG solve -----
+  arma::vec bbefore = arma::vectorise(B);
+  arma::vec b = pcg_mf(post_prec_mv, apply_Minv, cg_iter, post_meansample,
+                       bbefore, 1e-6, 500, num_threads);
+
+  B = arma::mat(b.memptr(), p, q);
+  W = eta - X * B;
+  
+}
+
+void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling){
+  // ----- per-entry inverse noise variance (zero at missing) -----
+  arma::mat invD_mat(n, q, arma::fill::zeros);
+  arma::mat invSqrtD_mat(n, q, arma::fill::zeros);
+  for(unsigned int j = 0; j < q; ++j){
+    const double invDj  = 1.0 / Ddiag(j);
+    const double invSDj = 1.0 / std::sqrt(Ddiag(j));
+    for(unsigned int i = 0; i < n; ++i){
+      if(!missing_mat(i, j)){
+        invD_mat(i, j)     = invDj;
+        invSqrtD_mat(i, j) = invSDj;
       }
     }
-    arma::vec yasis = arma::vectorise(Yasis * Si);
-    tend = std::chrono::steady_clock::now();
-    timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
-    
-    //Rcpp::Rcout << "------- builds3 ----" << endl;
-    tstart = std::chrono::steady_clock::now();
-    
-    arma::mat randnormat = (sampling? 1.0 : 0.0) * arma::randn(p*q);
-    
-    arma::vec vecB_Var = arma::vectorise(B_Var);
-    arma::mat post_precision = arma::diagmat(1.0/vecB_Var) + Xtilde.t() * Xtilde;
-    arma::mat pp_ichol = arma::inv(arma::trimatl(arma::chol(post_precision, "lower")));
-    arma::vec beta = pp_ichol.t() * (pp_ichol * Xtilde.t() * yasis + randnormat);
-    B = arma::mat(beta.memptr(), p, q);
-    
-    W = eta - X*B;
-    
-    tend = std::chrono::steady_clock::now();
-    timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
-    //Rcpp::Rcout << timed << endl;
-  } 
+  }
   
+  // recover safe Y (NaN-zeroed) without a separate Y member
+  arma::mat Y_safe = YXB + X * B;
+  Y_safe.elem(arma::find(missing_mat)).zeros();
+  
+  const arma::uword Nb = p * q;
+  const arma::uword Nw = n * q;
+  
+  // ----- joint operator P_joint * (b ; w) -----
+  // P_joint = blkdiag(Λ_B, Λ_W) + E^T D^{-1} E,  E = (A, I), A = I_q ⊗ X
+  // Block layout in the vector: head = vec(B), tail = vec(W)
+  auto post_prec_mv = [&](const arma::vec& x_in, arma::vec& y_out){
+    arma::mat Bin (const_cast<double*>(x_in.memptr()),       p, q, false, true);
+    arma::mat Win (const_cast<double*>(x_in.memptr() + Nb),  n, q, false, true);
+    arma::mat Bout(y_out.memptr(),                           p, q, false, true);
+    arma::mat Wout(y_out.memptr() + Nb,                      n, q, false, true);
+    
+    // res = X*Bin + Win  (n × q),  res_sc = invD ⊙ res
+    arma::mat res    = X * Bin + Win;
+    arma::mat res_sc = invD_mat % res;
+    
+    // Λ_W * Win:  (Λ_W w).col(i) = H_i^T (Hw Q).col(i),  Hw.col(j) = H_j Win.col(j)
+    arma::mat Hw(n, q);
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+    for(unsigned int j = 0; j < q; ++j) Hw.col(j) = daggps[j].H * Win.col(j);
+    arma::mat HwQ = Hw * Q;
+    
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+    for(unsigned int i = 0; i < q; ++i)
+      Wout.col(i) = daggps[i].H.t() * HwQ.col(i) + res_sc.col(i);
+    
+    // B-block:  out_B[:,j] = (1/B_Var[:,j]) ⊙ Bin[:,j] + X^T res_sc[:,j]
+    arma::mat invBVar = 1.0 / B_Var;
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+    for(unsigned int j = 0; j < q; ++j)
+      Bout.col(j) = invBVar.col(j) % Bin.col(j) + X.t() * res_sc.col(j);
+  };
+  
+  // ----- preconditioner -----
+  arma::vec Mdiag_vec;   // Jacobi
+  arma::mat Sigma;       // Prior
+  std::function<void(const arma::vec&, arma::vec&)> apply_Minv;
+  
+  if(precond == PRECOND_JACOBI){
+    // W-half: Q(i,i) * (H_i^T H_i)(c,c) + invD_mat(c,i)
+    arma::mat H_col_sq(n, q, arma::fill::zeros);
+    for(unsigned int i = 0; i < q; ++i){
+      daggps[i].H.sync();
+      const double*      vals = daggps[i].H.values;
+      const arma::uword* cols = daggps[i].H.col_ptrs;
+      double* dst = H_col_sq.colptr(i);
+      for(arma::uword c = 0; c < n; ++c){
+        double s = 0.0;
+        for(arma::uword k = cols[c]; k < cols[c+1]; ++k) s += vals[k]*vals[k];
+        dst[c] = s;
+      }
+    }
+    arma::mat Mdiag_W(n, q);
+    for(unsigned int i = 0; i < q; ++i)
+      Mdiag_W.col(i) = Q(i, i) * H_col_sq.col(i) + invD_mat.col(i);
+    
+    // B-half: 1/B_Var(c,j) + sum_i X(i,c)^2 invD(i,j)
+    arma::mat Mdiag_B = (1.0 / B_Var) + arma::square(X).t() * invD_mat;
+    
+    Mdiag_vec.set_size(Nb + Nw);
+    Mdiag_vec.head(Nb) = arma::vectorise(Mdiag_B);
+    Mdiag_vec.tail(Nw) = arma::vectorise(Mdiag_W);
+    
+    const double diag_floor = 1e-12;
+    for(arma::uword i = 0; i < Mdiag_vec.n_elem; ++i)
+      if(!(Mdiag_vec(i) > diag_floor)) Mdiag_vec(i) = diag_floor;
+    
+    apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){
+      z_out = r_in / Mdiag_vec;
+    };
+      
+      
+  } else { // PRECOND_PPCG : block-diagonal prior preconditioner
+    Sigma = arma::inv_sympd(Q);
+
+    apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){
+      arma::mat RB(const_cast<double*>(r_in.memptr()),       p, q, false, true);
+      arma::mat RW(const_cast<double*>(r_in.memptr() + Nb),  n, q, false, true);
+      arma::mat ZB(z_out.memptr(),                           p, q, false, true);
+      arma::mat ZW(z_out.memptr() + Nb,                      n, q, false, true);
+      
+      // B-half: Λ_B^{-1} = diag(B_Var)
+      ZB = B_Var % RB;
+      
+      // W-half: Λ_W^{-1} via H solves and Σ mix (same as gibbs_w_block_PPCG)
+      arma::mat Y(n, q);
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+      for(unsigned int j = 0; j < q; ++j) Y.col(j) = daggps[j].Ht_solve_A(RW.col(j), true);
+      arma::mat U = Y * Sigma;
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+      for(unsigned int j = 0; j < q; ++j) ZW.col(j) = daggps[j].H_solve_A(U.col(j));
+    };
+  }
+  
+  // ----- RHS = c + perturbations -----
+  // c_W = invD ⊙ Y_safe ;   c_B[:,j] = X^T c_W[:,j]
+  arma::mat cW = invD_mat % Y_safe;
+  arma::mat cB = X.t() * cW;
+  
+  // prior noise on W (same Unorm trick as gibbs_w_block)
+  arma::mat Unorm, xi_B_prior, Zlik_sc;
+  if(sampling){
+    Unorm = arma::randn(n, q) * Si.t();
+    for(unsigned int j = 0; j < q; ++j) Unorm.col(j) = daggps[j].H.t() * Unorm.col(j);
+    xi_B_prior = arma::randn(p, q) / arma::sqrt(B_Var);
+    Zlik_sc = arma::randn(n, q) % invSqrtD_mat;
+  } else {
+    Unorm = arma::zeros(n, q);
+    xi_B_prior = arma::zeros(p, q);
+    Zlik_sc = arma::zeros(n, q);
+  }
+  
+  // likelihood noise — SAME draw shared between B and W parts to match Λ_lik = E^T D^{-1} E
+  arma::mat xi_B_lik = X.t() * Zlik_sc;
+  
+  arma::mat RHS_B = cB + xi_B_prior + xi_B_lik;
+  arma::mat RHS_W = cW + Unorm     + Zlik_sc;
+  
+  arma::vec rhs(Nb + Nw);
+  rhs.head(Nb) = arma::vectorise(RHS_B);
+  rhs.tail(Nw) = arma::vectorise(RHS_W);
+
+  // solve 
+  arma::vec x0(Nb + Nw);
+  x0.head(Nb) = arma::vectorise(B);
+  x0.tail(Nw) = arma::vectorise(W);
+  
+  arma::vec sol = pcg_mf(post_prec_mv, apply_Minv, cg_iter, rhs, x0,
+                         1e-4, 500, num_threads);
+
+  // unpack and keep YXB consistent 
+  // YXB = Y - X B_new = (YXB_old + X B_old) - X B_new
+  arma::mat B_old = B;
+  B = arma::mat(sol.memptr(),       p, q);
+  W = arma::mat(sol.memptr() + Nb,  n, q);
+  YXB += X * (B_old - B);
 }
 
 void SpIOX::vi_Beta_UQ(){
@@ -252,73 +454,6 @@ void SpIOX::vi_Beta_UQ(){
   }
 }
 
-/*
-void SpIOX::update_B_vi(){
-  
-  arma::mat Ytilde;
-  B = arma::zeros(p, q);
-  Beta_UQ = arma::zeros(p, q);
-  
-  if(latent_model > 0){
-    Ytilde = (Y - W);
-    for(int j=0; j<q; j++){
-      // prior precision (diagonal)
-      arma::vec vecB_Var = B_Var.col(j);
-      arma::mat prior_prec = arma::diagmat(1.0 / vecB_Var);
-      
-      // posterior precision 
-      arma::mat post_precision = prior_prec + X.t() * X;
-      B_post_cov = arma::inv_sympd(post_precision);
-      // posterior mean 
-      arma::vec mu_b = B_post_cov * X.t() * Ytilde.col(j);
-      
-      // store the mean and optionally the covariance
-      B.col(j) = mu_b;  
-      Beta_UQ.col(j) = B_post_cov.diag();
-      
-    }
-    
-  } else {
-    Ytilde = Y;
-    Xtilde = arma::zeros(n*q, p*q);
-    
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-    for(unsigned int j = 0; j < q; j++){
-      Ytilde.col(j) = daggps.at(j).H_times_A( Ytilde.col(j) ); // whitened (Y - W)
-      arma::mat HX = daggps.at(j).H_times_A(X);         // whitened X
-      
-      for(unsigned int i = 0; i < q; i++){
-        Xtilde.submat(i * n, j * p,
-                      (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX;
-      }
-    }
-    
-    arma::vec ytilde = arma::vectorise(Ytilde * Si); // vec(Y^* Σ^{-1})
-    
-    // prior precision (diagonal)
-    arma::vec vecB_Var = arma::vectorise(B_Var);
-    arma::mat prior_prec = arma::diagmat(1.0 / vecB_Var);
-    
-    // posterior precision 
-    arma::mat post_precision = prior_prec + Xtilde.t() * Xtilde;
-    B_post_cov = arma::inv_sympd(post_precision);
-    // posterior mean 
-    arma::vec mu_b = B_post_cov * Xtilde.t() * ytilde;
-    
-    // store the mean and optionally the covariance
-    B = arma::mat(mu_b.memptr(), p, q);  // reshape to matrix for consistency
-    arma::vec v = B_post_cov.diag();
-    Beta_UQ = arma::mat(v.memptr(), p, q);
-  }
-  
-  
-  
-  YXB = Y - X*B;
-  
-}
-*/
 bool SpIOX::upd_theta_metrop(){
   std::chrono::steady_clock::time_point tstart;
   std::chrono::steady_clock::time_point tend;
@@ -561,35 +696,17 @@ arma::uvec SpIOX::upd_theta_metrop_conditional(){
   return accepteds;
 }
 
-// wall clock in seconds
-static inline double wall_time() {
-#ifdef _OPENMP
-  return omp_get_wtime();
-#else
-  return std::chrono::duration<double>(
-    std::chrono::steady_clock::now().time_since_epoch()
-  ).count();
-#endif
-}
-
 void SpIOX::cache_blanket_comps(const arma::uvec& theta_changed){
   // all these matrix operations only need to be performed when theta changes
   // otherwise, we can just cache what's needed and reuse
   // this impacts the latent model, single site sampler
   // and imputation of missing data in the response model.
   int nfill = latent_model == 2 ? n : rows_with_missing.n_elem;
-  
-  // allocate timing buffers BEFORE the loop
-  arma::vec t_total(nfill, arma::fill::zeros);
-  arma::vec t_rw(nfill,    arma::fill::zeros);
-  arma::vec t_hit(nfill,   arma::fill::zeros);
-  arma::vec t_pblk(nfill,  arma::fill::zeros);
-  
+
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads) //***
 #endif
   for(int ix=0; ix<nfill; ix++){
-    const double t_start = wall_time();
     int i = latent_model == 2 ? ix : rows_with_missing(ix);
     
     // assume all the same dag otherwise we go cray
@@ -600,8 +717,6 @@ void SpIOX::cache_blanket_comps(const arma::uvec& theta_changed){
     Rw_no_Q(ix) = arma::zeros(q, q); 
     Pblanket_no_Q(ix) = arma::zeros(q, q*mbsize);
 
-    // --- time Rw_no_Q ---
-    double t0 = wall_time();
     for(int r=0; r<q; r++){
       for(int s=0; s<=r; s++){
         Rw_no_Q(ix)(r, s) = 
@@ -612,21 +727,13 @@ void SpIOX::cache_blanket_comps(const arma::uvec& theta_changed){
         }
       }
     }
-    double t1 = wall_time();
-    t_rw(ix) = t1 - t0;
-  
-    // --- time building H_i_mat ---
-    t0 = wall_time();
+    
     arma::sp_mat H_i_mat(n, q);
     for (int r = 0; r < q; ++r) {
       H_i_mat.col(r) = daggps[r].H.col(i);
     }
     arma::sp_mat Hitt = H_i_mat.t();
-    t1 = wall_time();
-    t_hit(ix) = t1 - t0;
-    // --- time Pblanket_no_Q block products ---
-    //Rcpp::Rcout << arma::size(H_i_mat) << " " << arma::size(Pblanket_no_Q(ix)) << endl;
-    t0 = wall_time();
+    
     for (int s = 0; s < q; ++s) {
       int startcol = s * mbsize;
       int endcol = (s + 1) * mbsize - 1;
@@ -634,19 +741,8 @@ void SpIOX::cache_blanket_comps(const arma::uvec& theta_changed){
       arma::mat result(Hitt * Hblanket);
       Pblanket_no_Q(ix).cols(startcol, endcol) = result;
     }
-    t1 = wall_time();
-    t_pblk(ix) = t1 - t0;
-  
-  t_total(ix) = wall_time() - t_start;
   }
-  // OPTIONAL: print after the loop (single-threaded) to avoid interleaving
-  // for (int ix = 0; ix < nfill; ++ix) {
-  //   Rcpp::Rcout << " total=" << arma::accu(t_total)
-  //               << " Rw="    << arma::accu(t_rw)
-   //              << " H_i="   << arma::accu(t_hit)
-   //              << " Pblk="  << arma::accu(t_pblk) << "\n";
 }
-
 
 void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
   double ms_if_cache = 0;
@@ -663,84 +759,72 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
   //arma::mat mvnorm = arma::randn(q, n);
   
   // V = whitened Y-XB or W
-  {
-    auto t0 = std::chrono::steady_clock::now();
-    if(arma::any(theta_changed != 0)){
-      // perform this update if theta has changed and we need to recompute the
-      // GP-related matrices that depend on it
-      cache_blanket_comps(theta_changed);
-    }
-    ms_if_cache += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  if(arma::any(theta_changed != 0)){
+    // perform this update if theta has changed and we need to recompute the
+    // GP-related matrices that depend on it
+    cache_blanket_comps(theta_changed);
   }
   
-  {
-    auto t0 = std::chrono::steady_clock::now();
+  
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
-    for(int i=0; i<n; i++){
-      Rw(i) = Q % Rw_no_Q(i);
-      
-      // assume all the same dag otherwise we go cray
-      arma::uvec mblanket = daggps[0].mblanket(i);
-      int mbsize = mblanket.n_elem;
-      arma::mat Pblanket = arma::zeros(q, q*mbsize);
-      
-      arma::mat Di_obs = arma::zeros(q,q);
-      
-      for(int j = 0; j < q; j++) {
-        int startcol = j * mbsize;
-        int endcol = (j + 1) * mbsize - 1;
-        Pblanket.cols(startcol, endcol) = arma::diagmat(Q.col(j)) * Pblanket_no_Q(i).cols(startcol, endcol);
-        if(!missing_mat(i,j)){
-          Di_obs(j,j) = 1.0/Ddiag(j);
-        }
+  for(int i=0; i<n; i++){
+    Rw(i) = Q % Rw_no_Q(i);
+    
+    // assume all the same dag otherwise we go cray
+    arma::uvec mblanket = daggps[0].mblanket(i);
+    int mbsize = mblanket.n_elem;
+    arma::mat Pblanket = arma::zeros(q, q*mbsize);
+    arma::mat Di_obs = arma::zeros(q,q);
+    
+    for(int j = 0; j < q; j++) {
+      int startcol = j * mbsize;
+      int endcol = (j + 1) * mbsize - 1;
+      Pblanket.cols(startcol, endcol) = arma::diagmat(Q.col(j)) * Pblanket_no_Q(i).cols(startcol, endcol);
+      if(!missing_mat(i,j)){
+        Di_obs(j,j) = 1.0/Ddiag(j);
       }
-      
-      Hw(i) = - Pblanket;
-      arma::mat invcholP = arma::inv(arma::trimatl(arma::chol(Rw(i) + Di_obs, "lower")));
-      Postcov.slice(i) = invcholP.t() * invcholP;
-      randcomp.col(i) = invcholP.t() * randcomp.col(i);
     }
     
-    ms_omp_for += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    Hw(i) = - Pblanket;
+    arma::mat invcholP = arma::inv(arma::trimatl(arma::chol(Rw(i) + Di_obs, "lower")));
+    Postcov.slice(i) = invcholP.t() * invcholP;
+    randcomp.col(i) = invcholP.t() * randcomp.col(i);
   }
-  
-  {
-    auto t0 = std::chrono::steady_clock::now();
-    // visit every location and sample from latent effects 
-    // conditional on data and markov blanket
-    for(int c=0; c < daggps[0].colors.n_elem; c++){
-      arma::uvec nodes_in_color = daggps[0].colors(c);
+
+  // visit every location and sample from latent effects 
+  // conditional on data and markov blanket
+  for(int c=0; c < daggps[0].colors.n_elem; c++){
+    arma::uvec nodes_in_color = daggps[0].colors(c);
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
-      for(int ix=0; ix < nodes_in_color.n_elem; ix++){
-        int i = nodes_in_color(ix);
-        //for(int i=0; i<n; i++){
-        // data contributions may be null if data missing
-        arma::vec Di_YXB = arma::zeros(q);
-        for(int j=0; j<q; j++){
-          if(!missing_mat(i,j)){
-            Di_YXB(j) = YXB(i,j)/Ddiag(j);
-          }
-        }
-        
-        arma::uvec mblanket = daggps[0].mblanket(i);
-      
-        // sample
-        arma::vec W_mean = Postcov.slice(i) * ( Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di_YXB );
-        W.row(i) = arma::trans(  W_mean + randcomp.col(i) );
-        W_RB.row(i) = W_mean.t();
-        
-        if(W.has_nan()){
-          Rcpp::stop("Found nan in W.\n");
+    for(int ix=0; ix < nodes_in_color.n_elem; ix++){
+      int i = nodes_in_color(ix);
+      //for(int i=0; i<n; i++){
+      // data contributions may be null if data missing
+      arma::vec Di_YXB = arma::zeros(q);
+      for(int j=0; j<q; j++){
+        if(!missing_mat(i,j)){
+          Di_YXB(j) = YXB(i,j)/Ddiag(j);
         }
       }
+      
+      arma::uvec mblanket = daggps[0].mblanket(i);
+    
+      // sample
+      arma::vec W_mean = Postcov.slice(i) * ( Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di_YXB );
+      W.row(i) = arma::trans(  W_mean + randcomp.col(i) );
+      W_RB.row(i) = W_mean.t();
+      
+      if(W.has_nan()){
+        Rcpp::stop("Found nan in W.\n");
+      }
     }
-    ms_sample += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   }
-  
+
+
 }
 
 /*
@@ -800,7 +884,6 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed, bool vi=fal
 }
 */
 
-
 void SpIOX::gibbs_w_sequential_byoutcome(){
   
   std::vector<arma::sp_mat> prior_precs(q);
@@ -851,133 +934,13 @@ void SpIOX::gibbs_w_sequential_byoutcome(){
   
 }
 
-
-
-void SpIOX::gibbs_w_block_Jacobi(int& cg_iter){
-  
-  auto t0 = std::chrono::steady_clock::now();
-  auto lap = [&](const char* label){
-    auto t1 = std::chrono::steady_clock::now();
-    double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    //Rcpp::Rcout << "[gibbs_w_block] " << label << ": " << ms << " ms\n";
-    t0 = t1;
-  };
-  
-  arma::sp_mat Hvert(q*n, n);
-  arma::uword row_offset = 0;
-  
-  arma::mat Unorm = arma::randn(n, q) * Si.t();
-  
-  for (int i=0; i<q; i++) {
-    Hvert.submat(row_offset, 0, row_offset + n - 1, n - 1) = daggps[i].H.t();
-    row_offset += n;
-    Unorm.col(i) = daggps[i].H.t() * Unorm.col(i);
-  }
-  lap("assemble Hvert + Unorm");
-  
-  // Per-entry inverse noise variance, zeroed at missing entries.
-  arma::mat invD_mat(n, q, arma::fill::zeros);
-  arma::mat invSqrtD_mat(n, q, arma::fill::zeros);
-  for(int j=0; j<q; j++){
-    const double invDj  = 1.0 / Ddiag(j);
-    const double invSDj = 1.0 / std::sqrt(Ddiag(j));
-    for(int i=0; i<n; i++){
-      if(!missing_mat(i,j)){
-        invD_mat(i,j)     = invDj;
-        invSqrtD_mat(i,j) = invSDj;
-      }
-    }
-  }
-  arma::vec invD_vec = arma::vectorise(invD_mat);
-  lap("build invD / invSqrtD");
-  
-  // Per-outcome column-squared-norms of H_i, used to build Mdiag.
-  // (diag(H_i^T H_i)(c) = sum_k H_i(k,c)^2)
-  arma::mat H_col_sq(n, q, arma::fill::zeros);
-  for(int i = 0; i < q; ++i){
-    daggps[i].H.sync();
-    const double*      vals = daggps[i].H.values;
-    const arma::uword* cols = daggps[i].H.col_ptrs;
-    double* dst = H_col_sq.colptr(i);
-    for(arma::uword c = 0; c < n; ++c){
-      double s = 0.0;
-      for(arma::uword k = cols[c]; k < cols[c+1]; ++k) s += vals[k]*vals[k];
-      dst[c] = s;
-    }
-  }
-  // Diagonal Jacobi preconditioner values: M_jac = Q(i,i)*diag(H_i^T H_i) + invD_mat
-  arma::mat Mdiag_mat(n, q);
-  for(int i = 0; i < q; ++i){
-    Mdiag_mat.col(i) = Q(i,i) * H_col_sq.col(i) + invD_mat.col(i);
-  }
-  arma::vec Mdiag_vec = arma::vectorise(Mdiag_mat);
-  
-  // Floor once, up front, so the closure is branchless.
-  const double diag_floor = 1e-12;
-  for(arma::uword i = 0; i < Mdiag_vec.n_elem; ++i)
-  if(!(Mdiag_vec(i) > diag_floor)) Mdiag_vec(i) = diag_floor;
-  
-  // Apply M^{-1} via elementwise divide.
-  auto apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){
-    z_out = r_in / Mdiag_vec;
-  };
-  lap("Mdiag");
-  
-  // Matrix-vector callable: y = post_prec * x  (x, y are vectorise of n x q)
-  auto post_prec_mv = [&](const arma::vec& x_in, arma::vec& y_out){
-    arma::mat X(const_cast<double*>(x_in.memptr()), n, q, false, true);
-    arma::mat Y(y_out.memptr(),                     n, q, false, true);
-    
-    arma::mat Hx(n, q);
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-    for(int j = 0; j < q; ++j) Hx.col(j) = daggps[j].H * X.col(j);
-    
-    arma::mat HxQ = Hx * Q;
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-    for(int i = 0; i < q; ++i)
-      Y.col(i) = daggps[i].H.t() * HxQ.col(i) + invD_mat.col(i) % X.col(i);
-  };
-  
-  // Zero YXB at missing so NaN does not propagate through 0 * NaN
-  arma::mat YXB_safe = YXB;
-  YXB_safe.elem( arma::find(missing_mat) ).zeros();
-  
-  arma::vec post_Cmean      = arma::vectorise(YXB_safe % invD_mat);
-  arma::vec vnorm           = arma::vectorise( arma::randn(n, q) % invSqrtD_mat );
-  arma::vec post_meansample = post_Cmean + arma::vectorise(Unorm) + vnorm;
-  
-  lap("pre");
-  
-  arma::vec wbefore = arma::vectorise(W);
-  arma::vec w = pcg_mf(post_prec_mv, apply_Minv, cg_iter, post_meansample,
-                       wbefore, 1e-4, 500, num_threads);
-  lap("solve");
-  
-  W = arma::mat(w.memptr(), n, q);
-  
-}
-
-void SpIOX::gibbs_w_block_PPCG(int& cg_iter){
-  
-  auto t0 = std::chrono::steady_clock::now();
-  auto lap = [&](const char* label){
-    auto t1 = std::chrono::steady_clock::now();
-    double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    //Rcpp::Rcout << "[gibbs_w_block_PPCG] " << label << ": " << ms << " ms\n";
-    t0 = t1;
-  };
-  
-  // ----- noise sample with covariance A_prior  (unchanged from gibbs_w_block) -----
+void SpIOX::gibbs_w_block(int& cg_iter, PrecondChoice precond){
+  // noise sample with covariance A_prior
   arma::mat Unorm = arma::randn(n, q) * Si.t();
   for(int i = 0; i < q; ++i)
     Unorm.col(i) = daggps[i].H.t() * Unorm.col(i);
-  lap("Unorm");
   
-  // ----- per-entry inverse noise variance (zero at missing) -----
+  // per-entry inverse noise variance (zero at missing)
   arma::mat invD_mat(n, q, arma::fill::zeros);
   arma::mat invSqrtD_mat(n, q, arma::fill::zeros);
   for(int j = 0; j < q; ++j){
@@ -990,13 +953,8 @@ void SpIOX::gibbs_w_block_PPCG(int& cg_iter){
       }
     }
   }
-  lap("build invD / invSqrtD");
   
-  // ----- cross-outcome mix matrix Sigma = Q^{-1} (small, dense q x q) -----
-  arma::mat Sigma = arma::inv_sympd(Q);
-  lap("Sigma = Q^{-1}");
-  
-  // ----- A * v  (same operator as gibbs_w_block) -----
+  // A * v  (shared operator) 
   auto post_prec_mv = [&](const arma::vec& x_in, arma::vec& y_out){
     arma::mat X(const_cast<double*>(x_in.memptr()), n, q, false, true);
     arma::mat Y(y_out.memptr(),                     n, q, false, true);
@@ -1015,41 +973,74 @@ void SpIOX::gibbs_w_block_PPCG(int& cg_iter){
       Y.col(i) = daggps[i].H.t() * HxQ.col(i) + invD_mat.col(i) % X.col(i);
   };
   
-  // ----- prior preconditioner: M^{-1} r = B^{-1} (Sigma kron I) B^{-T} r -----
-  //   1) Y(:,j) = H_j^{-T} R(:,j)       via Ht_solve_A
-  //   2) U      = Y * Sigma             (cross-outcome mix)
-  //   3) Z(:,j) = H_j^{-1}  U(:,j)      via H_solve_A
-  auto apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){
-    arma::mat R(const_cast<double*>(r_in.memptr()), n, q, false, true);
-    arma::mat Z(z_out.memptr(),                     n, q, false, true);
+  // preconditioner 
+  arma::vec Mdiag_vec;   // Jacobi
+  arma::mat Sigma;       // PPCG
+  std::function<void(const arma::vec&, arma::vec&)> apply_Minv;
+  
+  if(precond == PRECOND_JACOBI){
+    // Per-outcome column-squared-norms of H_i, used to build Mdiag.
+    // (diag(H_i^T H_i)(c) = sum_k H_i(k,c)^2)
+    arma::mat H_col_sq(n, q, arma::fill::zeros);
+    for(int i = 0; i < q; ++i){
+      daggps[i].H.sync();
+      const double*      vals = daggps[i].H.values;
+      const arma::uword* cols = daggps[i].H.col_ptrs;
+      double* dst = H_col_sq.colptr(i);
+      for(arma::uword c = 0; c < n; ++c){
+        double s = 0.0;
+        for(arma::uword k = cols[c]; k < cols[c+1]; ++k) s += vals[k]*vals[k];
+        dst[c] = s;
+      }
+    }
     
-    arma::mat Y(n, q);
+    arma::mat Mdiag_mat(n, q);
+    for(int i = 0; i < q; ++i)
+      Mdiag_mat.col(i) = Q(i,i) * H_col_sq.col(i) + invD_mat.col(i);
+    Mdiag_vec = arma::vectorise(Mdiag_mat);
+    
+    // Floor once, up front, so the closure is branchless.
+    const double diag_floor = 1e-12;
+    for(arma::uword i = 0; i < Mdiag_vec.n_elem; ++i)
+      if(!(Mdiag_vec(i) > diag_floor)) Mdiag_vec(i) = diag_floor;
+      
+    apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){
+      z_out = r_in / Mdiag_vec;
+    };
+      
+  } else { 
+    Sigma = arma::inv_sympd(Q);
+  
+    apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){
+      arma::mat R(const_cast<double*>(r_in.memptr()), n, q, false, true);
+      arma::mat Z(z_out.memptr(),                     n, q, false, true);
+      
+      arma::mat Y(n, q);
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
-    for(int j = 0; j < q; ++j) Y.col(j) = daggps[j].Ht_solve_A(R.col(j), true);
-    
-    arma::mat U = Y * Sigma;
-    
+      for(int j = 0; j < q; ++j) Y.col(j) = daggps[j].Ht_solve_A(R.col(j), true);
+      
+      arma::mat U = Y * Sigma;
+      
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
-    for(int j = 0; j < q; ++j) Z.col(j) = daggps[j].H_solve_A(U.col(j));
-  };
+      for(int j = 0; j < q; ++j) Z.col(j) = daggps[j].H_solve_A(U.col(j));
+    };
+  }
   
   // ----- RHS -----
   arma::mat YXB_safe = YXB;
   YXB_safe.elem(arma::find(missing_mat)).zeros();
   
-  arma::vec post_Cmean    = arma::vectorise(YXB_safe % invD_mat);
-  arma::vec vnorm         = arma::vectorise(arma::randn(n, q) % invSqrtD_mat);
+  arma::vec post_Cmean      = arma::vectorise(YXB_safe % invD_mat);
+  arma::vec vnorm           = arma::vectorise(arma::randn(n, q) % invSqrtD_mat);
   arma::vec post_meansample = post_Cmean + arma::vectorise(Unorm) + vnorm;
-  lap("pre");
   
   arma::vec wbefore = arma::vectorise(W);
   arma::vec w = pcg_mf(post_prec_mv, apply_Minv, cg_iter, post_meansample,
                        wbefore, 1e-4, 500, num_threads);
-  lap("solve");
   
   W = arma::mat(w.memptr(), n, q);
 }
@@ -1159,7 +1150,6 @@ void SpIOX::update_Sigma_vi(){
   Q = arma::inv_sympd(Sigma);
   Si = arma::chol(Q, "lower");
 }
-
 
 void SpIOX::sample_Y_misaligned(const arma::uvec& theta_changed){
   // precompute stuff in parallel so we can do fast sequential sampling after
@@ -1370,68 +1360,60 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
   }
   timings(4) += time_count(tstart);
   
-
-  //Rcpp::Rcout << "B " << endl;
-  if(sample_beta){
-    // sample B 
-    tstart = std::chrono::steady_clock::now();
-    update_B();
-    timings(0) += time_count(tstart);  
-  }
-  
-  //Rcpp::Rcout << "w " << endl;
-  tstart = std::chrono::steady_clock::now();
   if(latent_model == 1){
+    // sample Beta and W as a block
     int cg_iter = 0;
     
     if(precond_choice == PRECOND_PROBE){
-      // Alternate Jacobi / PPCG during the probe phase.
-      if(probe_count % 2 == 0){
-        gibbs_w_block_Jacobi(cg_iter);
-        cost_jacobi += static_cast<double>(cg_iter);   // unit cost per iter
+      const PrecondChoice use = (probe_count % 2 == 0) ? PRECOND_JACOBI : PRECOND_PPCG;
+      gibbs_BW_block(cg_iter, use);
+      
+      if(use == PRECOND_JACOBI){
+        cost_jacobi += static_cast<double>(cg_iter);
         ++n_probe_jac;
       } else {
-        gibbs_w_block_PPCG(cg_iter);
-        cost_ppcg   += static_cast<double>(cg_iter) * ppcg_iter_cost;
+        cost_ppcg += static_cast<double>(cg_iter) * ppcg_iter_cost;
         ++n_probe_ppcg;
       }
       ++probe_count;
       
-      // Lock in the winner once both have been measured enough.
       if(probe_count >= probe_max && n_probe_jac > 0 && n_probe_ppcg > 0){
         const double avg_jac  = cost_jacobi / n_probe_jac;
         const double avg_ppcg = cost_ppcg   / n_probe_ppcg;
         precond_choice = (avg_jac <= avg_ppcg) ? PRECOND_JACOBI : PRECOND_PPCG;
-        
-        Rcpp::Rcout << "[gibbs_w_block] locking in "
-                    << (precond_choice == PRECOND_JACOBI ? "Jacobi" : "PPCG")
-                    << " (avg weighted cost: Jacobi=" << avg_jac
-                    << ", PPCG=" << avg_ppcg << ")\n";
+        Rcpp::Rcout << "[gibbs_BW_block] locking in "
+                    << (precond_choice == PRECOND_JACOBI ? "Jacobi" : "Prior")
+                    << " (avg cost: Jacobi=" << avg_jac
+                    << ", Prior=" << avg_ppcg << ")\n";
       }
-    } else if(precond_choice == PRECOND_JACOBI){
-      gibbs_w_block_Jacobi(cg_iter);
     } else {
-      gibbs_w_block_PPCG(cg_iter);
+      gibbs_BW_block(cg_iter, precond_choice);
+    }
+  } else {
+    //Rcpp::Rcout << "B " << endl;
+    if(sample_beta){
+      // sample B 
+      tstart = std::chrono::steady_clock::now();
+      update_B(); 
+      timings(0) += time_count(tstart);  
+    }
+    
+    if(latent_model == 2){
+      // redo_cache_blanket runs if update_theta=true
+      w_sequential_singlesite(theta_has_changed); 
+    }
+    if(latent_model == 3){
+      gibbs_w_sequential_byoutcome();
+    }
+    timings(5) += time_count(tstart);
+    
+    //Rcpp::Rcout << "B asis " << endl;
+    if(sample_beta){
+      int cg_iter=0;
+      update_BW_asis(cg_iter, B, W, true); // do sample
+      YXB = Y - X*B;
     }
   }
-  if(latent_model == 2){
-    // redo_cache_blanket runs if update_theta=true
-    w_sequential_singlesite(theta_has_changed); 
-    //W_centering();
-    //compute_V();
-  }
-  if(latent_model == 3){
-    gibbs_w_sequential_byoutcome();
-  }
-  timings(5) += time_count(tstart);
-  
-  //Rcpp::Rcout << "B asis " << endl;
-  if(sample_beta){
-    update_BW_asis(B, W, true); // do sample
-    YXB = Y - X*B;
-  }
-  
-  
 
   compute_V(); // keep 
   
@@ -1465,24 +1447,17 @@ void SpIOX::response_vi(){
 }
 
 void SpIOX::latent_vi(){
-  // mcmc(asis)-vi
-   
-  // sample B
-  update_B();
-  // sample W
-  
-  // now with block sampler
   int cg_iter = 0;
-  
   if(precond_choice == PRECOND_PROBE){
     // Alternate Jacobi / PPCG during the probe phase.
-    if(probe_count % 2 == 0){
-      gibbs_w_block_Jacobi(cg_iter);
+    const PrecondChoice use = (probe_count % 2 == 0) ? PRECOND_JACOBI : PRECOND_PPCG;
+    gibbs_BW_block(cg_iter, use); // gibbs_w_block
+    
+    if(use == PRECOND_JACOBI){
       cost_jacobi += static_cast<double>(cg_iter);   // unit cost per iter
       ++n_probe_jac;
     } else {
-      gibbs_w_block_PPCG(cg_iter);
-      cost_ppcg   += static_cast<double>(cg_iter) * ppcg_iter_cost;
+      cost_ppcg += static_cast<double>(cg_iter) * ppcg_iter_cost;
       ++n_probe_ppcg;
     }
     ++probe_count;
@@ -1493,30 +1468,19 @@ void SpIOX::latent_vi(){
       const double avg_ppcg = cost_ppcg   / n_probe_ppcg;
       precond_choice = (avg_jac <= avg_ppcg) ? PRECOND_JACOBI : PRECOND_PPCG;
       
-      Rcpp::Rcout << "[vi_w_block] locking in "
-                  << (precond_choice == PRECOND_JACOBI ? "Jacobi" : "PPCG")
-                  << " (avg weighted cost: Jacobi=" << avg_jac
-                  << ", PPCG=" << avg_ppcg << ")\n";
+      //Rcpp::Rcout << "[vi_w_block] locking in "
+      //            << (precond_choice == PRECOND_JACOBI ? "Jacobi" : "PPCG")
+      //            << " (avg weighted cost: Jacobi=" << avg_jac
+      //            << ", PPCG=" << avg_ppcg << ")\n";
     }
-  } else if(precond_choice == PRECOND_JACOBI){
-    gibbs_w_block_Jacobi(cg_iter);
   } else {
-    gibbs_w_block_PPCG(cg_iter);
+    gibbs_BW_block(cg_iter, precond_choice); //gibbs_w_block
   }
-  
-  // ** old
-  //arma::uvec theta_changed = arma::zeros<arma::uvec>(q); 
-  //w_sequential_singlesite(theta_changed);
-  
-  
-  // asis rotation on B, W
-  update_BW_asis(B, W, true); // with sampling
-  // center W and place on intercept, if applicable
   W_centering();
   
   // working V with sampled B and W
   compute_V();
-  
+
   // PX
   update_BWSigma_px();
   W_centering();

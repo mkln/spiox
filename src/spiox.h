@@ -104,15 +104,6 @@ public:
   }
   void sample_Y_misaligned(const arma::uvec& theta_changed);
   
-  // latent model 
-  int latent_model; // 0: response, 1: block, 2: row seq, 3: col seq
-  arma::mat W;
-  void w_sequential_singlesite(const arma::uvec& theta_changed);
-  void gibbs_w_sequential_byoutcome();
-  void gibbs_w_block_Jacobi(int&);
-  void gibbs_w_block_PPCG(int&);
-  arma::vec Ddiag;
-  
   // adaptively choosing the preconditioner for block updates:
   enum PrecondChoice { PRECOND_PROBE = 0, PRECOND_JACOBI = 1, PRECOND_PPCG = 2 };
   PrecondChoice precond_choice = PRECOND_PROBE;
@@ -124,6 +115,16 @@ public:
   int           n_probe_ppcg   = 0;
   double        ppcg_iter_cost = 2.0;   // 1 PPCG iter ≈ this many Jacobi iters
   
+  // latent model 
+  int latent_model; // 0: response, 1: block, 2: row seq, 3: col seq
+  arma::mat W;
+  void w_sequential_singlesite(const arma::uvec& theta_changed);
+  void gibbs_w_sequential_byoutcome();
+  void gibbs_w_block(int& cg_iter, PrecondChoice precond);
+  
+  void gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling=true);
+    
+  arma::vec Ddiag;
   
   // centering of W and move to intercept (if there is one)
   void W_centering();
@@ -131,7 +132,8 @@ public:
   void update_running_means(arma::mat&, const arma::mat&, bool pr=false); 
   
   // utilities for gibbs 
-  void update_BW_asis(arma::mat&, arma::mat&, bool sampling); 
+  //void update_BW_asis(arma::mat&, arma::mat&, bool sampling); 
+  void update_BW_asis(int& cg_iter, arma::mat& B, arma::mat& W, bool sampling);
   void update_BWSigma_px();
   void update_Sigma_gibbs();
   void update_Ddiag_gibbs();
