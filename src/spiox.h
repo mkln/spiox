@@ -34,6 +34,9 @@ public:
   // objects that depend on Sigma
   arma::mat S, Si, Sigma, Q; // S^T * S = Sigma = Q^-1 = (Lambda*Lambda^T + Delta)^-1 = (Si * Si^T)^-1
   
+  // future:
+  //arma::mat A, Aplus, AplusT; 
+  
   // objects that depend on theta RadGP for spatial dependence
   std::vector<DagGP> daggps, daggps_alt;
   arma::mat theta; // each column is one alternative value for theta
@@ -85,7 +88,9 @@ public:
     rows_some = arma::find(row_complete_miss_01 == 0);
     n_some = rows_some.n_elem;
     if(n_some < n){
-      Rcpp::stop("Fully missing rows in Y detected. Exclude from data and rerun.\n");
+      if(latent_model != 1){
+        Rcpp::stop("Fully missing rows in Y detected. Use latent_model=1 or exclude from data and rerun.\n");
+      }
     }
     //if(Y.has_nonfinite() & (latent_model==1)){
     //  Rcpp::stop("nq block not implemented for misaligned data.\n");
@@ -115,7 +120,7 @@ public:
   void w_sequential_singlesite(const arma::uvec& theta_changed);
   void gibbs_w_sequential_byoutcome();
   void gibbs_w_block(int& cg_iter, PrecondChoice precond);
-  
+  //void gibbs_w_block_woodbury(int& cg_iter, PrecondChoice precond, bool sampling=true); // future: for low rank
   void gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling=true);
     
   arma::vec Ddiag;
@@ -328,6 +333,11 @@ public:
     Si = arma::inv(arma::trimatu(S));
     Sigma = S.t() * S;
     Q = Si * Si.t();
+    
+    // future
+    //A = S.t();
+    //Aplus = arma::pinv(A);
+    //AplusT = Aplus.t();
     
     compute_V();
     

@@ -57,6 +57,17 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// effective_sample_size
+arma::mat effective_sample_size(const arma::cube& draws);
+RcppExport SEXP _spiox_effective_sample_size(SEXP drawsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::cube& >::type draws(drawsSEXP);
+    rcpp_result_gen = Rcpp::wrap(effective_sample_size(draws));
+    return rcpp_result_gen;
+END_RCPP
+}
 // iox
 arma::mat iox(const arma::mat& x, const arma::mat& y, int i, int j, const arma::mat& S, const arma::mat& theta, bool matern, bool diag_only, bool at_limit);
 RcppExport SEXP _spiox_iox(SEXP xSEXP, SEXP ySEXP, SEXP iSEXP, SEXP jSEXP, SEXP SSEXP, SEXP thetaSEXP, SEXP maternSEXP, SEXP diag_onlySEXP, SEXP at_limitSEXP) {
@@ -429,6 +440,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_spiox_Correlationc", (DL_FUNC) &_spiox_Correlationc, 5},
     {"_spiox_dag_for_gridded_cols", (DL_FUNC) &_spiox_dag_for_gridded_cols, 2},
     {"_spiox_daggp_build", (DL_FUNC) &_spiox_daggp_build, 9},
+    {"_spiox_effective_sample_size", (DL_FUNC) &_spiox_effective_sample_size, 1},
     {"_spiox_iox", (DL_FUNC) &_spiox_iox, 9},
     {"_spiox_sfact", (DL_FUNC) &_spiox_sfact, 5},
     {"_spiox_Sigma_x_sfact_cpp", (DL_FUNC) &_spiox_Sigma_x_sfact_cpp, 6},

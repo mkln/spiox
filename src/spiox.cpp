@@ -272,11 +272,10 @@ void SpIOX::update_BW_asis(int& cg_iter, arma::mat& B, arma::mat& W, bool sampli
 
   B = arma::mat(b.memptr(), p, q);
   W = eta - X * B;
-  
 }
 
 void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling){
-  // ----- per-entry inverse noise variance (zero at missing) -----
+  // per-entry inverse noise variance (zero at missing)
   arma::mat invD_mat(n, q, arma::fill::zeros);
   arma::mat invSqrtD_mat(n, q, arma::fill::zeros);
   for(unsigned int j = 0; j < q; ++j){
@@ -426,7 +425,7 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling){
   x0.tail(Nw) = arma::vectorise(W);
   
   arma::vec sol = pcg_mf(post_prec_mv, apply_Minv, cg_iter, rhs, x0,
-                         1e-4, 500, num_threads);
+                         5*1e-5, 500, num_threads);
 
   // unpack and keep YXB consistent 
   // YXB = Y - X B_new = (YXB_old + X B_old) - X B_new
@@ -435,6 +434,7 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling){
   W = arma::mat(sol.memptr() + Nb,  n, q);
   YXB += X * (B_old - B);
 }
+
 
 void SpIOX::vi_Beta_UQ(){
   if(vi_it > vi_min_iter){
@@ -922,7 +922,7 @@ void SpIOX::gibbs_w_sequential_byoutcome(){
     arma::vec Mi_m_prior = - daggps[j].H.t() * V.cols(notj) * Q.submat(notj, jx);
     arma::vec rhs = Mi_m_prior + HDs.col(j);
     
-    W.col(j) = pcg_diag_solve(post_prec, rhs, W.col(j), 1e-4, 500, 1e-14, num_threads);
+    W.col(j) = pcg_diag_solve(post_prec, rhs, W.col(j), 1e-5, 500, 1e-14, num_threads);
     V.col(j) = daggps[j].H_times_A(W.col(j)); // keep here
   }
   
@@ -969,7 +969,6 @@ void SpIOX::gibbs_w_block(int& cg_iter, PrecondChoice precond){
   
   // preconditioner 
   arma::vec Mdiag_vec;   // Jacobi
-  arma::mat Sigma;       // PPCG
   std::function<void(const arma::vec&, arma::vec&)> apply_Minv;
   
   if(precond == PRECOND_JACOBI){
@@ -1003,8 +1002,6 @@ void SpIOX::gibbs_w_block(int& cg_iter, PrecondChoice precond){
     };
       
   } else { 
-    Sigma = arma::inv_sympd(Q);
-  
     apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){
       arma::mat R(const_cast<double*>(r_in.memptr()), n, q, false, true);
       arma::mat Z(z_out.memptr(),                     n, q, false, true);
@@ -1025,16 +1022,13 @@ void SpIOX::gibbs_w_block(int& cg_iter, PrecondChoice precond){
   }
   
   // ----- RHS -----
-  arma::mat YXB_safe = YXB;
-  YXB_safe.elem(arma::find(missing_mat)).zeros();
-  
-  arma::vec post_Cmean      = arma::vectorise(YXB_safe % invD_mat);
+  arma::vec post_Cmean      = arma::vectorise(YXB % invD_mat);
   arma::vec vnorm           = arma::vectorise(arma::randn(n, q) % invSqrtD_mat);
   arma::vec post_meansample = post_Cmean + arma::vectorise(Unorm) + vnorm;
   
   arma::vec wbefore = arma::vectorise(W);
   arma::vec w = pcg_mf(post_prec_mv, apply_Minv, cg_iter, post_meansample,
-                       wbefore, 1e-4, 500, num_threads);
+                       wbefore, 1e-5, 500, num_threads);
   
   W = arma::mat(w.memptr(), n, q);
 }
@@ -1120,6 +1114,11 @@ void SpIOX::update_Sigma_iwishart(){
   Si = arma::chol(Q, "lower");
   S = arma::inv(arma::trimatl(Si));
   Sigma = S.t() * S;
+  
+  // future
+  //A = S.t();
+  //Aplus = arma::pinv(A);
+  //AplusT = Aplus.t();
 }
 
 void SpIOX::update_Sigma_vi(){
@@ -1143,6 +1142,12 @@ void SpIOX::update_Sigma_vi(){
   Sigma = Sigma_UQ / (df_post - q - 1);  
   Q = arma::inv_sympd(Sigma);
   Si = arma::chol(Q, "lower");
+  S = arma::inv(arma::trimatl(Si));
+  
+  // future
+  //A = S.t();
+  //Aplus = arma::pinv(A);
+  //AplusT = Aplus.t();
 }
 
 void SpIOX::sample_Y_misaligned(const arma::uvec& theta_changed){
@@ -1253,7 +1258,7 @@ void SpIOX::sample_Y_misaligned(const arma::uvec& theta_changed){
 }
 
 void SpIOX::update_BWSigma_px(){
-  arma::mat A = arma::zeros(q,q);
+  arma::mat SA = arma::zeros(q,q);
   arma::mat randnormmat = arma::randn(p+q, q);
   
 #ifdef _OPENMP
@@ -1278,16 +1283,21 @@ void SpIOX::update_BWSigma_px(){
     arma::vec BAj = cholV.t() * ( cholV * ZZ.t() * yj / Ddiag(j) + randnormmat.col(j));
     
     B.col(j) = BAj.head_rows(p);
-    A.col(j) = BAj.tail_rows(q);
+    SA.col(j) = BAj.tail_rows(q);
     
-    W.col(j) = Zj * A.col(j);
+    W.col(j) = Zj * SA.col(j);
     YXB.col(j) = Y.col(j) - X * B.col(j);
   }
   
-  Sigma = A.t() * Sigma * A;
+  Sigma = SA.t() * Sigma * SA;
   S = arma::chol(Sigma, "upper");
   Si = arma::inv(arma::trimatu(S));
   Q = Si * Si.t();
+  
+  // future
+  //A = S.t();
+  //Aplus = arma::pinv(A);
+  //AplusT = Aplus.t();
 }
 
 void SpIOX::response_gibbs(int it, int sample_sigma, bool sample_beta, bool update_theta, bool sample_tausq){
@@ -1375,10 +1385,10 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
         const double avg_jac  = cost_jacobi / n_probe_jac;
         const double avg_ppcg = cost_ppcg   / n_probe_ppcg;
         precond_choice = (avg_jac <= avg_ppcg) ? PRECOND_JACOBI : PRECOND_PPCG;
-        Rcpp::Rcout << "[gibbs_BW_block] locking in "
-                    << (precond_choice == PRECOND_JACOBI ? "Jacobi" : "Prior")
-                    << " (avg cost: Jacobi=" << avg_jac
-                    << ", Prior=" << avg_ppcg << ")\n";
+        //Rcpp::Rcout << "[gibbs_BW_block] locking in "
+        //            << (precond_choice == PRECOND_JACOBI ? "Jacobi" : "Prior")
+        //            << " (avg cost: Jacobi=" << avg_jac
+        //            << ", Prior=" << avg_ppcg << ")\n";
       }
     } else {
       gibbs_BW_block(cg_iter, precond_choice);
@@ -1390,6 +1400,12 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
       tstart = std::chrono::steady_clock::now();
       update_B(); 
       timings(0) += time_count(tstart);  
+    }
+    
+    if(latent_model == 4){
+      // future
+      int pg_iter = 0;
+      //gibbs_w_block_woodbury(pg_iter, PRECOND_JACOBI);
     }
     
     if(latent_model == 2){
@@ -1441,6 +1457,15 @@ void SpIOX::response_vi(){
 }
 
 void SpIOX::latent_vi(){
+  auto t0 = std::chrono::high_resolution_clock::now();
+  auto t_prev = t0;
+  auto checkpoint = [&](const char* label){
+    auto t_now = std::chrono::high_resolution_clock::now();
+    double ms = std::chrono::duration<double, std::milli>(t_now - t_prev).count();
+    Rcpp::Rcout << "[latent_vi] " << label << ": " << ms << " ms\n";
+    t_prev = t_now;
+  };
+  
   int cg_iter = 0;
   if(precond_choice == PRECOND_PROBE){
     // Alternate Jacobi / PPCG during the probe phase.
@@ -1470,32 +1495,49 @@ void SpIOX::latent_vi(){
   } else {
     gibbs_BW_block(cg_iter, precond_choice); //gibbs_w_block
   }
+  checkpoint("gibbs_BW_block");
+  
   W_centering();
+  checkpoint("W_centering #1");
   
   // working V with sampled B and W
   compute_V();
-
+  checkpoint("compute_V #1");
+  
   // PX
   update_BWSigma_px();
+  checkpoint("update_BWSigma_px");
+  
   W_centering();
+  checkpoint("W_centering #2");
+  
   compute_V();
+  checkpoint("compute_V #2");
   
   // Update E(Sigma) using MC approx of E(quad forms)
   update_Sigma_vi();
+  checkpoint("update_Sigma_vi");
   
   // Update E(Ddiag) using MC approx of E(quad forms)
   update_Ddiag_vi(); 
+  checkpoint("update_Ddiag_vi");
   
   // compute covariance in B iteratively
   vi_Beta_UQ();
+  checkpoint("vi_Beta_UQ");
   
   // update running means for E(B) and E(W)
   update_running_means(E_B, B);
   update_running_means(E_W, W, false); //**
-
+  checkpoint("update_running_means");
+  
+  double total_ms = std::chrono::duration<double, std::milli>(
+    std::chrono::high_resolution_clock::now() - t0).count();
+  Rcpp::Rcout << "[latent_vi] TOTAL: " << total_ms << " ms (cg_iter=" 
+              << cg_iter << ")\n";
+  
   vi_it ++;
 }
-
 
 
 void SpIOX::map(){
@@ -1547,7 +1589,12 @@ void SpIOX::map(){
   Sigma = S_post / (df_post + q + 1); // mode of IW
   Q = arma::inv_sympd(Sigma);         
   Si = arma::chol(Q, "lower");       
-
+  S = arma::inv(arma::trimatl(Si));
+  
+  // future
+  //A = S.t();
+  //Aplus = arma::pinv(A);
+  //AplusT = Aplus.t();
 }
 
 

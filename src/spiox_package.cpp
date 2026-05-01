@@ -197,12 +197,16 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     Rcpp::stop("Invalid MCMC sampling option. Choose 1/2/3.");
   }
   
-  std::string fit_descr = "single-site sampler (n sequential, q block)";
-  if(sampling==1){
-    fit_descr = "block sampler (nq block) ~ slow!";
+  // default sampling=1
+  std::string fit_descr = "block Beta-W sampler (npq^2 block)";
+  if(sampling==2){
+    fit_descr = "single-site sampler (n sequential, q block)";
   }
   if(sampling==3){
     fit_descr = "single-outcome sampler (q sequential, n block)";
+  }
+  if(sampling==4){
+    fit_descr = "experimental block sampler (q sequential, n block)";
   }
   
 #ifdef _OPENMP
@@ -434,7 +438,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   int wait_time_before_stop = 5;
   
   // for artifacts in other subfunctions.
-  int latent_model = 2; 
+  int latent_model = 1; 
   
   
 #ifdef _OPENMP

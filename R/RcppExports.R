@@ -13,6 +13,14 @@ daggp_build <- function(coords, dag, phi, sigmasq, nu, tausq, matern = 1L, num_t
     .Call(`_spiox_daggp_build`, coords, dag, phi, sigmasq, nu, tausq, matern, num_threads, dag_opts)
 }
 
+#' Compute ESS for every entry of an MCMC sample of N x K matrices.
+#'
+#' @param draws Cube of dimension N x K x T (slice t = sample t).
+#' @return N x K matrix of effective sample sizes.
+effective_sample_size <- function(draws) {
+    .Call(`_spiox_effective_sample_size`, draws)
+}
+
 iox <- function(x, y, i, j, S, theta, matern = TRUE, diag_only = FALSE, at_limit = FALSE) {
     .Call(`_spiox_iox`, x, y, i, j, S, theta, matern, diag_only, at_limit)
 }
