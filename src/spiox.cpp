@@ -1452,12 +1452,12 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
 }
 
 void SpIOX::response_vi(){
-  Rcpp::Rcout << "B\n";
+  //Rcpp::Rcout << "B\n";
   update_B();
-  Rcpp::Rcout << "V\n";
+  //Rcpp::Rcout << "V\n";
   // V = whitened Y-XB or W
   compute_V();
-  Rcpp::Rcout << "S\n";
+  //Rcpp::Rcout << "S\n";
   update_Sigma_vi();
 }
 
