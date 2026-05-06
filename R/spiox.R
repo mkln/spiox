@@ -118,7 +118,7 @@ spiox <- function(Y, X, coords, m = 15,
     coords <- coords[cc,,drop=FALSE]
     
     nava <- sum(cc)
-    warning(paste0("Fitting on ", nava, " points (others are partly missing)"))
+    message(paste0("Fitting on ", nava, " points (others are partly missing)"))
   }
   
   n <- nrow(Y)

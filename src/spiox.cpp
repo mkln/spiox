@@ -111,52 +111,45 @@ void SpIOX::compute_V(){
 
 void SpIOX::update_B(){
   if(latent_model==0){
-    // update B via gibbs for the response model
-    
-    //S^T * S = Sigma
-    std::chrono::steady_clock::time_point tstart;
-    std::chrono::steady_clock::time_point tend;
-    int timed = 0;
-    //Rcpp::Rcout << "------- builds0 ----" << endl;
-    tstart = std::chrono::steady_clock::now();
-    
     arma::vec daggp_logdets = arma::zeros(q);
     
-#ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
-#endif
-    for(unsigned int j=0; j<q; j++){
-      daggp_logdets(j) = daggps.at(j).precision_logdeterminant;
-      
-        Ytilde.col(j) = daggps.at(j).H_times_A(Y.col(j), daggp_use_H);// * Y.col(j);
-        HX.slice(j) = daggps.at(j).H_times_A(X, daggp_use_H);// * X;
-      
-      for(unsigned int i=0; i<q; i++){
-        Xtilde.submat(i * n,       j * p,
-                      (i+1) * n-1, (j+1) * p - 1) = Si(j,i) * HX.slice(j); 
+    for (unsigned int j = 0; j < q; ++j) {
+      daggp_logdets(j)  = daggps.at(j).precision_logdeterminant;
+      Ytilde.col(j)     = daggps.at(j).H_times_A(Y.col(j), daggp_use_H);
+      HX.slice(j)       = daggps.at(j).H_times_A(X,        daggp_use_H);
+    }
+  
+    arma::mat HX_mat(HX.memptr(), n, p * q, false, true);   // no-copy view of the cube
+    arma::mat G = HX_mat.t() * HX_mat;                      // (qp x qp)
+    
+    arma::mat XtX(q * p, q * p);
+    for (unsigned int a = 0; a < q; ++a) {
+      for (unsigned int b = 0; b < q; ++b) {
+        XtX.submat(a * p, b * p, (a + 1) * p - 1, (b + 1) * p - 1) =
+          Q(a, b) *
+          G.submat(a * p, b * p, (a + 1) * p - 1, (b + 1) * p - 1);
       }
     }
     
-    arma::vec ytilde = arma::vectorise(Ytilde * Si);
-    tend = std::chrono::steady_clock::now();
-    timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
-    //Rcpp::Rcout << timed << endl;
+    arma::mat YS = Ytilde * Q;                          // n x q
+    arma::vec XtY(q * p);
+    for (unsigned int a = 0; a < q; ++a) {
+      XtY.subvec(a * p, (a + 1) * p - 1) = HX.slice(a).t() * YS.col(a);
+    }
     
-    //Rcpp::Rcout << "------- builds3 ----" << endl;
-    tstart = std::chrono::steady_clock::now();
-    
-    arma::mat randnormat = (vi ? 0.0 : 1.0) * arma::randn(p*q);
-    
+    // Posterior precision and sample (if not vi)
+    arma::mat post_precision = XtX;
     arma::vec vecB_Var = arma::vectorise(B_Var);
-    arma::mat post_precision = arma::diagmat(1.0/vecB_Var) + Xtilde.t() * Xtilde;
-    arma::mat pp_ichol = arma::inv(arma::trimatl(arma::chol(post_precision, "lower")));
-    Beta_UQ = pp_ichol.t() * pp_ichol;
-    arma::vec beta = Beta_UQ * Xtilde.t() * ytilde + pp_ichol.t() *randnormat;
-    B = arma::mat(beta.memptr(), p, q);
+    post_precision.diag()   += 1.0 / vecB_Var;             
     
-    tend = std::chrono::steady_clock::now();
-    timed = std::chrono::duration_cast<std::chrono::microseconds>(tend - tstart).count();
-    //Rcpp::Rcout << timed << endl;
+    arma::mat L        = arma::chol(post_precision, "lower");
+    arma::mat pp_ichol = arma::inv(arma::trimatl(L));
+    Beta_UQ            = pp_ichol.t() * pp_ichol;
+    
+    arma::mat randnormat = (vi ? 0.0 : 1.0) * arma::randn(p * q);
+    arma::vec beta       = Beta_UQ * XtY + pp_ichol.t() * randnormat;
+    B = arma::mat(beta.memptr(), p, q);
     
   } else {
     // update B via gibbs for the latent model
@@ -600,6 +593,7 @@ arma::uvec SpIOX::upd_theta_metrop_conditional(){
   }
   auto t0 = steady_clock::now();
   
+
   if(gridded){
     // gridded data -- 
 #ifdef _OPENMP
@@ -1126,16 +1120,26 @@ void SpIOX::update_Sigma_vi(){
     update_running_means(VTV_ma, VTV);
     Sigma_UQ = arma::eye(q,q) + VTV_ma;
   } else {
-    // trace terms
-    arma::mat E2 = arma::zeros(q, q);
-    for (unsigned int i = 0; i < q; ++i){
-      arma::mat Xi = Xtilde.rows(i * n, (i+1) * n - 1);
-      for (unsigned int j = 0; j < q; ++j){
-        arma::mat Xj = Xtilde.rows(j * n, (j+1) * n - 1);
-        E2(i,j) = arma::trace(Xi * Beta_UQ * Xj.t());
-      }
+    arma::mat E2(q, q, arma::fill::zeros);
+  #ifdef _OPENMP
+  #pragma omp parallel
+  #endif
+  {
+    arma::mat E2_local(q, q, arma::fill::zeros);
+    #ifdef _OPENMP
+    #pragma omp for nowait schedule(static)
+    #endif
+    for (int l = 0; l < (int)p; ++l) {
+      arma::mat A = arma::reshape(Ytilde.col(l), n, q);
+      arma::mat B = arma::reshape(Xtilde.col(l), n, q);
+      E2_local += A.t() * B;
     }
-    Sigma_UQ = arma::eye(q,q) + V.t()*V + E2;
+    #ifdef _OPENMP
+    #pragma omp critical
+    #endif
+    E2 += E2_local;
+  }
+    Sigma_UQ = arma::eye(q, q) + V.t() * V + arma::symmatu(E2);
   }
   
   double df_post = q + n;
@@ -1462,7 +1466,7 @@ void SpIOX::latent_vi(){
   auto checkpoint = [&](const char* label){
     auto t_now = std::chrono::high_resolution_clock::now();
     double ms = std::chrono::duration<double, std::milli>(t_now - t_prev).count();
-    Rcpp::Rcout << "[latent_vi] " << label << ": " << ms << " ms\n";
+    //Rcpp::Rcout << "[latent_vi] " << label << ": " << ms << " ms\n";
     t_prev = t_now;
   };
   
