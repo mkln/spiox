@@ -113,7 +113,9 @@ void SpIOX::update_B(){
   if(latent_model==0){
     arma::vec daggp_logdets = arma::zeros(q);
     
+#ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
+#endif
     for (unsigned int j = 0; j < q; ++j) {
       daggp_logdets(j)  = daggps.at(j).precision_logdeterminant;
       Ytilde.col(j)     = daggps.at(j).H_times_A(Y.col(j), daggp_use_H);
@@ -261,7 +263,7 @@ void SpIOX::update_BW_asis(int& cg_iter, arma::mat& B, arma::mat& W, bool sampli
   // ----- PCG solve -----
   arma::vec bbefore = arma::vectorise(B);
   arma::vec b = pcg_mf(post_prec_mv, apply_Minv, cg_iter, post_meansample,
-                       bbefore, 1e-6, 500, num_threads);
+                       bbefore, 1e-6, n, num_threads);
 
   B = arma::mat(b.memptr(), p, q);
   W = eta - X * B;
@@ -418,7 +420,7 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling){
   x0.tail(Nw) = arma::vectorise(W);
   
   arma::vec sol = pcg_mf(post_prec_mv, apply_Minv, cg_iter, rhs, x0,
-                         5*1e-5, 500, num_threads);
+                         5*1e-5, n, num_threads);
 
   // unpack and keep YXB consistent 
   // YXB = Y - X B_new = (YXB_old + X B_old) - X B_new
@@ -574,7 +576,6 @@ arma::uvec SpIOX::upd_theta_metrop_conditional(){
   arma::mat phisig_cur = arma::zeros(which_theta_elem.n_elem, q);
   arma::mat theta_alt = theta; // proposals
   
-  // easy
   for(int j=0; j<q; j++){
     c_theta_adapt[j].count_proposal();
     phisig_cur.col(j) = theta(which_theta_elem, oneuv*j);
@@ -593,7 +594,6 @@ arma::uvec SpIOX::upd_theta_metrop_conditional(){
   }
   auto t0 = steady_clock::now();
   
-
   if(gridded){
     // gridded data -- 
 #ifdef _OPENMP
@@ -1022,7 +1022,7 @@ void SpIOX::gibbs_w_block(int& cg_iter, PrecondChoice precond){
   
   arma::vec wbefore = arma::vectorise(W);
   arma::vec w = pcg_mf(post_prec_mv, apply_Minv, cg_iter, post_meansample,
-                       wbefore, 1e-5, 500, num_threads);
+                       wbefore, 1e-5, n, num_threads);
   
   W = arma::mat(w.memptr(), n, q);
 }
@@ -1120,25 +1120,23 @@ void SpIOX::update_Sigma_vi(){
     update_running_means(VTV_ma, VTV);
     Sigma_UQ = arma::eye(q,q) + VTV_ma;
   } else {
+    arma::mat HX_mat(HX.memptr(), n, p * q, false, true);   // no-copy view of the cube
+    arma::mat G = HX_mat.t() * HX_mat;                       // (pq x pq)
+    
     arma::mat E2(q, q, arma::fill::zeros);
-  #ifdef _OPENMP
-  #pragma omp parallel
-  #endif
-  {
-    arma::mat E2_local(q, q, arma::fill::zeros);
-    #ifdef _OPENMP
-    #pragma omp for nowait schedule(static)
-    #endif
-    for (int l = 0; l < (int)p; ++l) {
-      arma::mat A = arma::reshape(Ytilde.col(l), n, q);
-      arma::mat B = arma::reshape(Xtilde.col(l), n, q);
-      E2_local += A.t() * B;
+    
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+    for (int a = 0; a < (int)q; ++a) {
+      for (unsigned int b = a; b < q; ++b) {                 // upper triangle only
+        E2(a, b) = arma::accu(
+          Beta_UQ.submat(a * p, b * p, (a + 1) * p - 1, (b + 1) * p - 1) %
+            G.submat(a * p, b * p, (a + 1) * p - 1, (b + 1) * p - 1)
+        );
+      }
     }
-    #ifdef _OPENMP
-    #pragma omp critical
-    #endif
-    E2 += E2_local;
-  }
+    
     Sigma_UQ = arma::eye(q, q) + V.t() * V + arma::symmatu(E2);
   }
   
@@ -1311,7 +1309,7 @@ void SpIOX::response_gibbs(int it, int sample_sigma, bool sample_beta, bool upda
   arma::uvec theta_has_changed = arma::zeros<arma::uvec>(q);
   if(update_theta){
     if(q>2){
-      theta_has_changed = upd_theta_metrop_conditional();
+      theta_has_changed = upd_theta_metrop_conditional(); 
     } else {
       bool block_changed = upd_theta_metrop();
       theta_has_changed += block_changed;
@@ -1454,9 +1452,12 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
 }
 
 void SpIOX::response_vi(){
+  Rcpp::Rcout << "B\n";
   update_B();
+  Rcpp::Rcout << "V\n";
   // V = whitened Y-XB or W
   compute_V();
+  Rcpp::Rcout << "S\n";
   update_Sigma_vi();
 }
 
@@ -1537,8 +1538,8 @@ void SpIOX::latent_vi(){
   
   double total_ms = std::chrono::duration<double, std::milli>(
     std::chrono::high_resolution_clock::now() - t0).count();
-  Rcpp::Rcout << "[latent_vi] TOTAL: " << total_ms << " ms (cg_iter=" 
-              << cg_iter << ")\n";
+  //Rcpp::Rcout << "[latent_vi] TOTAL: " << total_ms << " ms (cg_iter=" 
+  //            << cg_iter << ")\n";
   
   vi_it ++;
 }
