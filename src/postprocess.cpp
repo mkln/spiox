@@ -143,13 +143,12 @@ Rcpp::List iox_make_fij(int i, int j,
       std::vector<arma::mat> L(q);
       for (int ii = 0; ii < q; ii++) {
         arma::vec theta_m_j = theta_m.col(ii);
-        DagGP daggp(coords, theta_m_j, custom_dag, 
+        DagGP daggp(coords, theta_m_j, custom_dag,
                     dag_opts,
-                    cov_model_matern, 
-                    false,
+                    cov_model_matern,
                     1);
-        
-        L[ii] = daggp.H_solve_A(arma::eye(n, n), false);
+
+        L[ii] = daggp.H_solve_A(arma::eye(n, n));
       }
       
       arma::mat M = L[i] * L[j].t();
@@ -211,8 +210,8 @@ arma::cube iox_make_fij0(const arma::mat& coords,
         arma::vec theta_j = theta_m.col(j);
         DagGP daggp(coords, theta_j, custom_dag,
                     dag_opts, cov_model_matern,
-                    false, num_threads);
-        L[j] = daggp.H_solve_A(arma::eye(n, n), false);
+                    num_threads);
+        L[j] = daggp.H_solve_A(arma::eye(n, n));
       }
       
       for (int i = 0; i < q; i++) {

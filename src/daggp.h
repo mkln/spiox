@@ -1,157 +1,122 @@
 
-#ifndef DAGGP 
+#ifndef DAGGP
 #define DAGGP
 
 #include <RcppArmadillo.h>
+#include <Eigen/SparseCore>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 #include <algorithm>
 #include <string>
 
+#include "omp_import.h"
 #include "covariance.h"
 
 using namespace std;
 
+// DagGP no longer stores the sparse H or Ci as members.  Vecchia factors
+// live as the row-wise (hrows / ax / sqrtR / h) representation, which is
+// what the operator interfaces (H_times_A / Ht_times_A / H_solve_A /
+// Ht_solve_A) consume.  Callers that genuinely need the sparse matrix
+// (R-exported daggp_build, the latent_model=2 single-site sampler,
+// PPCG sparse solves, etc.) build one on demand via make_H() / make_Ci().
 class DagGP {
 public:
   int nr;
   arma::mat coords;
   arma::vec theta;
-  
+
+  // Optional per-location nugget added to the diagonal of the covariance
+  // blocks consumed by compute_comps.  Empty (default) means "no nugget".
+  arma::vec nugget;
+
   double precision_logdeterminant;
   double logdens(const arma::vec& x);
-  void update_theta(const arma::vec& newtheta, bool update_H=true);
-  arma::sp_mat H, Ci;
-  void initialize_H();
-  bool use_Ci;
-  
+  void update_theta(const arma::vec& newtheta);
+
   arma::field<arma::uvec> dag;
-  
-  // compute and store markov blanket
+
+  // compute and store markov blanket (= parents ∪ children ∪ co-parents
+  // of children); built directly from `dag` without going through H/Ci.
   arma::field<arma::uvec> mblanket;
-  // coloring
+  // coloring (for the latent_model=2 single-site sampler)
   arma::field<arma::uvec> colors;
-  
-  // storing just the nonzero elements of rows of H
+
+  // Row-wise H representation: nonzeros of H row i are at columns ax(i)
+  // with values hrows(i).  ax(i) = [i, dag(i)...]; the diagonal entry
+  // 1/sqrtR(i) is at position 0 of hrows(i).
   arma::field<arma::uvec> ax;
-  arma::field<arma::vec> hrows; 
+  arma::field<arma::vec> hrows;
   arma::vec sqrtR;
   arma::field<arma::vec> h;
-  void compute_comps(bool update_H=false);
-  arma::mat H_times_A(const arma::mat& A, bool use_spmat=true);
-  arma::mat H_solve_A(const arma::mat& A, bool use_spmat=true);
-  arma::mat Ht_solve_A(const arma::mat& A, bool use_spmat);
-  
+
+  // Eigen mirror of H (and its transpose) for the four hot-path operators
+  // H_times_A / Ht_times_A / H_solve_A / Ht_solve_A.  Column-major sparse so
+  // the triangular solves (forward on Lower H, back on Upper H^T) take the
+  // column-traversal path Eigen specialises for.  Rebuilt at the end of
+  // every compute_comps() — cost is O(nnz), amortised against the Vecchia
+  // factorisation that just ran in the same call.
+  Eigen::SparseMatrix<double> H_eigen;    // n x n, lower triangular
+  Eigen::SparseMatrix<double> Ht_eigen;   // n x n, upper triangular (= H_eigen^T)
+  void build_H_eigen();
+
+  void compute_comps();
+
+  // Operator-style: all four dispatch to the Eigen mirror built at the end
+  // of compute_comps().  The use_spmat parameter is retained for ABI
+  // compatibility with existing call sites but is ignored — the Eigen path
+  // is always taken.
+  arma::mat H_times_A(const arma::mat& A, bool use_spmat=false) const;
+  arma::mat Ht_times_A(const arma::mat& A, bool use_spmat=false) const;
+  arma::mat H_solve_A(const arma::mat& A, bool use_spmat=false) const;
+  arma::mat Ht_solve_A(const arma::mat& A, bool use_spmat=false) const;
+
+  // Build the lower-triangular Vecchia precision Cholesky H on demand,
+  // from sqrtR/h/dag/cache_map.  O(n·m) cost.  Use sparingly — only in
+  // sites that need structural sparse access (R export, the latent_model=2
+  // single-site sampler, PPCG sparse solves).
+  arma::sp_mat make_H() const;
+
+  // diag(H^T H) computed in O(n·m) without materialising H.  Used by
+  // Jacobi preconditioners that need the per-column squared norm of H.
+  arma::vec H_col_squared_norms() const;
+
   // info about covariance model:
   int matern; // 0: pexp; 1: matern; 2: wave
   double * bessel_ws;
-  
-  //double ldens;
+
   DagGP(){};
-  
+
+  // dag_opts:  0 = non-gridded (no cache amortisation, each node computes
+  //                its own parent block);
+  //           -1 = gridded coords + translation-invariant kernel.
   DagGP(
-    const arma::mat& coords_in, 
+    const arma::mat& coords_in,
     const arma::vec& theta_in,
     const arma::field<arma::uvec>& custom_dag,
     int dag_opts=0,
     int covariance_matern=1,
-    bool use_Ci_in=false,
     int num_threads_in=1);
-  
+
   // utils
   arma::uvec oneuv;
   int n_threads;
-  
-  // find common parents, prune dag and cache objs
-  int max_prune;
+
+  // Gridded amortisation: when true, compute_comps reuses Pinv / h / CPC
+  // across nodes that share a parent-offset pattern.
+  bool gridded;
   arma::umat cache_map;
   arma::field<arma::uvec> dag_cache;
   arma::uvec child_cache;
-  void prune_dag_cache();
   void build_grid_exemplars();
   void color_from_mblanket();
-  
+  // Compute the Markov blanket from the DAG (parents + children +
+  // co-parents-of-children) without materialising H or Ci.
+  void build_mblanket_from_dag();
+
   arma::mat Corr_export(const arma::mat& cx, const arma::uvec& ix, const arma::uvec& jx, int matern, bool same);
 };
 
-
-static inline std::vector<int> set_unique_sorted(std::vector<int> v) {
-  std::sort(v.begin(), v.end());
-  v.erase(std::unique(v.begin(), v.end()), v.end());
-  return v;
-}
-
-static inline std::string key_of_vec(const std::vector<int>& v) {
-  if (v.empty()) return std::string();
-  std::string s; s.reserve(v.size() * 3);
-  for (size_t i = 0; i < v.size(); ++i) {
-    s += std::to_string(v[i]);
-    if (i + 1 < v.size()) s.push_back(',');
-  }
-  return s;
-}
-
-static inline std::vector<int> intersect_sorted(const std::vector<int>& a,
-                                                const std::vector<int>& b) {
-  std::vector<int> out;
-  out.reserve(std::min(a.size(), b.size()));
-  std::set_intersection(a.begin(), a.end(), b.begin(), b.end(),
-                        std::back_inserter(out));
-  return out;
-}
-
-// postings: parent id -> sorted vector (1-based) of nodes having that parent
-using Postings = std::unordered_map<int, std::vector<int>>;
-
-static inline int support_size_of_subset(const std::vector<int>& subset,
-                                         const Postings& postings,
-                                         int min_support) {
-  std::vector<const std::vector<int>*> lists; lists.reserve(subset.size());
-  for (int p : subset) {
-    auto it = postings.find(p);
-    if (it == postings.end()) return 0;
-    lists.push_back(&it->second);
-  }
-  std::sort(lists.begin(), lists.end(),
-            [](const std::vector<int>* A, const std::vector<int>* B) {
-              return A->size() < B->size();
-            });
-  if ((int)lists.front()->size() < min_support) return 0;
-  
-  std::vector<int> acc = *lists[0];
-  for (size_t k = 1; k < lists.size(); ++k) {
-    std::vector<int> tmp;
-    tmp.reserve(std::min(acc.size(), lists[k]->size()));
-    std::set_intersection(acc.begin(), acc.end(),
-                          lists[k]->begin(), lists[k]->end(),
-                          std::back_inserter(tmp));
-    acc.swap(tmp);
-    if ((int)acc.size() < min_support) return 0;
-  }
-  return (int)acc.size();
-}
-
-static inline std::vector<int> nodes_having_subset(const std::vector<int>& subset,
-                                                   const Postings& postings) {
-  std::vector<const std::vector<int>*> lists; lists.reserve(subset.size());
-  for (int p : subset) lists.push_back(&postings.at(p));
-  std::sort(lists.begin(), lists.end(),
-            [](const std::vector<int>* A, const std::vector<int>* B) {
-              return A->size() < B->size();
-            });
-  std::vector<int> acc = *lists[0];
-  for (size_t k = 1; k < lists.size(); ++k) {
-    std::vector<int> tmp;
-    tmp.reserve(std::min(acc.size(), lists[k]->size()));
-    std::set_intersection(acc.begin(), acc.end(),
-                          lists[k]->begin(), lists[k]->end(),
-                          std::back_inserter(tmp));
-    acc.swap(tmp);
-    if (acc.empty()) break;
-  }
-  return acc;
-}
 
 static inline std::vector<double> sorted_unique_col(const arma::vec& x) {
   arma::vec u = arma::unique(x);
@@ -190,5 +155,6 @@ static inline std::string key_from_offsets(const arma::Mat<arma::uword>& idx,
   }
   return s;
 }
+
 
 #endif

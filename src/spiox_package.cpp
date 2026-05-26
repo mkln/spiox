@@ -14,8 +14,8 @@ arma::field<arma::sp_mat> spiox_H_list(const arma::mat& coords,
   int q = Theta.n_cols;
   arma::field<arma::sp_mat> Hlist(q);
   for(int j=0; j<q; j++){
-    DagGP daggp(coords, Theta.col(j), custom_dag, 0, covariance_matern, false, num_threads);
-    Hlist(j) = daggp.H;
+    DagGP daggp(coords, Theta.col(j), custom_dag, 0, covariance_matern, num_threads);
+    Hlist(j) = daggp.make_H();
   }
   return Hlist;
 }
@@ -40,7 +40,7 @@ arma::mat spiox_simulate(const arma::mat& coords,
   
   // induce spatial dependence
   for(unsigned int j=0; j<q; j++){
-    DagGP daggp(coords, Theta.col(j), custom_dag, 0, covariance_matern, false, num_threads);
+    DagGP daggp(coords, Theta.col(j), custom_dag, 0, covariance_matern, num_threads);
     
     W.col(j) = daggp.H_solve_A(V.col(j));
     W.col(j) -= arma::mean(W.col(j));
@@ -189,10 +189,23 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           bool sample_Sigma=true,
                           bool sample_Ddiag=true,
                           const arma::uvec& update_Theta = arma::ones<arma::uvec>(4),
-                          int num_threads = 1, 
-                          int sampling=2){
-  
-  
+                          int num_threads = 1,
+                          int sampling=2,
+                          int cg_preconditioner = 0){
+
+  // cg_preconditioner selector (sampling = 1 only — the joint BW block sampler):
+  //   0 = auto (probe POSTERIOR for 5 sweeps, then JACOBI for 5 with budget cap;
+  //             lock in whichever uses fewer CG iters)
+  //   1 = JACOBI    (diagonal of the joint precision operator)
+  //   2 = POSTERIOR (block-diagonal-on-(B,W) PC with exact dense B half and
+  //                  Σ-mixed VAPREC W half — see SpIOX::PrecondChoice doc)
+  //
+  // For sampling = 3 (per-outcome sequential) the only supported PC is the
+  // hard-coded JACOBI fallback inside gibbs_w_sequential_byoutcome.
+  if(cg_preconditioner < 0 || cg_preconditioner > 2){
+    Rcpp::stop("cg_preconditioner must be in {0,1,2} (auto/jacobi/posterior).");
+  }
+
   if(sampling==0){
     Rcpp::stop("Invalid MCMC sampling option. Choose 1/2/3.");
   }
@@ -227,61 +240,85 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   if(print_every > 0){
     Rcpp::Rcout << "Preparing for GP-IOX latent model, MCMC " << fit_descr << endl;
   }
-  
+
   SpIOX iox_model(Y, X, coords, custom_dag, dag_opts,
                   sampling,
                   Beta_start,
                   W_start,
                   Sigma_start,
-                  Theta_start, 
+                  Theta_start,
                   update_Theta,
                   Ddiag_start,
                   matern,
-                  num_threads, 0); // 0 for vi_min_iter
-  
+                  num_threads,
+                  0);                 // vi_min_iter
+
+  // Override the default adaptive-probe choice if the caller requested a fixed
+  // preconditioner.  PROBE = 0 (the default) runs the auto-pick logic.  Only
+  // the joint BW block sampler (sampling = 1) honours the choice; sampling = 3
+  // uses a fixed JACOBI inside gibbs_w_sequential_byoutcome.
+  if(sampling == 1 && cg_preconditioner > 0){
+    iox_model.precond_choice = static_cast<SpIOX::PrecondChoice>(cg_preconditioner);
+  }
+
   // storage
   arma::cube Beta = arma::zeros(iox_model.p, q, mcmc);
   arma::cube Sigma = arma::zeros(q, q, mcmc);
   arma::cube theta = arma::zeros(4, q, mcmc);
   arma::mat Ddiag = arma::zeros(q, mcmc);
   arma::cube W = arma::zeros(n, q, mcmc);
-  
+
+  // CG telemetry: per-iteration CG iteration count and an integer code
+  // recording which preconditioner ran (0 unset / 1 jacobi / 2 ppcg / 3 vrpc).
+  arma::ivec cg_iters(mcmc, arma::fill::zeros);
+  arma::ivec cg_pcond(mcmc, arma::fill::zeros);
+
   if(print_every > 0){
     Rcpp::Rcout << "Starting MCMC" << endl;
   }
-  
+
   bool theta_needs_updating = arma::any(update_Theta == 1);
-  
+
   for(unsigned int m=0; m<mcmc; m++){
-    
+
     iox_model.latent_gibbs(m, sample_precision, sample_Beta, theta_needs_updating, sample_Ddiag);
-    
+
     Beta.slice(m) = iox_model.B;
     Sigma.slice(m) = iox_model.Sigma;
     theta.slice(m) = iox_model.theta;
     Ddiag.col(m) = iox_model.Ddiag;
     W.slice(m) = iox_model.W;
 
+    cg_iters(m) = iox_model.last_cg_iter;
+    cg_pcond(m) = iox_model.last_precond_used;
+
     bool print_condition = (print_every>0);
     if(print_condition){
       print_condition = print_condition & (!(m % print_every));
     };
     if(print_condition){
-      Rcpp::Rcout << "Iteration: " <<  m+1 << " of " << mcmc << endl;
+      const char* pc_name =
+        cg_pcond(m) == 1 ? "jacobi"    :
+        cg_pcond(m) == 2 ? "posterior" : "n/a";
+      Rcpp::Rcout << "Iteration: " <<  m+1 << " of " << mcmc
+                  << "  (CG: " << cg_iters(m)
+                  << " iters, pc=" << pc_name << ")" << endl;
     }
-    
+
     bool interrupted = checkInterrupt();
     if(interrupted){
       Rcpp::stop("Interrupted by the user.");
     }
   }
-  
+
   return Rcpp::List::create(
     Rcpp::Named("Beta") = Beta,
     Rcpp::Named("Sigma") = Sigma,
     Rcpp::Named("Theta") = theta,
     Rcpp::Named("W") = W,
     Rcpp::Named("Ddiag") = Ddiag,
+    Rcpp::Named("cg_iters") = cg_iters,
+    Rcpp::Named("cg_preconditioner") = cg_pcond,
     Rcpp::Named("timings") = iox_model.timings,
     Rcpp::Named("markov_blanket") = iox_model.daggps[0].mblanket,
     Rcpp::Named("cache_map") = iox_model.daggps[0].cache_map

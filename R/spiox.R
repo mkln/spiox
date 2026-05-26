@@ -50,6 +50,25 @@
 #'     \item `update_Theta`: integer vector of length 3 indicating which of (`phi`, `nu`, `alpha`) to update via MCMC (1 = update, 0 = fixed). Defaults to `c(0,0,0)` for latent, `c(1,0,1)` for response. \emph{Note: `alpha` is forced to 0 for `method="latent"`}.
 #'     \item `tol`: numeric. Convergence tolerance for Variational Inference. Defaults to `1e-2`.
 #'     \item `vi_pred_smp`: integer. Number of predictive samples to draw when using VI. Defaults to 0.
+#'     \item `cg_preconditioner`: character or integer. CG preconditioner for
+#'       the joint BW block sampler (`method = "latent"`, `fit = "mcmc"`,
+#'       `debug$sampling = 1L`). Choices:
+#'       \itemize{
+#'         \item `"auto"` (default): probe POSTERIOR for the first 5 Gibbs sweeps,
+#'           then JACOBI for the next 5 with a budget cap of `2 · max(POSTERIOR
+#'           CG iters)`. Lock in whichever converged in fewer CG iterations on
+#'           average (POSTERIOR by default if JACOBI hits the cap without
+#'           converging on any probe sweep).
+#'         \item `"jacobi"`: diagonal of the joint precision operator. Cheap per
+#'           apply; usually weak.
+#'         \item `"posterior"`: block-diagonal-on-(B,W) preconditioner. Exact
+#'           dense Cholesky on the B block (per-outcome `p×p`), Σ-mixed
+#'           Vecchia-precision factors on the W block (per-outcome `H_A,j`
+#'           sandwiched with the correlation matrix of Σ). Built once per
+#'           Gibbs sweep; tends to use far fewer CG iters than JACOBI when Σ
+#'           has substantial off-diagonal cross-outcome structure.
+#'       }
+#'       Ignored for `debug$sampling != 1L` and for `method = "response"`.
 #'   }
 #' @param debug Optional named list of MCMC controls, primarily for targeted development and sampling restriction:
 #'   \itemize{
@@ -165,17 +184,43 @@ spiox <- function(Y, X, coords, m = 15,
   default_update_theta <- if (method == "latent") c(0L, 0L, 0L) else c(1L, 0L, 1L)
   
   opts_defaults <- list(
-    update_Theta = default_update_theta,
-    num_threads  = RhpcBLASctl::get_num_cores(),
-    tol          = 1e-2,
-    matern       = 1,
-    nu           = 0.5,
-    vi_pred_smp  = 0
+    update_Theta      = default_update_theta,
+    num_threads       = RhpcBLASctl::get_num_cores(),
+    tol               = 1e-2,
+    matern            = 1,
+    nu                = 0.5,
+    vi_pred_smp       = 0,
+    # CG preconditioner choice for the joint BW block sampler (sampling = 1).
+    # One of: "auto" (probe POSTERIOR vs JACOBI), "jacobi", "posterior".
+    # Ignored for other samplers and for method = "response".
+    cg_preconditioner = "auto"
   )
   opts <- modifyList(opts_defaults, if (is.null(opts)) list() else opts)
   opts$vi_pred_smp <- as.integer(opts$vi_pred_smp)
   stopifnot("opts$update_Theta must be length 3" = length(opts$update_Theta) == 3L)
-  
+
+  # Translate opts$cg_preconditioner from string to integer code expected by
+  # the C++ side.  Codes (sampling = 1, the joint BW block sampler):
+  #   0 = auto       (probe POSTERIOR for 5 sweeps, then JACOBI for 5 with a
+  #                   2·max(POSTERIOR iters) budget cap, lock in the winner)
+  #   1 = jacobi     (diagonal of the joint precision operator)
+  #   2 = posterior  (block-diagonal-on-(B,W) PC with exact dense B half and
+  #                   Σ-mixed Vecchia-precision W half)
+  cg_pc_codes <- c(auto = 0L, jacobi = 1L, posterior = 2L)
+  cg_pc_key <- if (is.numeric(opts$cg_preconditioner)) {
+    as.integer(opts$cg_preconditioner)
+  } else {
+    code <- cg_pc_codes[tolower(as.character(opts$cg_preconditioner))]
+    if (is.na(code)) {
+      stop("Invalid opts$cg_preconditioner: '",
+           opts$cg_preconditioner,
+           "'. Use one of: ", paste(names(cg_pc_codes), collapse = ", "), ".")
+    }
+    code
+  }
+  opts$cg_preconditioner_int <- cg_pc_key
+
+
   # Thread management
   if (opts$num_threads > 1) {
     RhpcBLASctl::blas_set_num_threads(1)
@@ -296,21 +341,22 @@ spiox <- function(Y, X, coords, m = 15,
     ),
     
     "latent:mcmc" = spiox_latent(
-      Y[dag$order,,drop=F], X[dag$order,,drop=F], coords[dag$order,,drop=F], 
+      Y[dag$order,,drop=F], X[dag$order,,drop=F], coords[dag$order,,drop=F],
       dag$dag,
-      Beta_start, 
-      W_start[dag$order,,drop=F], 
+      Beta_start,
+      W_start[dag$order,,drop=F],
       Sigma_start, Theta_start, Ddiag_start,
-      mcmc         = iter, 
-      print_every  = print_every, 
-      matern       = opts$matern, 
-      dag_opts     = dag_opts,
-      sample_Beta  = debug$sample_Beta, 
-      sample_Sigma = debug$sample_Sigma,
-      sample_Ddiag = debug$sample_Ddiag,
-      update_Theta = update_Theta_full,
-      num_threads  = as.integer(opts$num_threads),
-      sampling     = as.integer(debug$sampling)
+      mcmc              = iter,
+      print_every       = print_every,
+      matern            = opts$matern,
+      dag_opts          = dag_opts,
+      sample_Beta       = debug$sample_Beta,
+      sample_Sigma      = debug$sample_Sigma,
+      sample_Ddiag      = debug$sample_Ddiag,
+      update_Theta      = update_Theta_full,
+      num_threads       = as.integer(opts$num_threads),
+      sampling          = as.integer(debug$sampling),
+      cg_preconditioner = opts$cg_preconditioner_int
     ),
     
     "response:vi" = spiox_response_vi(

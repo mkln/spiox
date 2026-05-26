@@ -9,8 +9,8 @@ dag_for_gridded_cols <- function(coords, m = 20L) {
     .Call(`_spiox_dag_for_gridded_cols`, coords, m)
 }
 
-daggp_build <- function(coords, dag, phi, sigmasq, nu, tausq, matern = 1L, num_threads = 1L, dag_opts = 0L) {
-    .Call(`_spiox_daggp_build`, coords, dag, phi, sigmasq, nu, tausq, matern, num_threads, dag_opts)
+daggp_build <- function(coords, dag, phi, sigmasq, nu, tausq, matern = 1L, num_threads = 1L, gridded = FALSE) {
+    .Call(`_spiox_daggp_build`, coords, dag, phi, sigmasq, nu, tausq, matern, num_threads, gridded)
 }
 
 #' Compute ESS for every entry of an MCMC sample of N x K matrices.
@@ -96,8 +96,8 @@ spiox_response <- function(Y, X, coords, custom_dag, Beta_start, Sigma_start, Th
     .Call(`_spiox_spiox_response`, Y, X, coords, custom_dag, Beta_start, Sigma_start, Theta_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, update_Theta, num_threads)
 }
 
-spiox_latent <- function(Y, X, coords, custom_dag, Beta_start, W_start, Sigma_start, Theta_start, Ddiag_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_Beta = TRUE, sample_Sigma = TRUE, sample_Ddiag = TRUE, update_Theta, num_threads = 1L, sampling = 2L) {
-    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, Beta_start, W_start, Sigma_start, Theta_start, Ddiag_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, sample_Ddiag, update_Theta, num_threads, sampling)
+spiox_latent <- function(Y, X, coords, custom_dag, Beta_start, W_start, Sigma_start, Theta_start, Ddiag_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_Beta = TRUE, sample_Sigma = TRUE, sample_Ddiag = TRUE, update_Theta, num_threads = 1L, sampling = 2L, cg_preconditioner = 0L) {
+    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, Beta_start, W_start, Sigma_start, Theta_start, Ddiag_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, sample_Ddiag, update_Theta, num_threads, sampling, cg_preconditioner)
 }
 
 spiox_response_vi <- function(Y, X, coords, custom_dag, dag_opts, Theta, Sigma_start, Beta_start, print_every = 0L, matern = 1L, num_threads = 1L) {

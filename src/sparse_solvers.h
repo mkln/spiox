@@ -28,28 +28,34 @@ arma::vec pcg_mf(
 ){
   const arma::uword n = b.n_elem;
   arma::vec x = (x0.n_elem == n) ? x0 : arma::zeros(n);
-  arma::vec r(n), z(n), p(n), Ap(n), Mb(n);
+  arma::vec r(n), z(n), p(n), Ap(n);
   
   mv(x, Ap);
   r = b - Ap;
-  
-  apply_Minv(b, Mb);
-  const double b_prec_safe = std::max(std::sqrt(std::max(arma::dot(b, Mb), 0.0)), 1e-300);
-  
+
+  // Reference scale for the relative-residual stopping criterion.  Using the
+  // L2 norm of b (unpreconditioned) keeps the criterion preconditioner-
+  // independent: stopping at ||r||_2 / ||b||_2 < tol guarantees the same
+  // *L2 error* in the CG solution regardless of which preconditioner is in
+  // use.  The earlier M^{-1}-norm criterion (sqrt(r^T M^{-1} r) / sqrt(b^T M^{-1} b))
+  // is preconditioner-dependent: PPCG's M^{-1} = K (prior cov) heavily
+  // weights smooth modes, so CG could pass the M-norm tolerance while still
+  // having O(1) residual in rough modes — leading to biased Bhattacharya
+  // draws.  Jacobi's M^{-1} ≈ I makes its M-norm ≈ L2 norm, which is why
+  // Jacobi was already producing correct samples under the old criterion.
+  const double b_l2_safe = std::max(std::sqrt(arma::dot(b, b)), 1e-300);
+
   apply_Minv(r, z);
   p = z;
   double rz_old = arma::dot(r, z);
-  
-  double target = std::sqrt(std::max(rz_old, 0.0)) / b_prec_safe;
-  //if(target <= tol){ Rcpp::Rcout << 0 << " " << target << "\n"; return x; }
-  
+
   k = 0;
   for(; k < maxit; ++k){
     mv(p, Ap);
     const double denom = arma::dot(p, Ap);
     if(!(denom > 0.0)) break;
     const double alpha = rz_old / denom;
-    
+
     double*       xp = x.memptr();
     double*       rp = r.memptr();
     const double* pp = p.memptr();
@@ -61,11 +67,11 @@ arma::vec pcg_mf(
       xp[i] += alpha * pp[i];
       rp[i] -= alpha * ap[i];
     }
-    
+
     apply_Minv(r, z);
     const double rz_new = arma::dot(r, z);
-    
-    target = std::sqrt(std::max(rz_new, 0.0)) / b_prec_safe;
+
+    const double target = std::sqrt(arma::dot(r, r)) / b_l2_safe;
     if(target <= tol){ ++k; break; }
     
     const double beta = rz_new / rz_old;
@@ -76,8 +82,4 @@ arma::vec pcg_mf(
   return x;
 }
 
-arma::mat solve_sparse_lower_matrix(const arma::sp_mat& H, const arma::mat& rhs);
-
-arma::mat solve_sparse_upper_matrix(const arma::sp_mat& U, const arma::mat& rhs);
-  
 #endif

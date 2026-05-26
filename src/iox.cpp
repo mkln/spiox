@@ -107,13 +107,12 @@ arma::mat sfact(const arma::field<arma::uvec>& dag, const arma::mat& S,
   arma::mat result = arma::zeros(q,q);
   
   int dag_opts = 0;
-  bool use_Ci = false;
-  
+
   std::vector<DagGP> daggps(q);
   arma::cube Hinvs(n,n,q);
   for(int i=0; i<q; i++){
-    daggps[i] = DagGP(S, theta.col(i),dag, dag_opts, matern, use_Ci, n_threads);
-    Hinvs.slice(i) = arma::spsolve(daggps[i].H, I1, "lower");
+    daggps[i] = DagGP(S, theta.col(i), dag, dag_opts, matern, n_threads);
+    Hinvs.slice(i) = daggps[i].H_solve_A(I1);
     for(int j=0; j<=i; j++){
       result(i,j) = arma::accu(Hinvs.slice(i)%Hinvs.slice(j))/(n+.0);
     }
@@ -135,13 +134,12 @@ arma::cube Sigma_x_sfact_cpp(const arma::field<arma::uvec>& dag, const arma::mat
   arma::cube Hinvs(n,n,q);
   
   int dag_opts=0;
-  int use_Ci = false;
-  
+
   for(int i=0; i<q; i++){
     arma::mat theta0 = theta.slice(0);
     arma::vec thetai = theta0.col(i);
-    daggps[i] = DagGP(S, thetai, dag, dag_opts, matern, use_Ci, n_threads);
-    Hinvs.slice(i) = arma::spsolve(daggps[i].H, I1, "lower");
+    daggps[i] = DagGP(S, thetai, dag, dag_opts, matern, n_threads);
+    Hinvs.slice(i) = daggps[i].H_solve_A(I1);
   }
   arma::mat theta_curr = theta.slice(0);
   
@@ -159,8 +157,8 @@ arma::cube Sigma_x_sfact_cpp(const arma::field<arma::uvec>& dag, const arma::mat
         // update
         theta_curr = thetam;
         arma::vec thetai = theta_curr.col(i);
-        daggps[i] = DagGP(S, thetai, dag, dag_opts, matern, use_Ci, n_threads);
-        Hinvs.slice(i) = arma::spsolve(daggps[i].H, I1, "lower");
+        daggps[i] = DagGP(S, thetai, dag, dag_opts, matern, n_threads);
+        Hinvs.slice(i) = daggps[i].H_solve_A(I1);
       }
       for(int j=0; j<=i; j++){
         double v = arma::accu( Sigma(i,j,m) * (Hinvs.slice(i) % Hinvs.slice(j)) ) / double(n);

@@ -52,6 +52,15 @@ spiox(
   \item `update_Theta`: integer vector of length 3 indicating which of (`phi`, `nu`, `alpha`) to update via MCMC (1 = update, 0 = fixed). Defaults to `c(0,0,0)` for latent, `c(1,0,1)` for response. \emph{Note: `alpha` is forced to 0 for `method="latent"`}.
   \item `tol`: numeric. Convergence tolerance for Variational Inference. Defaults to `1e-2`.
   \item `vi_pred_smp`: integer. Number of predictive samples to draw when using VI. Defaults to 0.
+  \item `cg_preconditioner`: character or integer. CG preconditioner used by the latent full-block sampler (`method = "latent"`, `fit = "mcmc"`, `debug$sampling = 1L`). One of:
+    \itemize{
+      \item `"auto"` (default): probe Jacobi / PPCG / VRPC for ~15 Gibbs iterations and lock in the cheapest.
+      \item `"jacobi"`: diagonal preconditioner.
+      \item `"ppcg"`: block-diagonal prior-covariance preconditioner (`H^{-1} (Σ ⊗ I) H^{-T}`).
+      \item `"vecchia_response"` (alias `"vrpc"`): Vecchia-response preconditioner whose implied covariance has diagonal blocks equal to the exact per-outcome response marginal `Σ_jj R_j + Ddiag_j I`. Deployed inside a covariance-form Bhattacharya sampler: the CG system is `(K + D) w_aux = YXB - u - δ` with `apply_Minv = P_cov^{-1}`, and `W = u + K · w_aux`. B is sampled afterwards via the conjugate closed-form update.
+    }
+    Ignored for other samplers and for `method = "response"`.
+  \item `m_pc`: integer or `NULL`. Optional separate Vecchia neighbour count to use only for the response preconditioner. `NULL` (default) means use the same `m` as the fit. Smaller values cheapen the per-Gibbs PC build at some cost in CG iterations; larger values tighten the PC at higher build cost. Only used when the VRPC preconditioner is active.
 }}
 
 \item{debug}{Optional named list of MCMC controls, primarily for targeted development and sampling restriction:

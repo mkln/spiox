@@ -1,5 +1,6 @@
 #include "daggp.h"
 #include <thread>
+#include <Eigen/Core>
 
 DagGP::DagGP(
   const arma::mat& coords_in,
@@ -7,15 +8,12 @@ DagGP::DagGP(
   const arma::field<arma::uvec>& custom_dag,
   int dag_opts,
   int covariance_matern,
-  bool use_Ci_in,
   int num_threads_in){
-  
+
   coords = coords_in;
   theta = theta_in;
   nr = coords.n_rows;
-  
-  use_Ci = use_Ci_in; 
-  
+
   dag = custom_dag;
   
   oneuv = arma::ones<arma::uvec>(1);
@@ -26,340 +24,55 @@ DagGP::DagGP(
   n_threads = num_threads_in;
   
   int bessel_ws_inc = MAT_NU_MAX;//see bessel_k.c for working space needs
-  int max_threads = omp_get_max_threads(); // outer parallelism
+  // bessel_ws is indexed by omp_get_thread_num() at call-time.  Methods on
+  // this DagGP may be invoked from any outer parallel context — including
+  // spiox-level omp parallel-for loops that spawn more threads than the
+  // current omp_get_max_threads() setting (e.g. when a previous DagGP was
+  // built with n_threads=1, which sets the OMP default to 1 globally).
+  // Size the buffer for the hardware-concurrency upper bound so it covers
+  // any reasonable outer fan-out and the locally-requested n_threads_in.
+#ifdef _OPENMP
+  int max_threads = std::max({omp_get_num_procs(),
+                              omp_get_max_threads(),
+                              num_threads_in});
+#else
+  int max_threads = std::max(1, num_threads_in);
+#endif
   bessel_ws = (double *) R_alloc(max_threads * bessel_ws_inc, sizeof(double));
-  
+
   //
   mblanket = arma::field<arma::uvec>(nr);
   hrows = arma::field<arma::vec>(nr);
   ax = arma::field<arma::uvec>(nr);
   
-  if(dag_opts != 0){
-    if(dag_opts > 0){
-      // pruning the dag for efficiency
-      // = trim edges to see if there are ties in the parent sets
-      max_prune = dag_opts;
-      
-      cache_map = arma::zeros<arma::umat>(nr, 2);
-      prune_dag_cache();
-    } else {
-      // gridded coords so full cache
-      max_prune = -1;
-      
-      cache_map = arma::zeros<arma::umat>(nr, 2);
-      build_grid_exemplars();
-    }
-  } else {
-    max_prune = 0;
-    dag_cache = dag;                           
+  if (dag_opts == -1) {
+    // Gridded coords + translation-invariant kernel: amortise per-group
+    // Pinv / h / CPC across nodes that share a relative-offset pattern.
+    gridded = true;
+    cache_map = arma::zeros<arma::umat>(nr, 2);
+    build_grid_exemplars();
+  } else if (dag_opts == 0) {
+    // Non-gridded: every node computes its own block.  dag_cache is just
+    // `dag` and cache_map is identity, so the per-group loop in
+    // compute_comps still works without special-casing the non-gridded path.
+    gridded = false;
+    dag_cache = dag;
     cache_map.set_size(nr, 2);
     for (unsigned int i = 0; i < nr; i++) {
-      cache_map(i, 0) = i;                     
-      cache_map(i, 1) = i;                     
+      cache_map(i, 0) = i;
+      cache_map(i, 1) = i;
     }
+  } else {
+    Rcpp::stop("DagGP: dag_opts must be 0 (non-gridded) or -1 (gridded).");
   }
   
   
   compute_comps();
-  initialize_H();
-  
-  arma::wall_clock timer;
-  
-  timer.tic(); 
+  build_mblanket_from_dag();
   color_from_mblanket();
-  double n_secs = timer.toc(); // Stop timer and get seconds
-  //Rcpp::Rcout << "Compute time 1: " << n_secs << " seconds" << std::endl;
-  
 }
 
 
-void DagGP::prune_dag_cache() {
-  // this function simplifies the dag by removing at most max_prune edges from each node
-  // to possibly find that multiple nodes have the same parent set
-  // when parent sets are the same, we can reduce the number of matrix inversions
-  
-  const int n = dag.n_elem;
-  
-  int m = 0;
-  for(int i=0; i<dag.n_elem; i++){
-    m = dag(i).n_elem > m ? dag(i).n_elem : m;
-  }
-  
-  int min_support = 1;
-  // only prune for dags with more than 10 neighbors
-  int min_size = m > 10? std::max(m - max_prune, 10) : m; 
-  
-  //Rcpp::Rcout << "min_size: " << min_size << endl;
-  
-#ifdef _OPENMP
-  if (n_threads > 0) omp_set_num_threads(n_threads);
-#endif
-  
-  // 1) Canonicalize parent sets P[i] (sorted & unique; as std::vector<int>)
-  std::vector< std::vector<int> > P(n);
-  long long edges_before = 0;
-  for (int i = 0; i < n; ++i) {
-    const arma::uvec& vi = dag(i);
-    std::vector<int> tmp; tmp.reserve(vi.n_elem);
-    for (size_t k = 0; k < vi.n_elem; ++k) {
-      int val = (int)vi[k];
-      //if (val > 0) 
-      tmp.push_back(val);
-    }
-    P[i] = set_unique_sorted(tmp);
-    edges_before += (long long)P[i].size();
-  }
-  
-  // 2) Build postings (parent -> nodes), and prune rare parents (< min_support)
-  Postings postings;
-  postings.reserve(n * 2);
-  for (int i = 0; i < n; ++i) {
-    for (int p : P[i]) postings[p].push_back(i); // store nodes as 0-based
-  }
-  for (auto &kv : postings) {
-    auto &vec = kv.second;
-    std::sort(vec.begin(), vec.end());
-    vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
-  }
-  { // drop rare parents
-    std::vector<int> to_drop; to_drop.reserve(postings.size());
-    for (const auto &kv : postings)
-      if ((int)kv.second.size() < min_support) to_drop.push_back(kv.first);
-      for (int p : to_drop) postings.erase(p);
-  }
-  // Drop rare parents from each node's set
-  for (int i = 0; i < n; ++i) {
-    std::vector<int> kept; kept.reserve(P[i].size());
-    for (int p : P[i]) if (postings.find(p) != postings.end()) kept.push_back(p);
-    P[i].swap(kept);
-  }
-  
-  // If nothing left after pruning, return identity mapping with originals
-  bool any_left = false;
-  for (int i = 0; i < n; ++i) { if (!P[i].empty()) { any_left = true; break; } }
-  if (!any_left) {
-    // unique sets = originals; exemplar id = node id
-    dag_cache = arma::field<arma::uvec>(n);
-    for (int i = 0; i < n; ++i) dag_cache(i) = arma::zeros<arma::uvec>(0); // empty after dropping all
-    
-    for (int i = 0; i < n; ++i) { cache_map(i,0) = i; cache_map(i,1) = i; }
-  }
-  
-  // 3) Build candidate node pairs (i<j) by shared parents (parallelized)
-  std::vector< std::pair<int,int> > pairs; 
-  
-  {
-    // gather parent ids to iterate in parallel
-    std::vector<int> parent_ids; parent_ids.reserve(postings.size());
-    for (const auto &kv : postings) parent_ids.push_back(kv.first);
-    
-#ifdef _OPENMP
-    int T = (n_threads > 0 ? n_threads : omp_get_max_threads());
-#else
-    int T = 1;
-#endif
-    std::vector< std::vector< std::pair<int,int> > > buffers(T);
-    
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
-#endif
-    for (int idx = 0; idx < (int)parent_ids.size(); ++idx) {
-#ifdef _OPENMP
-      int tid = omp_get_thread_num();
-#else
-      int tid = 0;
-#endif
-      const int p = parent_ids[idx];
-      const std::vector<int>& nodes = postings[p];
-      const int s = (int)nodes.size();
-      if (s < 2) continue;
-      auto &buf = buffers[tid];
-      for (int a = 0; a < s; ++a) {
-        for (int b = a + 1; b < s; ++b) {
-          buf.emplace_back(nodes[a], nodes[b]);
-        }
-      }
-    }
-    // merge & deduplicate
-    size_t total = 0;
-    for (auto &b : buffers) total += b.size();
-    pairs.reserve(total);
-    for (auto &b : buffers) {
-      pairs.insert(pairs.end(), b.begin(), b.end());
-      std::vector< std::pair<int,int> >().swap(b);
-    }
-  }
-  
-  if (pairs.empty()) {
-    // No shared-parent pairs -> cores = originals
-    dag_cache = arma::field<arma::uvec>(n);
-    long long edges_after = 0;
-    for (int i = 0; i < n; ++i) {
-      dag_cache(i) = arma::conv_to<arma::uvec>::from(P[i]);
-      edges_after += (long long)P[i].size();
-    }
-    for (int i = 0; i < n; ++i) { cache_map(i,0) = i; cache_map(i,1) = i; }
-  }
-  
-  std::sort(pairs.begin(), pairs.end());
-  pairs.erase(std::unique(pairs.begin(), pairs.end()), pairs.end());
-  
-  // 4) Candidate subsets = intersections P[i] ∩ P[j]; keep |S| >= min_size (parallel)
-#ifdef _OPENMP
-  int T_c = (n_threads > 0 ? n_threads : omp_get_max_threads());
-#else
-  int T_c = 1;
-#endif
-  std::vector< std::vector< std::vector<int> > > cands_local(T_c);
-  
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
-#endif
-  for (int k = 0; k < (int)pairs.size(); ++k) {
-#ifdef _OPENMP
-    int tid = omp_get_thread_num();
-#else
-    int tid = 0;
-#endif
-    const int i = pairs[k].first;
-    const int j = pairs[k].second;
-    const auto S = intersect_sorted(P[i], P[j]);
-    if ((int)S.size() >= min_size) cands_local[tid].push_back(S);
-  }
-  
-  // Merge & deduplicate candidates by key
-  std::vector< std::vector<int> > Cands;
-  {
-    std::unordered_set<std::string> seen;
-    for (int t = 0; t < T_c; ++t) {
-      for (auto &S : cands_local[t]) {
-        std::string key = key_of_vec(S);
-        if (!key.empty() && seen.insert(key).second) {
-          Cands.push_back(std::move(S));
-        }
-      }
-      std::vector< std::vector<int> >().swap(cands_local[t]);
-    }
-  }
-  
-  if (Cands.empty()) {
-    dag_cache = arma::field<arma::uvec>(n);
-    long long edges_after = 0;
-    for (int i = 0; i < n; ++i) {
-      dag_cache(i) = arma::conv_to<arma::uvec>::from(P[i]);
-      edges_after += (long long)P[i].size();
-    }
-    for (int i = 0; i < n; ++i) { cache_map(i,0) = i; cache_map(i,1) = i; }
-  }
-  
-  // 5) Compute supports for candidates (parallel), keep those >= min_support
-  std::vector<int> support(Cands.size(), 0);
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
-#endif
-  for (int c = 0; c < (int)Cands.size(); ++c) {
-    support[c] = support_size_of_subset(Cands[c], postings, min_support);
-  }
-  
-  std::vector< std::vector<int> > C_keep;
-  std::vector<int> supp_keep;
-  std::vector<std::string> keys_keep;
-  C_keep.reserve(Cands.size());
-  supp_keep.reserve(Cands.size());
-  keys_keep.reserve(Cands.size());
-  
-  for (size_t c = 0; c < Cands.size(); ++c) {
-    if (support[c] >= min_support) {
-      C_keep.push_back(std::move(Cands[c]));
-      supp_keep.push_back(support[c]);
-      keys_keep.push_back(key_of_vec(C_keep.back()));
-    }
-  }
-  
-  if (C_keep.empty()) {
-    dag_cache = arma::field<arma::uvec>(n);
-    long long edges_after = 0;
-    for (int i = 0; i < n; ++i) {
-      dag_cache(i) = arma::conv_to<arma::uvec>::from(P[i]);
-      edges_after += (long long)P[i].size();
-    }
-    
-    for (int i = 0; i < n; ++i) { cache_map(i,0) = i; cache_map(i,1) = i; }
-
-  }
-  
-  // 6) For each frequent candidate, get the nodes that contain it (parallel)
-  std::vector< std::vector<int> > cand_nodes(C_keep.size());
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
-#endif
-  for (int c = 0; c < (int)C_keep.size(); ++c) {
-    cand_nodes[c] = nodes_having_subset(C_keep[c], postings); 
-  }
-  
-  // 7) Per-node best core (size -> support -> lexicographic key)
-  struct BestCore {
-    int size = -1;
-    int support = -1;
-    std::string key;
-    int cand_index = -1;
-  };
-  std::vector<BestCore> best(n);
-  
-  for (int c = 0; c < (int)C_keep.size(); ++c) {
-    const int sz = (int)C_keep[c].size();
-    const int sp = supp_keep[c];
-    const std::string &ky = keys_keep[c];
-    const std::vector<int> &nodes = cand_nodes[c];
-    for (int node1b : nodes) {
-      const int i = node1b;
-      auto &cur = best[i];
-      bool better = false;
-      if (sz > cur.size) better = true;
-      else if (sz == cur.size && sp > cur.support) better = true;
-      else if (sz == cur.size && sp == cur.support && (cur.key.empty() || ky < cur.key)) better = true;
-      if (better) {
-        cur.size = sz; cur.support = sp; cur.key = ky; cur.cand_index = c;
-      }
-    }
-  }
-  
-  // Chosen cores (fallback to original P[i] if none assigned)
-  std::vector< std::vector<int> > cores(n);
-  for (int i = 0; i < n; ++i) {
-    if (best[i].cand_index >= 0) cores[i] = C_keep[best[i].cand_index];
-    else cores[i] = P[i];
-  }
-  
-  // 8) Deduplicate cores to exemplar ids
-  std::unordered_map<std::string, int> core_to_id;
-  core_to_id.reserve(n * 2);
-  std::vector< std::vector<int> > exemplars; exemplars.reserve(n);
-  
-  for (int i = 0; i < n; ++i) {
-    std::string k = key_of_vec(cores[i]);
-    auto it = core_to_id.find(k);
-    int gid;
-    if (it == core_to_id.end()) {
-      gid = (int)exemplars.size(); // 0-based group id
-      core_to_id.emplace(k, gid);
-      exemplars.push_back(cores[i]);
-    } else {
-      gid = it->second;
-    }
-    cache_map(i, 0) = i;
-    cache_map(i, 1) = gid;
-  }
-  
-  // Convert exemplars to R list and compute edges_after as total size
-
-  dag_cache = arma::field<arma::uvec>(exemplars.size());
-  long long edges_after = 0;
-  for (size_t k = 0; k < exemplars.size(); ++k) {
-    dag_cache(k) = arma::conv_to<arma::uvec>::from(exemplars[k]);
-    edges_after += (long long)exemplars[k].size();
-  }
-}
 
 void DagGP::build_grid_exemplars() {
   // this function computes exemplar sets (parents, i) for gridded data
@@ -374,7 +87,7 @@ void DagGP::build_grid_exemplars() {
   if (N != dag.n_elem) Rcpp::stop("coords / dag size mismatch");
   
   arma::field<arma::uvec> dagplus = dag;
-  if(max_prune < 0){
+  if(gridded){
     // gridded coords, so cache the child too
     for(unsigned int i=0; i<nr; i++){
       dagplus(i) = arma::join_vert(dag(i), oneuv*i);
@@ -423,7 +136,7 @@ void DagGP::build_grid_exemplars() {
   child_cache = arma::zeros<arma::uvec>(G);  // arma::uvec
   
   for (arma::uword g = 0; g < G; ++g) {
-    if(max_prune < 0){
+    if(gridded){
       const arma::uvec& v = exemplar_sets[g];      // expects [parents..., child]
       const arma::uword n = v.n_elem;
       
@@ -499,8 +212,10 @@ void DagGP::color_from_mblanket(){
   
 }
 
-void DagGP::compute_comps(bool update_H){
-  // this function avoids building H since H is always used to multiply a matrix A
+void DagGP::compute_comps(){
+  // Compute the row-wise Vecchia factors (sqrtR, h, hrows, ax) plus the
+  // precision log-determinant.  H is never assembled here — callers that
+  // need a sparse matrix build one on demand via make_H().
   sqrtR = arma::zeros(nr);
   h = arma::field<arma::vec>(nr);
   arma::vec logdetvec(nr);
@@ -528,9 +243,10 @@ void DagGP::compute_comps(bool update_H){
       if (pxg.n_elem == 0u) { Pinv_cache(g).reset(); continue; }
       
       arma::mat Pg  = Correlationf(coords, pxg, pxg, theta, bessel_ws, matern, /*same=*/true);
+      if (nugget.n_elem > 0) Pg.diag() += nugget(pxg);
       Pinv_cache(g) = arma::inv_sympd(Pg);
       
-      if(max_prune < 0){
+      if(gridded){
         const arma::uvec& ixg = oneuv*child_cache(g);
         arma::mat CPt = Correlationf(coords, pxg, ixg, theta, bessel_ws, matern, false);
         h_cache(g) = Pinv_cache(g) * CPt;
@@ -559,7 +275,7 @@ void DagGP::compute_comps(bool update_H){
       const int gid = static_cast<int>(cache_map(i,1));   
       
       arma::uvec px;
-      if(max_prune < 0){
+      if(gridded){
         // gridded, look up original dag
         // because dag_cache has the exemplar parents
         px = dag(i);
@@ -570,7 +286,8 @@ void DagGP::compute_comps(bool update_H){
       ax(i) = arma::join_vert(ix, px);
       
       arma::mat CC  = Correlationf(coords, ix, ix, theta, bessel_ws, matern, true);
-      
+      if (nugget.n_elem > 0) CC(0, 0) += nugget(i);
+
       arma::mat CPC;
       arma::vec hi;
       
@@ -580,7 +297,7 @@ void DagGP::compute_comps(bool update_H){
       } else {
         //const arma::mat& Pinv = Pinv_cache(gid);   
         // gridded data
-        if(max_prune < 0){
+        if(gridded){
           hi = h_cache(gid);   
           CPC = CPC_cache(gid);
         } else {
@@ -598,13 +315,6 @@ void DagGP::compute_comps(bool update_H){
       
       hrows(i) = (px.n_elem ? arma::join_vert(rowoneR, mhR) : rowoneR);
       logdetvec(i) = -std::log(sqrtR(i));
-      
-      if(update_H){
-        H(i,i) = 1.0/sqrtR(i);
-        for (arma::uword j = 0; j < px.n_elem; ++j) {
-          H(i, px(j)) = -hi(j) / sqrtR(i);        
-        }
-      }
     } catch (...) {
       errors(i) = 1;
     }
@@ -618,202 +328,180 @@ void DagGP::compute_comps(bool update_H){
   if(arma::any(errors)){
     Rcpp::stop("Failure in building sparse DAG GP. Check coordinates/values of theta.");
   }
-  
-  if(use_Ci){ Ci = H.t() * H; }
+
   precision_logdeterminant = 2 * arma::accu(logdetvec);
+
+  // Build the Eigen mirror of H once the row-wise representation is final.
+  // All four operators below dispatch to this; the arma row-wise rep stays
+  // around for make_H() / H_col_squared_norms() and is also the source of
+  // truth here.
+  build_H_eigen();
+}
+
+void DagGP::build_H_eigen() {
+  // Assemble H_eigen (col-major, lower triangular) from the row-wise rep
+  // (ax / hrows / sqrtR).  Triplets are (row, col, value); setFromTriplets
+  // sorts and packs them into CSC.  Cost ~ O(nnz log nnz) — negligible
+  // against the surrounding Vecchia factorisation.
+  std::vector<Eigen::Triplet<double>> trips;
+  arma::uword nnz_guess = nr;
+  for (int i = 0; i < nr; ++i) nnz_guess += ax(i).n_elem;
+  trips.reserve(nnz_guess);
+  for (int i = 0; i < nr; ++i) {
+    const arma::vec&  vals = hrows(i);
+    const arma::uvec& cols = ax(i);
+    for (arma::uword idx = 0; idx < vals.n_elem; ++idx) {
+      trips.emplace_back((int)i, (int)cols(idx), vals(idx));
+    }
+  }
+  H_eigen.resize(nr, nr);
+  H_eigen.setFromTriplets(trips.begin(), trips.end());
+  H_eigen.makeCompressed();
+  // Explicit upper-triangular transpose for the H^T paths.  Eigen could
+  // form .transpose() lazily, but materialising once gives the back-solve
+  // a native column-major Upper view with no per-call wrapper overhead.
+  Ht_eigen = H_eigen.transpose();
+  Ht_eigen.makeCompressed();
 }
 
 
 double DagGP::logdens(const arma::vec& x){
-  double loggausscore = arma::conv_to<double>::from( x.t() * H.t() * H * x );
+  // x^T H^T H x = ||H x||^2 ; use the operator path (no sparse H).
+  arma::vec Hx = H_times_A(x);
+  double loggausscore = arma::dot(Hx, Hx);
   return 0.5 * ( precision_logdeterminant - loggausscore );
 }
 
-void DagGP::update_theta(const arma::vec& newtheta, bool update_H){
+void DagGP::update_theta(const arma::vec& newtheta){
   theta = newtheta;
-  compute_comps(update_H);
+  compute_comps();
 }
 
-void DagGP::initialize_H(){
-  // building sparse H and Ci
+arma::vec DagGP::H_col_squared_norms() const {
+  // diag(H^T H)(c) = sum_k H(k, c)^2.  Row k of H stores values hrows(k)
+  // at columns ax(k); scatter the squared values into the result.
+  arma::vec result = arma::zeros(nr);
+  for (int k = 0; k < nr; ++k) {
+    const arma::vec&  vals = hrows(k);
+    const arma::uvec& cols = ax(k);
+    for (arma::uword idx = 0; idx < vals.n_elem; ++idx) {
+      result(cols(idx)) += vals(idx) * vals(idx);
+    }
+  }
+  return result;
+}
+
+arma::sp_mat DagGP::make_H() const {
+  // Materialise H from the row-wise representation.  Cost ~ O(n·m).
   unsigned int H_n_elem = nr;
-  for(int i=0; i<nr; i++){
-    if(max_prune < 0){
-      // gridded, look up original dag
-      // because dag_cache has the exemplar parents
+  for (int i = 0; i < nr; i++) {
+    if (gridded) {
       H_n_elem += dag(i).n_elem;
     } else {
-      int u = cache_map(i, 1);                 
-      H_n_elem += dag_cache(u).n_elem;      
+      int u = cache_map(i, 1);
+      H_n_elem += dag_cache(u).n_elem;
     }
-    
-       
   }
   arma::umat H_locs(2, H_n_elem);
-  arma::vec H_values(H_n_elem);
-  unsigned int ix=0;
-  for(int i=0; i<nr; i++){
+  arma::vec  H_values(H_n_elem);
+  unsigned int ix = 0;
+  for (int i = 0; i < nr; i++) {
     H_locs(0, ix) = i;
     H_locs(1, ix) = i;
-    H_values(ix) = 1.0/sqrtR(i);
-    ix ++;
-    int u;
+    H_values(ix)  = 1.0 / sqrtR(i);
+    ix++;
     arma::uvec daghere;
-    if(max_prune < 0){
-      u = i;
-      daghere = dag(u);
+    if (gridded) {
+      daghere = dag(i);
     } else {
-      u = cache_map(i,1);
-      daghere = dag_cache(u);
+      daghere = dag_cache(cache_map(i, 1));
     }
-    
-    for(unsigned int j=0; j<daghere.n_elem; j++){
+    for (unsigned int j = 0; j < daghere.n_elem; j++) {
       H_locs(0, ix) = i;
       H_locs(1, ix) = daghere(j);
-      H_values(ix) =  -h(i)(j)/sqrtR(i);
-      ix ++;
+      H_values(ix)  = -h(i)(j) / sqrtR(i);
+      ix++;
     }
   }
-  H = arma::sp_mat(H_locs, H_values, nr, nr);
-  
-  // compute precision  to get the markov blanket
-  Ci = H.t() * H;
-  
-  // comp markov blanket
-  for(int i=0; i<nr; i++){
-    int nonzeros_in_col = 0;
-    for (arma::sp_mat::const_iterator it = Ci.begin_col(i); it != Ci.end_col(i); ++it) {
-      nonzeros_in_col ++;
-    }
-    mblanket(i) = arma::zeros<arma::uvec>(nonzeros_in_col-1); // not the diagonal
-    int ix = 0;
-    for (arma::sp_mat::const_iterator it = Ci.begin_col(i); it != Ci.end_col(i); ++it) {
-      if(it.row() != i){ 
-        mblanket(i)(ix) = it.row();
-        ix ++;
-      }
-    }
-  }
-  
+  return arma::sp_mat(H_locs, H_values, nr, nr);
 }
 
-arma::mat DagGP::H_solve_A(const arma::mat& A, bool use_spmat){
-  if(!use_spmat){
-    // solve using rows of H stored in hrows and indexes in ax
-    arma::mat Y = A; 
-    for (arma::uword i = 0; i < nr; ++i) {
-      double diag_val = 0.0;
-      bool diag_found = false;
-      const arma::vec& row_vals = hrows(i);
-      const arma::uvec& row_cols = ax(i);
-      for (arma::uword idx = 0; idx < row_vals.n_elem; ++idx) {
-        arma::uword k = row_cols(idx);
-        double val = row_vals(idx);
-        if (k < i) {
-          Y.row(i) -= val * Y.row(k);
-        } else if (k == i) {
-          diag_val = val;
-          diag_found = true;
-        }
-      }
-      Y.row(i) /= diag_val;
+void DagGP::build_mblanket_from_dag() {
+  // Markov blanket of i = parents(i) ∪ children(i) ∪ co-parents-of-children(i).
+  // Computed directly from the DAG without going through Ci = H^T H.
+  std::vector< std::vector<int> > children(nr);
+  for (int k = 0; k < nr; ++k) {
+    const arma::uvec& pk = dag(k);
+    for (unsigned int t = 0; t < pk.n_elem; ++t) {
+      children[(int)pk(t)].push_back(k);
     }
-    return Y;
-  } else {
-    // solve using H matrix 
-    arma::mat Y = A; 
-    for (arma::uword j = 0; j < nr; ++j) {
-      arma::sp_mat::const_col_iterator it = H.begin_col(j);
-      arma::sp_mat::const_col_iterator it_end = H.end_col(j);
-      double diag_val = 0.0;
-      for (arma::sp_mat::const_col_iterator diag_it = it; diag_it != it_end; ++diag_it) {
-        if (diag_it.row() == j) {
-          diag_val = *diag_it;
-          break;
-        }
-      }
-      Y.row(j) /= diag_val;
-      for (; it != it_end; ++it) {
-        arma::uword i = it.row();
-        if (i > j) { 
-          Y.row(i) -= (*it) * Y.row(j);
-        }
+  }
+
+  for (int i = 0; i < nr; ++i) {
+    std::vector<int> blanket;
+    const arma::uvec& pi = dag(i);
+    blanket.reserve(pi.n_elem + 4 * children[i].size());
+    for (unsigned int t = 0; t < pi.n_elem; ++t) blanket.push_back((int)pi(t));
+    for (int c : children[i]) {
+      blanket.push_back(c);
+      const arma::uvec& pc = dag(c);
+      for (unsigned int t = 0; t < pc.n_elem; ++t) {
+        int p = (int)pc(t);
+        if (p != i) blanket.push_back(p);
       }
     }
-    return Y;
+    std::sort(blanket.begin(), blanket.end());
+    blanket.erase(std::unique(blanket.begin(), blanket.end()), blanket.end());
+
+    mblanket(i) = arma::uvec(blanket.size());
+    for (size_t t = 0; t < blanket.size(); ++t) {
+      mblanket(i)(t) = (arma::uword) blanket[t];
+    }
   }
 }
 
-arma::mat DagGP::Ht_solve_A(const arma::mat& A, bool use_spmat){
-  if(!use_spmat){
-    // Solve H^T Y = A using rows of H (column-oriented back substitution).
-    // At step jj (going from nr-1 down to 0): divide Y.row(jj) by H(jj,jj),
-    // then propagate -H(jj,k) * Y.row(jj) into Y.row(k) for each k < jj
-    // stored in row jj of H. Row storage is the natural fit for this.
-    arma::mat Y = A;
-    for (arma::uword jj = nr; jj-- > 0; ) {
-      const arma::vec&  row_vals = hrows(jj);
-      const arma::uvec& row_cols = ax(jj);
-      
-      // First pass: find the diagonal so we can divide before propagating.
-      double diag_val = 0.0;
-      for (arma::uword idx = 0; idx < row_vals.n_elem; ++idx) {
-        if (row_cols(idx) == jj) { diag_val = row_vals(idx); break; }
-      }
-      Y.row(jj) /= diag_val;
-      
-      // Second pass: push solved Y.row(jj) onto earlier rows.
-      for (arma::uword idx = 0; idx < row_vals.n_elem; ++idx) {
-        arma::uword k = row_cols(idx);
-        if (k < jj) {
-          Y.row(k) -= row_vals(idx) * Y.row(jj);
-        }
-      }
-    }
-    return Y;
-  } else {
-    // Solve H^T Y = A using columns of H (row-oriented back substitution).
-    // At step ii: pull contributions from already-solved rows j > ii in
-    // column ii of H, then divide by the diagonal. CSC storage is natural here.
-    arma::mat Y = A;
-    for (arma::uword ii = nr; ii-- > 0; ) {
-      arma::sp_mat::const_col_iterator it     = H.begin_col(ii);
-      arma::sp_mat::const_col_iterator it_end = H.end_col(ii);
-      
-      double diag_val = 0.0;
-      for (; it != it_end; ++it) {
-        arma::uword j = it.row();
-        if (j == ii) {
-          diag_val = *it;
-        } else if (j > ii) {
-          Y.row(ii) -= (*it) * Y.row(j);
-        }
-        // j < ii cannot occur: H is lower triangular.
-      }
-      Y.row(ii) /= diag_val;
-    }
-    return Y;
-  }
+// ---------------------------------------------------------------------------
+// The four sparse operators.  All dispatch to the Eigen mirror H_eigen
+// (col-major lower triangular) and Ht_eigen (col-major upper triangular,
+// stored as the explicit transpose).  Inputs/outputs are arma::mat with
+// column-major contiguous storage; we wrap them in zero-copy Eigen::Map
+// views.  Eigen expression templates handle SIMD and unrolling, and the
+// triangular solves dispatch to its column-walking sparse forward/back
+// substitution — typically several times faster than the row-wise hand-rolled
+// loop on realistic Vecchia DAGs.
+
+arma::mat DagGP::H_solve_A(const arma::mat& A, bool /*use_spmat*/) const {
+  arma::mat Y = A;
+  if (Y.n_rows == 0u || Y.n_cols == 0u) return Y;
+  Eigen::Map<Eigen::MatrixXd> Ye(Y.memptr(), Y.n_rows, Y.n_cols);
+  H_eigen.triangularView<Eigen::Lower>().solveInPlace(Ye);
+  return Y;
 }
 
-arma::mat DagGP::H_times_A(const arma::mat& A, bool use_spmat){
-  // this function avoids building H since H is always used to multiply a matrix A
-  if(!use_spmat){
-    arma::mat result = arma::zeros(nr, A.n_cols);
-    // calculate components for H and Ci
-    for(unsigned int j=0; j<A.n_cols; j++){
-      arma::vec Aj = A.col(j);
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(n_threads)
-#endif
-      for(int i=0; i<nr; i++){
-        result(i, j) = arma::accu(hrows(i).t() * Aj(ax(i)));
-      }
-    }
-    return result;
-  } else {
-    return H * A;
-  }
+arma::mat DagGP::Ht_solve_A(const arma::mat& A, bool /*use_spmat*/) const {
+  arma::mat Y = A;
+  if (Y.n_rows == 0u || Y.n_cols == 0u) return Y;
+  Eigen::Map<Eigen::MatrixXd> Ye(Y.memptr(), Y.n_rows, Y.n_cols);
+  Ht_eigen.triangularView<Eigen::Upper>().solveInPlace(Ye);
+  return Y;
+}
+
+arma::mat DagGP::H_times_A(const arma::mat& A, bool /*use_spmat*/) const {
+  arma::mat result(nr, A.n_cols);
+  if (A.n_cols == 0u) return result;
+  Eigen::Map<const Eigen::MatrixXd> Ae(A.memptr(), A.n_rows, A.n_cols);
+  Eigen::Map<Eigen::MatrixXd>       Re(result.memptr(), nr, A.n_cols);
+  Re.noalias() = H_eigen * Ae;
+  return result;
+}
+
+arma::mat DagGP::Ht_times_A(const arma::mat& A, bool /*use_spmat*/) const {
+  arma::mat result(nr, A.n_cols);
+  if (A.n_cols == 0u) return result;
+  Eigen::Map<const Eigen::MatrixXd> Ae(A.memptr(), A.n_rows, A.n_cols);
+  Eigen::Map<Eigen::MatrixXd>       Re(result.memptr(), nr, A.n_cols);
+  Re.noalias() = Ht_eigen * Ae;
+  return result;
 }
 
 
@@ -826,22 +514,25 @@ arma::mat DagGP::Corr_export(const arma::mat& these_coords,
 //[[Rcpp::export]]
 Rcpp::List daggp_build(const arma::mat& coords, const arma::field<arma::uvec>& dag,
                        double phi, double sigmasq, double nu, double tausq,
-                       int matern=1, int num_threads=1, int dag_opts=0){
-  
+                       int matern=1, int num_threads=1, bool gridded=false){
+
   arma::vec theta(4);
   theta(0) = phi;
   theta(1) = sigmasq;
   theta(2) = nu;
   theta(3) = tausq;
-  
-  //Rcpp::Rcout << "Building DAG-GP model\n";
-  DagGP adag(coords, theta, dag, dag_opts, matern, false, num_threads);
-  
-  arma::sp_mat Ci = adag.H.t() * adag.H;
-  //Rcpp::Rcout << "Done. Returning. \n";
-  
+
+  // dag_opts encodes the gridded flag for DagGP: -1 = gridded (cache by
+  // relative-offset pattern), 0 = non-gridded (each node its own block).
+  const int dag_opts = gridded ? -1 : 0;
+  DagGP adag(coords, theta, dag, dag_opts, matern, num_threads);
+
+  // Materialise H and Ci on demand for the R-side export.
+  arma::sp_mat H  = adag.make_H();
+  arma::sp_mat Ci = H.t() * H;
+
   return Rcpp::List::create(
-    Rcpp::Named("H") = adag.H,
+    Rcpp::Named("H") = H,
     Rcpp::Named("Cinv") = Ci,
     Rcpp::Named("Cinv_logdet") = adag.precision_logdeterminant,
     Rcpp::Named("dag") = adag.dag,
@@ -876,3 +567,4 @@ arma::sp_mat sparse_convert(const Eigen::SparseMatrix<double>& XE){
  
  return result; 
 } */
+
