@@ -738,50 +738,71 @@ void SpIOX::cache_blanket_comps(const arma::uvec& theta_changed){
   // once per theta change.  Used by w_sequential_singlesite (latent_model=2)
   // and missing-data imputation in the response model.
   //
-  // Sparse-structural access (H.col(i), H.cols(blanket)) is required here.
-  // Materialise H_r once per outcome and reuse across all nfill loop bodies.
+  // For each location i:
+  //   Rw_no_Q(ix)(r, s)                       = <col_i(H_r), col_i(H_s)>
+  //   Pblanket_no_Q(ix)(r, s*mbsize + k)      = <col_i(H_r), col_{blanket(k)}(H_s)>
+  //
+  // The original implementation materialised q arma::sp_mat copies via
+  // make_H() (one per outcome) and then walked sparse columns through arma's
+  // CSC machinery.  Here we go directly to the col-major Eigen mirror that
+  // DagGP already keeps (H_eigen), and compute every required sparse-column
+  // inner product via paired InnerIterators — no arma::sp_mat copy, no
+  // intermediate Hitt / Hblanket allocation per location.
   int nfill = latent_model == 2 ? n : rows_with_missing.n_elem;
 
-  std::vector<arma::sp_mat> Hmats(q);
-  for (int r = 0; r < q; ++r) Hmats[r] = daggps[r].make_H();
+  // Sparse-sparse column dot product on col-major Eigen sparse matrices.
+  // O(min(nnz(colA), nnz(colB))) — for Vecchia, both columns have ~m+1 entries
+  // (the diagonal at i + the rows where i appears as a parent), so this is
+  // cheap.  daggps[r] and daggps[s] share the same DAG, so col-i sparsity
+  // patterns match exactly; the merge logic below is kept for safety.
+  auto dot_cols = [](const Eigen::SparseMatrix<double>& A, int colA,
+                     const Eigen::SparseMatrix<double>& B, int colB) -> double {
+    double acc = 0.0;
+    Eigen::SparseMatrix<double>::InnerIterator ia(A, colA), ib(B, colB);
+    while (ia && ib) {
+      if (ia.row() == ib.row()) { acc += ia.value() * ib.value(); ++ia; ++ib; }
+      else if (ia.row() < ib.row())                                ++ia;
+      else                                                         ++ib;
+    }
+    return acc;
+  };
 
 #ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads) //***
+#pragma omp parallel for num_threads(num_threads)
 #endif
   for(int ix=0; ix<nfill; ix++){
     int i = latent_model == 2 ? ix : rows_with_missing(ix);
 
-    // assume all the same dag otherwise we go cray
-    arma::uvec mblanket = daggps[0].mblanket(i);
-    int mbsize = mblanket.n_elem;
+    // Assume all daggps share the same DAG (true by construction; mblanket
+    // depends only on DAG topology, not on theta).
+    const arma::uvec& mblanket = daggps[0].mblanket(i);
+    const int mbsize = mblanket.n_elem;
 
-    // initialization
-    Rw_no_Q(ix) = arma::zeros(q, q);
-    Pblanket_no_Q(ix) = arma::zeros(q, q*mbsize);
+    Rw_no_Q(ix)        = arma::zeros(q, q);
+    Pblanket_no_Q(ix)  = arma::zeros(q, q*mbsize);
 
-    for(int r=0; r<q; r++){
-      for(int s=0; s<=r; s++){
-        Rw_no_Q(ix)(r, s) =
-          arma::accu( Hmats[r].col(i) %
-          Hmats[s].col(i) );
-        if(s!=r){
-          Rw_no_Q(ix)(s, r) = Rw_no_Q(ix)(r, s);
-        }
+    // Rw_no_Q : symmetric q×q of inner products of col i across outcomes.
+    for(int r = 0; r < (int)q; ++r){
+      for(int s = 0; s <= r; ++s){
+        const double v = dot_cols(daggps[r].H_eigen, i,
+                                  daggps[s].H_eigen, i);
+        Rw_no_Q(ix)(r, s) = v;
+        if (s != r) Rw_no_Q(ix)(s, r) = v;
       }
     }
 
-    arma::sp_mat H_i_mat(n, q);
-    for (int r = 0; r < q; ++r) {
-      H_i_mat.col(r) = Hmats[r].col(i);
-    }
-    arma::sp_mat Hitt = H_i_mat.t();
-
-    for (int s = 0; s < q; ++s) {
-      int startcol = s * mbsize;
-      int endcol = (s + 1) * mbsize - 1;
-      arma::sp_mat Hblanket = Hmats[s].cols(mblanket);
-      arma::mat result(Hitt * Hblanket);
-      Pblanket_no_Q(ix).cols(startcol, endcol) = result;
+    // Pblanket_no_Q : block-q of q×mbsize inner-product matrices, one per s.
+    //   Pblanket_no_Q(ix)(r, s*mbsize + k) = <col_i(H_r), col_{mblanket(k)}(H_s)>
+    for(int s = 0; s < (int)q; ++s){
+      const int col_base = s * mbsize;
+      for(int k = 0; k < mbsize; ++k){
+        const int col_idx = (int)mblanket(k);
+        for(int r = 0; r < (int)q; ++r){
+          Pblanket_no_Q(ix)(r, col_base + k) =
+            dot_cols(daggps[r].H_eigen, i,
+                     daggps[s].H_eigen, col_idx);
+        }
+      }
     }
   }
 }
