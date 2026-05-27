@@ -193,15 +193,12 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           int sampling=2,
                           int cg_preconditioner = 0){
 
-  // cg_preconditioner selector (sampling = 1 only — the joint BW block sampler):
-  //   0 = auto (probe POSTERIOR for 5 sweeps, then JACOBI for 5 with budget cap;
-  //             lock in whichever uses fewer CG iters)
-  //   1 = JACOBI    (diagonal of the joint precision operator)
-  //   2 = POSTERIOR (block-diagonal-on-(B,W) PC with exact dense B half and
-  //                  Σ-mixed VAPREC W half — see SpIOX::PrecondChoice doc)
-  //
-  // For sampling = 3 (per-outcome sequential) the only supported PC is the
-  // hard-coded JACOBI fallback inside gibbs_w_sequential_byoutcome.
+  // cg_preconditioner selector:
+  //   0 = auto       (sampling=1: 2-way probe POSTERIOR vs JACOBI; sampling=3: POSTERIOR)
+  //   1 = JACOBI     (sampling=1: diag of joint precision; sampling=3: diag of A_j)
+  //   2 = POSTERIOR  (sampling=1: block-diag PC with Σ-mixed VAPREC W half;
+  //                   sampling=3: per-outcome H_A,jᵀ H_A,j apply — Vecchia
+  //                   approximation of each conditional precision A_j)
   if(cg_preconditioner < 0 || cg_preconditioner > 2){
     Rcpp::stop("cg_preconditioner must be in {0,1,2} (auto/jacobi/posterior).");
   }
@@ -254,10 +251,11 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                   0);                 // vi_min_iter
 
   // Override the default adaptive-probe choice if the caller requested a fixed
-  // preconditioner.  PROBE = 0 (the default) runs the auto-pick logic.  Only
-  // the joint BW block sampler (sampling = 1) honours the choice; sampling = 3
-  // uses a fixed JACOBI inside gibbs_w_sequential_byoutcome.
-  if(sampling == 1 && cg_preconditioner > 0){
+  // preconditioner.  PROBE = 0 (the default) runs the auto-pick logic in the
+  // sampling=1 path; sampling=3 falls back to POSTERIOR on PROBE.  Both the
+  // joint BW block sampler (sampling=1) and the per-outcome sequential
+  // sampler (sampling=3) honour JACOBI / POSTERIOR.
+  if((sampling == 1 || sampling == 3) && cg_preconditioner > 0){
     iox_model.precond_choice = static_cast<SpIOX::PrecondChoice>(cg_preconditioner);
   }
 

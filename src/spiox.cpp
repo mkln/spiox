@@ -947,13 +947,8 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed, bool vi=fal
 }
 */
 
-void SpIOX::gibbs_w_sequential_byoutcome(int& cg_iter, PrecondChoice /*precond*/){
+void SpIOX::gibbs_w_sequential_byoutcome(int& cg_iter, PrecondChoice precond){
   // Per-outcome Gibbs update of W.col(j) | W_{-j}, B, Σ, Ddiag, Y.
-  // Precision-form Bhattacharya with sparse precision matrix
-  //   post_prec_j = Q_jj · C_j^{-1} + diag(invD_j)
-  // solved by `pcg_diag_solve` (Jacobi PC).  The `precond` argument is
-  // accepted for ABI compatibility with the dispatch but is currently ignored
-  // — a POSTERIOR-style PC for this per-outcome sampler is not yet implemented.
   //
   // Conditional model (Gaussian conditional from the IOX latent prior):
   //   prior:   W_j | W_{-j} ~ N( μ_j|-j,  K_j|-j )
@@ -961,24 +956,47 @@ void SpIOX::gibbs_w_sequential_byoutcome(int& cg_iter, PrecondChoice /*precond*/
   //            μ_j|-j = -(1/Q_jj) · H_j^{-1} · (V_{-j} · Q_{-j,j})
   //                     where V_k = H_k W_k (whitened outcomes).
   //   obs:     YXB_j = W_j + ε,  ε ~ N(0, D_j I)   (D_j = Ddiag(j))
+  //
+  // Operator (precision-form, per outcome):
+  //   A_j = Q_jj · H_jᵀ H_j + diag(invD_j)            (n×n SPD)
+  //
+  // Bhattacharya precision-form RHS:
+  //   b = invD ⊙ YXB − H_jᵀ (V_{-j} · Q_{-j,j})
+  //     + sqrt(Q_jj) · H_jᵀ · z_prior   (z_prior ~ N(0, I_n))
+  //     + invSqrtD ⊙ z_lik              (z_lik   ~ N(0, I_n) zeroed at missing)
+  //
+  // Solved by matrix-free PCG.  Both supported preconditioners use Eigen
+  // ops via daggps[j] — no arma::sp_mat is materialised here.
+  //
+  // PRECOND_JACOBI    : M^{-1} = diag(A_j)^{-1}
+  //                     diag(A_j)(k) = Q_jj · ||H_j.col(k)||² + invD(k)
+  // PRECOND_POSTERIOR : M^{-1} = H_A,jᵀ H_A,j   (two sparse mults via Eigen)
+  //                     where H_A,j is the Vecchia precision factor of A_j
+  //                     built once per chain by build_vaprec_factors().
+  //                     This is the per-outcome analogue of the BW POSTERIOR
+  //                     PC, since each conditional precision A_j has the same
+  //                     "Vecchia of K_j-precision + diagonal" shape that
+  //                     vaprec is designed for.
+
+  if(precond == PRECOND_POSTERIOR){
+    build_vaprec_factors();   // idempotent
+  }
 
   arma::mat urands = arma::randn(n, q);
   arma::mat vrands = arma::randn(n, q);
-
-  arma::mat HDs = arma::zeros(n, q);
-  arma::uvec r1q = arma::regspace<arma::uvec>(0,q-1);
+  arma::uvec r1q = arma::regspace<arma::uvec>(0, q-1);
 
   YXB.elem(find(missing_mat)).zeros();
 
   cg_iter = 0;
   int cg_iter_sum = 0;
 
-  for(int j=0; j<q; j++){
+  for(int j = 0; j < (int)q; ++j){
     // per-location diagonal noise contribution for this column j
     arma::vec invD(n, arma::fill::zeros);
     arma::vec invSqrtD(n, arma::fill::zeros);
-    for(int i = 0; i < n; i++){
-      if(!missing_mat(i,j)){
+    for(int i = 0; i < (int)n; ++i){
+      if(!missing_mat(i, j)){
         invD(i)      = 1.0 / Ddiag(j);
         invSqrtD(i)  = 1.0 / std::sqrt(Ddiag(j));
       }
@@ -987,24 +1005,60 @@ void SpIOX::gibbs_w_sequential_byoutcome(int& cg_iter, PrecondChoice /*precond*/
     arma::uvec notj = arma::find(r1q != j);
     arma::uvec jx   = arma::zeros<arma::uvec>(1) + j;
 
-    // Materialise H_j once for the sparse precision solve; reuse the same
-    // factor for the two Ht-times operations below.  Cost is O(n·m).
-    arma::sp_mat Hj = daggps[j].make_H();
+    const double Qjj     = Q(j, j);
+    const double sqrtQjj = std::sqrt(Qjj);
 
-    HDs.col(j) =
-      YXB.col(j) % invD
-    + urands.col(j) % invSqrtD
-    + std::sqrt(Q(j,j)) * Hj.t() * vrands.col(j);
+    // Matrix-free operator A_j v = Q_jj · H_jᵀ (H_j v) + invD ⊙ v
+    auto A_matvec = [&](const arma::vec& v_in, arma::vec& y_out){
+      arma::vec Hv = daggps[j].H_times_A(v_in);
+      y_out = Qjj * daggps[j].Ht_times_A(Hv);
+      for(int i = 0; i < (int)n; ++i){
+        if(!missing_mat(i, j)) y_out(i) += invD(i) * v_in(i);
+      }
+    };
 
-    arma::vec Mi_m_prior = - Hj.t() * V.cols(notj) * Q.submat(notj, jx);
-    arma::vec rhs        = Mi_m_prior + HDs.col(j);
+    // PC apply
+    arma::vec Mdiag;                                       // JACOBI: lives at outer scope so the lambda's reference stays valid
+    std::function<void(const arma::vec&, arma::vec&)> apply_Minv;
+    if(precond == PRECOND_POSTERIOR){
+      apply_Minv = [&, j](const arma::vec& r_in, arma::vec& z_out){
+        z_out.set_size(n);
+        Eigen::Map<const Eigen::VectorXd> Re(r_in.memptr(),  n);
+        Eigen::Map<Eigen::VectorXd>       Ze(z_out.memptr(), n);
+        Eigen::VectorXd y = vaprec_H_eigen[j]  * Re;       // y = H_A · r
+        Ze.noalias()      = vaprec_Ht_eigen[j] * y;        // z = H_Aᵀ · y
+      };
+    } else {  // PRECOND_JACOBI
+      Mdiag = Qjj * daggps[j].H_col_squared_norms() + invD;
+      const double diag_floor = 1e-12;
+      for(arma::uword k = 0; k < Mdiag.n_elem; ++k){
+        if(!(Mdiag(k) > diag_floor)) Mdiag(k) = diag_floor;
+      }
+      apply_Minv = [&Mdiag](const arma::vec& r_in, arma::vec& z_out){
+        z_out = r_in / Mdiag;
+      };
+    }
 
-    arma::sp_mat post_prec = Q(j,j) * (Hj.t() * Hj);
-    post_prec.diag() += invD;
-    W.col(j) = pcg_diag_solve(post_prec, rhs, W.col(j),
-                              1e-5, 500, 1e-14, num_threads);
+    // RHS pieces (all via Eigen Ht_times_A — no arma::sp_mat needed)
+    arma::vec data_term(n);
+    for(int i = 0; i < (int)n; ++i){
+      data_term(i) = invD(i) * YXB(i, j);                  // 0 at missing
+    }
+    arma::vec prior_mean_term = - daggps[j].Ht_times_A(V.cols(notj) * Q.submat(notj, jx));
+    arma::vec noise_prior     = sqrtQjj * daggps[j].Ht_times_A(vrands.col(j));
+    arma::vec noise_lik(n, arma::fill::zeros);
+    for(int i = 0; i < (int)n; ++i){
+      if(!missing_mat(i, j)) noise_lik(i) = invSqrtD(i) * urands(i, j);
+    }
+    arma::vec rhs = data_term + prior_mean_term + noise_prior + noise_lik;
 
-    V.col(j) = daggps[j].H_times_A(W.col(j)); // keep V in sync for next j
+    // PCG solve (warm-started from current W.col(j))
+    int it_j = 0;
+    arma::vec x0 = W.col(j);
+    W.col(j) = pcg_mf(A_matvec, apply_Minv, it_j, rhs, x0, 1e-5, n, num_threads);
+    cg_iter_sum += it_j;
+
+    V.col(j) = daggps[j].H_times_A(W.col(j));              // keep V in sync for next j
   }
 
   cg_iter = cg_iter_sum;
@@ -1563,10 +1617,10 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
     // Non-block latent samplers — they manage B, W, and any inner CG themselves.
     //   latent_model == 2 : single-site Gibbs (w_sequential_singlesite, no PC dispatch).
     //   latent_model == 3 : per-outcome / single-outcome sequential sampler
-    //                       (gibbs_w_sequential_byoutcome).  Currently runs with
-    //                       a fixed JACOBI PC — the POSTERIOR-style PC for this
-    //                       sampler isn't implemented yet, so the PC enum is
-    //                       ignored here.
+    //                       (gibbs_w_sequential_byoutcome).  Honours JACOBI or
+    //                       POSTERIOR via the precond_choice enum.  PROBE
+    //                       falls back to POSTERIOR (per-outcome probe not
+    //                       implemented; POSTERIOR is the safe-default choice).
     if(sample_beta){
       tstart = std::chrono::steady_clock::now();
       update_B();
@@ -1578,10 +1632,12 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
       w_sequential_singlesite(theta_has_changed);
     }
     if(latent_model == 3){
+      const PrecondChoice pc =
+        (precond_choice == PRECOND_JACOBI) ? PRECOND_JACOBI : PRECOND_POSTERIOR;
       int cg_iter_seq = 0;
-      gibbs_w_sequential_byoutcome(cg_iter_seq, PRECOND_JACOBI);
+      gibbs_w_sequential_byoutcome(cg_iter_seq, pc);
       last_cg_iter      = cg_iter_seq;
-      last_precond_used = static_cast<int>(PRECOND_JACOBI);
+      last_precond_used = static_cast<int>(pc);
     }
     timings(5) += time_count(tstart);
 
