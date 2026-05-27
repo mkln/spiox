@@ -890,63 +890,6 @@ void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed){
 
 }
 
-/*
-void SpIOX::w_sequential_singlesite(const arma::uvec& theta_changed, bool vi=false){
-  // stuff to be moved to SpIOX class for latent model
-  arma::mat Di = arma::diagmat(1/Ddiag);
-  
-  // precompute stuff in parallel so we can do fast sequential sampling after
-  arma::mat mvnorm = arma::randn(q, n);
-  
-  arma::field<arma::mat> Hw(n);
-  arma::field<arma::mat> Rw(n);
-  arma::field<arma::mat> Ctchol(n);
-  
-  // V = whitened Y-XB or W
-  
-#ifdef _OPENMP
-//#pragma omp parallel for num_threads(num_threads)
-#endif
-  for(int i=0; i<n; i++){
-    // assume all the same dag otherwise we go cray
-    arma::uvec mblanket = daggps[0].mblanket(i);
-    int mbsize = mblanket.n_elem;
-    
-    Rw(i) = arma::zeros(q, q); 
-    arma::mat Pblanket(q, q*mbsize);
-    for(int r=0; r<q; r++){
-      for(int s=0; s<q; s++){
-        Rw(i)(r, s) = Q(r,s) * 
-          arma::accu( daggps[r].H.col(i) % 
-          daggps[s].H.col(i) );
-        
-        int startcol = s * mbsize;
-        int endcol = (s + 1) * mbsize - 1;
-        for(int j = 0; j < mblanket.n_elem; j++) {
-          int col_idx = mblanket(j);
-          Pblanket(r, startcol + j) = Q(r, s) *
-            arma::accu(daggps[r].H.col(i) %
-            daggps[s].H.col(col_idx));
-        }
-      }
-    }
-    
-    Hw(i) = - Pblanket;
-    Ctchol(i) = arma::inv(arma::trimatl(arma::chol(Rw(i) + Di, "lower")));
-  }
-  
-  // visit every location and sample from latent effects 
-  // conditional on data and markov blanket
-  for(int i=0; i<n; i++){
-    arma::uvec mblanket = daggps[0].mblanket(i);
-    arma::vec meancomp = Hw(i) * arma::vectorise( W.rows(mblanket) ) + Di * arma::trans(YXB.row(i)); 
-    
-    W.row(i) = arma::trans( Ctchol(i).t() * (Ctchol(i) * meancomp + 0*mvnorm.col(i) ));
-  }
-  
-}
-*/
-
 void SpIOX::gibbs_w_sequential_byoutcome(int& cg_iter, PrecondChoice precond){
   // Per-outcome Gibbs update of W.col(j) | W_{-j}, B, Σ, Ddiag, Y.
   //
