@@ -105,8 +105,8 @@ public:
   }
   void sample_Y_misaligned(const arma::uvec& theta_changed);
   
-  // Preconditioner choices for the joint BW PCG in gibbs_BW_block.
-  // Only two real PCs survive — the adaptive PROBE selects between them.
+  // Preconditioner / W-sampler choices for the block latent model.
+  // PROBE (the default) auto-selects among POSTERIOR, RESPONSE, and VADU.
   //
   //   JACOBI    : diagonal of the joint operator (precision form).
   //               O(nq + pq) per apply; nearly free; tends to be a weak PC.
@@ -126,13 +126,16 @@ public:
   //               PC at Σ diagonal.  Extra cost vs the diagonal-Σ version:
   //               one n×q · q×q dense multiply per CG iter (cheap for q small).
   //
-  //   PROBE     : adaptive default.  Runs POSTERIOR for the first 5 sweeps,
-  //               then JACOBI for the next 5 with maxit capped at
-  //               2·max(posterior CG iters).  JACOBI wins iff it converges
-  //               (within the cap) in fewer iters on average; otherwise
-  //               POSTERIOR is locked in.  POSTERIOR is the safe first
-  //               choice — without its iter count, JACOBI could waste many
-  //               sweeps before we'd know it's failing.
+  //   PROBE     : adaptive default.  Compares {POSTERIOR, RESPONSE, VADU}
+  //               (Jacobi excluded) over probe_per_pc sweeps each, then locks
+  //               in the fastest.  A reference candidate runs first, uncapped,
+  //               and sets a CG-iter budget; the rest run capped at the
+  //               reference's worst case and are disqualified if they hit the
+  //               cap without converging.  Reference = RESPONSE when Y is fully
+  //               observed, POSTERIOR when Y has missing entries (the response
+  //               C+D solve degrades under misalignment).  Winner = converged
+  //               candidate with the fewest mean iters (ties to the reference).
+  //               See the probe-state block below.
   //   RESPONSE  : not a PCG branch.  Selects an alternative w-block sampler
   //               (gibbs_w_block_marginal) that samples W in the covariance
   //               (data) domain via the Bhattacharya algorithm, solving
@@ -158,20 +161,30 @@ public:
   };
   PrecondChoice precond_choice = PRECOND_PROBE;
 
-  // Probe state.  Two phases of 5 sweeps each:
-  //   probe_count ∈ [0,5)  : run POSTERIOR, accumulate post_iter_sum and
-  //                          track post_iter_max.
-  //   probe_count ∈ [5,10) : run JACOBI with maxit cap = 2·post_iter_max,
-  //                          accumulate jac_iter_sum and jac_converged_all.
-  //   probe_count == 10    : decide and lock precond_choice.
-  // After lock-in, the probe machinery is dormant (precond_choice ≠ PROBE).
-  int           probe_count        = 0;
+  // Probe state.  The probe compares at most three candidate preconditioners —
+  // {POSTERIOR, RESPONSE, VADU} — over probe_per_pc sweeps each, then locks in
+  // the winner.  Jacobi is deliberately excluded (it stays a user-selectable
+  // option but never participates in auto-selection).
+  //
+  // Candidate ordering depends on the data:
+  //   - any missing data  : reference = POSTERIOR (the marginal C+D response
+  //                          solve degrades when the selection operator kicks
+  //                          in), then RESPONSE, then VADU.
+  //   - fully observed     : reference = RESPONSE (covariance-domain Bhattacharya
+  //                          is typically fastest with aligned data), then
+  //                          POSTERIOR, then VADU.
+  // The reference candidate (probe_order[0]) runs uncapped and sets the iter
+  // budget; every other candidate runs with maxit capped at the reference's
+  // worst-case (max) iteration count.  A candidate that hits the cap without
+  // converging is disqualified.  The winner is the converged candidate with the
+  // lowest mean iteration count (ties resolved in favour of the reference).
+  std::vector<PrecondChoice> probe_order;          // candidates, reference first
+  int           probe_count   = 0;                 // sweeps done so far (across all candidates)
+  int           probe_cap     = 0;                 // iter cap applied to non-reference candidates
+  std::vector<double> probe_iter_sum;              // per-candidate cumulative iters
+  std::vector<int>    probe_iter_max;              // per-candidate worst-case iters
+  std::vector<bool>   probe_converged;             // per-candidate: still converging within budget?
   static constexpr int probe_per_pc = 5;
-  int           post_iter_sum      = 0;
-  int           post_iter_max      = 0;
-  int           jac_iter_sum       = 0;
-  int           jac_iter_cap       = 0;   // = 2 * post_iter_max; set after POSTERIOR phase
-  bool          jac_converged_all  = true; // false if any sweep hit the cap without converging
 
   // Per-outcome state for the POSTERIOR PC.  VAPOP = "Vecchia Approximation
   // of the POsterior Precision": for each outcome j we approximate
@@ -202,10 +215,10 @@ public:
   // on the first POSTERIOR apply.
   void build_vapop_factors();
 
-  // Telemetry: number of CG iterations used in the most-recent gibbs_BW_block
-  // call, plus an integer code for which preconditioner ran
-  // (0 unset / 1 jacobi / 2 posterior).  Read by the outer MCMC driver
-  // and surfaced back to R.
+  // Telemetry: number of CG iterations used in the most-recent W-block update,
+  // plus an integer code for which preconditioner / sampler ran
+  // (0 unset / 1 jacobi / 2 posterior / 3 response / 4 vadu).  Read by the
+  // outer MCMC driver and surfaced back to R.
   int last_cg_iter      = 0;
   int last_precond_used = 0;
   // Wall-clock seconds spent on the one-time ("once" mode) preconditioner
@@ -256,7 +269,11 @@ public:
   // the autostart values is exact and removes the per-sweep rebuild cost.
   int marginal_n_builds = 0;
   void build_marginal_daggps();           // build daggps_marginal once (nugget=Ddiag)
-  void gibbs_w_block_marginal(int& cg_iter, bool sampling=true);
+  // cg_maxit_override > 0 caps the PCG iteration count (used by the probe to
+  // budget the RESPONSE candidate against the reference's measured iters);
+  // 0 means use the default cap (n).
+  void gibbs_w_block_marginal(int& cg_iter, bool sampling=true,
+                              int cg_maxit_override=0);
 
   // Frozen POSTERIOR/VADU preconditioner buffers (built once, "once" mode).
   // chol_MBj : per-outcome p×p Cholesky of the B-half precision.

@@ -54,13 +54,21 @@
 #'       the joint BW block sampler (`method = "latent"`, `fit = "mcmc"`,
 #'       `debug$sampling = 1L`). Choices:
 #'       \itemize{
-#'         \item `"auto"` (default): probe POSTERIOR for the first 5 Gibbs sweeps,
-#'           then JACOBI for the next 5 with a budget cap of `2 · max(POSTERIOR
-#'           CG iters)`. Lock in whichever converged in fewer CG iterations on
-#'           average (POSTERIOR by default if JACOBI hits the cap without
-#'           converging on any probe sweep).
+#'         \item `"auto"` (default): probe the three substantive preconditioners
+#'           `"posterior"`, `"response"`, and `"vadu"` over the first few Gibbs
+#'           sweeps (5 each) and lock in the fastest. A reference candidate runs
+#'           first, uncapped, and sets a CG-iteration budget; the remaining
+#'           candidates run with their CG iterations capped at the reference's
+#'           worst case and are disqualified if they hit the cap without
+#'           converging. The reference is `"response"` when `Y` is fully observed
+#'           and `"posterior"` when `Y` has any missing values (the response
+#'           solve degrades under misalignment). The winner is the converged
+#'           candidate with the fewest CG iterations on average (ties resolved in
+#'           favour of the reference). `"jacobi"` is never auto-selected — choose
+#'           it explicitly if desired.
 #'         \item `"jacobi"`: diagonal of the joint precision operator. Cheap per
-#'           apply; usually weak.
+#'           apply; usually weak. Available only by explicit request (excluded
+#'           from `"auto"`).
 #'         \item `"posterior"`: block-diagonal-on-(B,W) preconditioner. Exact
 #'           dense Cholesky on the B block (per-outcome `p×p`), Σ-mixed
 #'           Vecchia-precision factors on the W block (per-outcome `H_A,j`
@@ -201,8 +209,8 @@ spiox <- function(Y, X, coords, m = 15,
     nu                = 0.5,
     vi_pred_smp       = 0,
     # CG preconditioner choice for the joint BW block sampler (sampling = 1).
-    # One of: "auto" (probe POSTERIOR vs JACOBI), "jacobi", "posterior".
-    # Ignored for other samplers and for method = "response".
+    # One of: "auto" (probe posterior/response/vadu), "jacobi", "posterior",
+    # "response", "vadu".  Ignored for other samplers and for method = "response".
     cg_preconditioner = "auto",
     # How the POSTERIOR W-half preconditioner factor of A_j is built:
     #   "matrixfree"/0 = DAG children-walk (default),
@@ -217,9 +225,12 @@ spiox <- function(Y, X, coords, m = 15,
 
   # Translate opts$cg_preconditioner from string to integer code expected by
   # the C++ side.  Codes (sampling = 1, the joint BW block sampler):
-  #   0 = auto       (probe POSTERIOR for 5 sweeps, then JACOBI for 5 with a
-  #                   2·max(POSTERIOR iters) budget cap, lock in the winner)
-  #   1 = jacobi     (diagonal of the joint precision operator)
+  #   0 = auto       (probe posterior/response/vadu, 5 sweeps each; a reference
+  #                   candidate runs uncapped and sets a CG-iter budget for the
+  #                   rest; lock in the fastest converged candidate. Reference is
+  #                   "response" when fully observed, "posterior" when Y has NAs.
+  #                   jacobi is never auto-selected.)
+  #   1 = jacobi     (diagonal of the joint precision operator; manual only)
   #   2 = posterior  (block-diagonal-on-(B,W) PC with exact dense B half and
   #                   Σ-mixed Vecchia-precision W half)
   #   3 = response   (covariance-form Bhattacharya w-block sampler, C+D Vecchia PC)

@@ -469,25 +469,33 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
     // half is identical to POSTERIOR (exact per-outcome dense Cholesky).
 
     // All factors built once ("once" mode) and frozen at the autostart θ/Ddiag.
-    if(bw_pc_n_builds == 0){
+    // bw_chol_MBj / bw_R_corr are shared with POSTERIOR (guarded by
+    // bw_pc_n_builds); bw_vadu_dscale is VADU-specific and gets its own guard,
+    // so a prior POSTERIOR build (which skips dscale) still triggers it here
+    // — this is the POSTERIOR→VADU order the probe uses under missing data.
+    if(bw_pc_n_builds == 0 || bw_vadu_dscale.empty()){
       auto t_pc = std::chrono::steady_clock::now();
-      bw_chol_MBj.assign(q, arma::mat());
-      for(unsigned int j = 0; j < q; ++j){
-        arma::mat DX = X;
-        DX.each_col() %= invD_mat.col(j);
-        arma::mat MBj = X.t() * DX;
-        MBj.diag()  += 1.0 / B_Var.col(j);
-        bw_chol_MBj[j] = arma::chol(arma::symmatu(MBj), "upper");
+      if(bw_pc_n_builds == 0){
+        bw_chol_MBj.assign(q, arma::mat());
+        for(unsigned int j = 0; j < q; ++j){
+          arma::mat DX = X;
+          DX.each_col() %= invD_mat.col(j);
+          arma::mat MBj = X.t() * DX;
+          MBj.diag()  += 1.0 / B_Var.col(j);
+          bw_chol_MBj[j] = arma::chol(arma::symmatu(MBj), "upper");
+        }
+        arma::vec inv_sqrt_diag = 1.0 / arma::sqrt(this->Sigma.diag());
+        bw_R_corr = arma::diagmat(inv_sqrt_diag) * this->Sigma * arma::diagmat(inv_sqrt_diag);
+        ++bw_pc_n_builds;
       }
       // dscale_j = sqrt(R_j ⊙ w_j + Q_jj),  R_j = sqrtR_j^2.
-      bw_vadu_dscale.assign(q, arma::vec());
-      for(unsigned int j = 0; j < q; ++j){
-        arma::vec Rj = arma::square(daggps[j].sqrtR);
-        bw_vadu_dscale[j] = arma::sqrt(Rj % invD_mat.col(j) + Q(j, j));
+      if(bw_vadu_dscale.empty()){
+        bw_vadu_dscale.assign(q, arma::vec());
+        for(unsigned int j = 0; j < q; ++j){
+          arma::vec Rj = arma::square(daggps[j].sqrtR);
+          bw_vadu_dscale[j] = arma::sqrt(Rj % invD_mat.col(j) + Q(j, j));
+        }
       }
-      arma::vec inv_sqrt_diag = 1.0 / arma::sqrt(this->Sigma.diag());
-      bw_R_corr = arma::diagmat(inv_sqrt_diag) * this->Sigma * arma::diagmat(inv_sqrt_diag);
-      ++bw_pc_n_builds;
       pc_build_seconds += time_count(t_pc) / 1e6;
     }
 
@@ -593,7 +601,7 @@ void SpIOX::build_marginal_daggps(){
   pc_build_seconds += time_count(t_pc) / 1e6;
 }
 
-void SpIOX::gibbs_w_block_marginal(int& cg_iter, bool sampling){
+void SpIOX::gibbs_w_block_marginal(int& cg_iter, bool sampling, int cg_maxit_override){
   // Selection-Bhattacharya covariance-form sampler for W | B, Σ, θ, D.
   //   prior  vec(W) ~ N(0, C),  C = (blkdiag H^{-1})(Σ⊗I)(blkdiag H^{-T})
   //   data   Y_o - (XB)_o = (W)_o + ε_o,  ε_o ~ N(0, D_o),  Φ = selection of
@@ -691,8 +699,10 @@ void SpIOX::gibbs_w_block_marginal(int& cg_iter, bool sampling){
   rhs_mat -= delta;
   arma::vec rhs = arma::vectorise(rhs_mat);
   arma::vec x0  = arma::zeros<arma::vec>(n * q);
+  const int marg_maxit = (cg_maxit_override > 0) ? cg_maxit_override
+                                                 : static_cast<int>(n);
   arma::vec eta = pcg_mf(M_mv, apply_Minv, cg_iter, rhs, x0,
-                         5*1e-5, static_cast<int>(n), num_threads);
+                         5*1e-5, marg_maxit, num_threads);
 
   arma::mat eta_mat(eta.memptr(), n, q, false, true);  // η = 0 on missing ⇒ Φᵀη = η
   W = u + C_apply(eta_mat);
@@ -1755,10 +1765,13 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
   timings(4) += time_count(tstart);
   
   if(latent_model == 1){
-    // Joint BW PCG sampler — only path that uses a CG preconditioner.
-    // Two PCs survive: PRECOND_JACOBI (diag of joint operator) and
-    // PRECOND_POSTERIOR (block-diagonal on (B,W) with Σ-mix on W).
-    // PRECOND_PROBE auto-selects between them — see below.
+    // Block latent sampler.  Preconditioner dispatch:
+    //   PRECOND_JACOBI / PRECOND_POSTERIOR / PRECOND_VADU : precision-domain
+    //       joint (B,W) PCG via gibbs_BW_block.
+    //   PRECOND_RESPONSE : covariance-domain Bhattacharya via update_B +
+    //       gibbs_w_block_marginal.
+    //   PRECOND_PROBE : auto-select among {POSTERIOR, RESPONSE, VADU} — see below.
+    //       Jacobi is excluded from the probe (stays a manual option only).
     int cg_iter = 0;
     PrecondChoice precond_used_this_iter;
 
@@ -1772,49 +1785,79 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
       }
       gibbs_w_block_marginal(cg_iter, /*sampling=*/true);
       precond_used_this_iter = PRECOND_RESPONSE;
-      last_cg_iter      = cg_iter;
-      last_precond_used = static_cast<int>(precond_used_this_iter);
     } else if(precond_choice == PRECOND_PROBE){
-      // Two-phase probe (5 sweeps each):
-      //   probe_count ∈ [0, 5)  : run POSTERIOR, accumulate iter sum and track max.
-      //   probe_count ∈ [5, 10) : run JACOBI with maxit cap = 2 · post_iter_max.
-      //                           If CG hits the cap without converging, JACOBI
-      //                           is disqualified for this sweep.
-      //   probe_count == 10     : decide.  JACOBI wins iff it converged on every
-      //                           probe sweep AND used fewer avg iters than
-      //                           POSTERIOR.  Otherwise lock in POSTERIOR.
-      //
-      // POSTERIOR is the safe first pick: it's a more expressive PC, so it gives
-      // us a converged iter count we can use as JACOBI's budget.  Trying JACOBI
-      // first risks wasting many sweeps if it diverges or stalls.
-      if(probe_count < probe_per_pc){
-        precond_used_this_iter = PRECOND_POSTERIOR;
-        gibbs_BW_block(cg_iter, PRECOND_POSTERIOR);
-        post_iter_sum += cg_iter;
-        if(cg_iter > post_iter_max) post_iter_max = cg_iter;
+      // Multi-candidate probe over {POSTERIOR, RESPONSE, VADU}, probe_per_pc
+      // sweeps each (Jacobi excluded).  The candidate order depends on the data:
+      //   - any missing data : reference = POSTERIOR (the marginal C+D response
+      //                         solve degrades once the selection operator kicks
+      //                         in), then RESPONSE, then VADU.
+      //   - fully observed    : reference = RESPONSE (covariance-domain
+      //                         Bhattacharya is typically fastest when aligned),
+      //                         then POSTERIOR, then VADU.
+      // The reference (probe_order[0]) runs uncapped and sets the iter budget;
+      // every other candidate is capped at the reference's worst-case iters and
+      // disqualified if it hits the cap without converging.  Winner = converged
+      // candidate with the lowest mean iters (ties resolved to the reference).
 
-      } else if(probe_count < 2 * probe_per_pc){
-        // First Jacobi probe sweep: lock in the cap from POSTERIOR's max iter.
-        if(probe_count == probe_per_pc) jac_iter_cap = 2 * post_iter_max;
-        precond_used_this_iter = PRECOND_JACOBI;
-        gibbs_BW_block(cg_iter, PRECOND_JACOBI, /*sampling=*/true,
-                       /*cg_maxit_override=*/jac_iter_cap);
-        jac_iter_sum += cg_iter;
-        // pcg_mf returns the iter at which it broke; if it equals the cap with
-        // ‖r‖/‖b‖ still above tol it didn't converge.  Use cg_iter >= cap as
-        // a conservative "did not converge" signal.
-        if(cg_iter >= jac_iter_cap) jac_converged_all = false;
+      // Dispatch one sweep with PC `pc`, PCG iter cap `cap` (0 = uncapped).
+      auto run_candidate = [&](PrecondChoice pc, int cap)->int{
+        int iters = 0;
+        if(pc == PRECOND_RESPONSE){
+          if(sample_beta){
+            tstart = std::chrono::steady_clock::now();
+            update_B();
+            timings(0) += time_count(tstart);
+          }
+          gibbs_w_block_marginal(iters, /*sampling=*/true, cap);
+        } else {
+          gibbs_BW_block(iters, pc, /*sampling=*/true, cap);
+        }
+        return iters;
+      };
 
-      } else {
-        // probe_count == 2 * probe_per_pc : decide.
-        const double avg_post = static_cast<double>(post_iter_sum) / probe_per_pc;
-        const double avg_jac  = static_cast<double>(jac_iter_sum)  / probe_per_pc;
-        const bool jacobi_wins = jac_converged_all && (avg_jac < avg_post);
-        precond_choice = jacobi_wins ? PRECOND_JACOBI : PRECOND_POSTERIOR;
-        precond_used_this_iter = precond_choice;
-        gibbs_BW_block(cg_iter, precond_choice);
+      if(probe_count == 0){
+        // Lazily lay out the candidate order on the first probe sweep.
+        if(Y_needs_filling){
+          probe_order = { PRECOND_POSTERIOR, PRECOND_RESPONSE, PRECOND_VADU };
+        } else {
+          probe_order = { PRECOND_RESPONSE, PRECOND_POSTERIOR, PRECOND_VADU };
+        }
+        probe_iter_sum.assign(probe_order.size(), 0.0);
+        probe_iter_max.assign(probe_order.size(), 0);
+        probe_converged.assign(probe_order.size(), true);
+        probe_cap = 0;
       }
-      ++probe_count;
+
+      const int ncand              = static_cast<int>(probe_order.size());
+      const int total_probe_sweeps = ncand * probe_per_pc;
+
+      if(probe_count < total_probe_sweeps){
+        const int           cand_idx = probe_count / probe_per_pc;
+        const PrecondChoice pc       = probe_order[cand_idx];
+        const bool          is_ref   = (cand_idx == 0);
+        const int           cap      = is_ref ? 0 : probe_cap;  // reference uncapped
+        cg_iter = run_candidate(pc, cap);
+        precond_used_this_iter = pc;
+        probe_iter_sum[cand_idx] += cg_iter;
+        if(cg_iter > probe_iter_max[cand_idx]) probe_iter_max[cand_idx] = cg_iter;
+        // A capped candidate that reaches the cap is treated as non-converged.
+        if(!is_ref && cap > 0 && cg_iter >= cap) probe_converged[cand_idx] = false;
+        // After the reference's final probe sweep, lock in the iter budget.
+        if(is_ref && probe_count == probe_per_pc - 1) probe_cap = probe_iter_max[0];
+        ++probe_count;
+      } else {
+        // Decide: lowest mean iters among converged candidates; ties to reference.
+        int    best     = 0;                                   // reference always eligible
+        double best_avg = probe_iter_sum[0] / probe_per_pc;
+        for(int c = 1; c < ncand; ++c){
+          if(!probe_converged[c]) continue;
+          const double avg = probe_iter_sum[c] / probe_per_pc;
+          if(avg < best_avg){ best_avg = avg; best = c; }
+        }
+        precond_choice         = probe_order[best];
+        precond_used_this_iter = precond_choice;
+        cg_iter = run_candidate(precond_choice, 0);  // first real (uncapped) sweep
+      }
     } else {
       precond_used_this_iter = precond_choice;
       gibbs_BW_block(cg_iter, precond_choice);

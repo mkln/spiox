@@ -313,7 +313,9 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     if(print_condition){
       const char* pc_name =
         cg_pcond(m) == 1 ? "jacobi"    :
-        cg_pcond(m) == 2 ? "posterior" : "n/a";
+        cg_pcond(m) == 2 ? "posterior" :
+        cg_pcond(m) == 3 ? "response"  :
+        cg_pcond(m) == 4 ? "vadu"      : "n/a";
       Rcpp::Rcout << "Iteration: " <<  m+1 << " of " << mcmc
                   << "  (CG: " << cg_iters(m)
                   << " iters, pc=" << pc_name << ")" << endl;
