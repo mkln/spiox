@@ -594,19 +594,29 @@ void SpIOX::build_marginal_daggps(){
 }
 
 void SpIOX::gibbs_w_block_marginal(int& cg_iter, bool sampling){
-  // Covariance-form Bhattacharya sampler for W | B, Σ, θ, D.
+  // Selection-Bhattacharya covariance-form sampler for W | B, Σ, θ, D.
   //   prior  vec(W) ~ N(0, C),  C = (blkdiag H^{-1})(Σ⊗I)(blkdiag H^{-T})
-  //   data   Y - XB = W + ε,    ε ~ N(0, D),  D = blkdiag(Ddiag_j·I)
-  // Bhattacharya draw (Φ = I):
-  //   u ~ N(0,C), δ ~ N(0,D), v = u + δ
-  //   solve (C+D) η = (Y-XB) - v      [matrix-free PCG]
-  //   W = u + C η                     ⇒ W ~ N(μ, (C^{-1}+D^{-1})^{-1})
-  if(Y_needs_filling){
-    Rcpp::stop("cg_preconditioner='response' does not support missing data; "
-               "use 'posterior'/'jacobi'/'vadu' or impute first.");
-  }
+  //   data   Y_o - (XB)_o = (W)_o + ε_o,  ε_o ~ N(0, D_o),  Φ = selection of
+  //          the OBSERVED (location, outcome) entries.
+  // Bhattacharya draw with general Φ:
+  //   u ~ N(0,C), δ ~ N(0,D_o), v = Φu + δ
+  //   solve  M η = (Y-XB)_o - v,   M = Φ C Φᵀ + D_o    [matrix-free PCG]
+  //   W = u + C Φᵀ η          ⇒ W ~ N(μ, (C⁻¹ + Φᵀ D_o⁻¹ Φ)⁻¹)
+  // Missing data (misalignment) is handled in place at full n×q size via a
+  // diagonal projection P = ΦᵀΦ (mask: 1 observed, 0 missing).  The full-size
+  // operator
+  //   M̃ = P C P + D̃ + (I−P),   D̃ = diag(Ddiag at observed, 0 at missing)
+  // equals Φ C Φᵀ + D_o on the observed block, is SPD, and forces η=0 on the
+  // missing block (so C Φᵀ η = C η).  With nothing missing P = I and this
+  // reduces exactly to the Φ = I draw above.  The target precision
+  // C⁻¹ + Φᵀ D_o⁻¹ Φ matches the masked-invD precision of the POSTERIOR path.
 
   build_marginal_daggps();
+
+  // Observation mask P (1 observed / 0 missing); identity when fully observed.
+  arma::mat obsmask = arma::ones(n, q);
+  if(Y_needs_filling) obsmask.elem(arma::find(missing_mat)).zeros();
+  const bool has_missing = Y_needs_filling;
 
   // C r : a_j = H_j^{-T} r_j ; b = a·Σ ; (C r)_j = H_j^{-1} b_j
   auto C_apply = [&](const arma::mat& r)->arma::mat{
@@ -624,34 +634,41 @@ void SpIOX::gibbs_w_block_marginal(int& cg_iter, bool sampling){
     return out;
   };
 
-  // (C+D) matrix-vector product on vec(n×q).
-  auto CpD_mv = [&](const arma::vec& x_in, arma::vec& y_out){
+  // M̃ = P C P + D̃ + (I−P) matrix-vector product on vec(n×q).
+  auto M_mv = [&](const arma::vec& x_in, arma::vec& y_out){
     arma::mat R(const_cast<double*>(x_in.memptr()), n, q, false, true);
-    arma::mat out = C_apply(R);
-    for(unsigned int j = 0; j < q; ++j) out.col(j) += Ddiag(j) * R.col(j);
+    arma::mat Rm  = has_missing ? (obsmask % R) : R;   // P R
+    arma::mat out = C_apply(Rm);                       // C P R
+    if(has_missing) out %= obsmask;                    // P C P R
+    for(unsigned int j = 0; j < q; ++j) out.col(j) += Ddiag(j) * Rm.col(j);  // + D̃ R
+    if(has_missing) out += (1.0 - obsmask) % R;        // + (I−P) R
     std::copy(out.begin(), out.end(), y_out.memptr());
   };
 
-  // M^{-1} ≈ (C+D)^{-1} : blkdiag(G_j^T)(R_corr⊗I)blkdiag(G_j), same Σ-mix as POSTERIOR.
+  // M^{-1} ≈ (P C P + D̃)^{-1} on the observed block: the once-mode marginal
+  // Vecchia factor of C+D with the POSTERIOR R_corr Σ-mix, sandwiched by P,
+  // plus identity on the missing block (matches the (I−P) in M̃).
   arma::vec inv_sqrt_diag = 1.0 / arma::sqrt(this->Sigma.diag());
   arma::mat R_corr = arma::diagmat(inv_sqrt_diag) * this->Sigma * arma::diagmat(inv_sqrt_diag);
   auto apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){
     arma::mat R(const_cast<double*>(r_in.memptr()), n, q, false, true);
+    arma::mat Rm = has_missing ? (obsmask % R) : R;    // P r
     arma::mat Yv(n, q);
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
-    for(int j = 0; j < (int)q; ++j) Yv.col(j) = daggps_marginal[j].H_times_A(R.col(j));
+    for(int j = 0; j < (int)q; ++j) Yv.col(j) = daggps_marginal[j].H_times_A(Rm.col(j));
     arma::mat U = Yv * R_corr;
     arma::mat Z(n, q);
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
     for(int j = 0; j < (int)q; ++j) Z.col(j) = daggps_marginal[j].Ht_times_A(U.col(j));
+    if(has_missing){ Z %= obsmask; Z += (1.0 - obsmask) % R; }  // P·PC·P + (I−P)
     std::copy(Z.begin(), Z.end(), z_out.memptr());
   };
 
-  // Bhattacharya noise: u ~ N(0,C), δ ~ N(0,D).
+  // Bhattacharya noise: u ~ N(0,C), δ ~ N(0,D_o) (observed entries only).
   arma::mat u, delta;
   if(sampling){
     arma::mat m = arma::randn(n, q) * S;   // S upper chol, S^T S = Σ ⇒ Cov(vec m)=Σ⊗I
@@ -662,18 +679,22 @@ void SpIOX::gibbs_w_block_marginal(int& cg_iter, bool sampling){
     for(int j = 0; j < (int)q; ++j) u.col(j) = daggps[j].H_solve_A(m.col(j));
     delta = arma::randn(n, q);
     for(unsigned int j = 0; j < q; ++j) delta.col(j) *= std::sqrt(Ddiag(j));
+    if(has_missing) delta %= obsmask;      // δ supported on observed only
   } else {
     u     = arma::zeros(n, q);
     delta = arma::zeros(n, q);
   }
 
-  arma::mat rhs_mat = (Y - X * B) - (u + delta);
+  // r̃ = P[(Y-XB) - u] - δ  (zero at missing ⇒ η stays 0 there).
+  arma::mat rhs_mat = (Y - X * B) - u;
+  if(has_missing) rhs_mat %= obsmask;
+  rhs_mat -= delta;
   arma::vec rhs = arma::vectorise(rhs_mat);
   arma::vec x0  = arma::zeros<arma::vec>(n * q);
-  arma::vec eta = pcg_mf(CpD_mv, apply_Minv, cg_iter, rhs, x0,
+  arma::vec eta = pcg_mf(M_mv, apply_Minv, cg_iter, rhs, x0,
                          5*1e-5, static_cast<int>(n), num_threads);
 
-  arma::mat eta_mat(eta.memptr(), n, q, false, true);
+  arma::mat eta_mat(eta.memptr(), n, q, false, true);  // η = 0 on missing ⇒ Φᵀη = η
   W = u + C_apply(eta_mat);
   YXB = Y - X * B;
 }

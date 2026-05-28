@@ -244,8 +244,11 @@ public:
   // with the marginal C+D (not the precision C^{-1}+D^{-1}) by matrix-free
   // PCG, preconditioned by a fresh per-outcome Vecchia factor of C+D (built
   // with nugget = Ddiag) sandwiched with the same R_corr Σ-mix as POSTERIOR.
-  // B is sampled separately (conjugate) before this call.  No missing-data
-  // support (covariance form needs finite D everywhere).
+  // B is sampled separately (conjugate) before this call.  Missing data
+  // (misalignment) is handled via the selection-Bhattacharya reformulation:
+  // a diagonal projection P (mask of observed entries) restricts the solve to
+  // the observed block (M = ΦCΦᵀ + D_o), with the latent field at missing
+  // entries kriged from the same draw — efficient when missingness is light.
   std::vector<DagGP> daggps_marginal;     // per-outcome Vecchia factor of C_j+D_j
   // "Once" mode: the marginal Vecchia factor is built a single time from the
   // starting theta + autostart Ddiag and then frozen.  A preconditioner only
