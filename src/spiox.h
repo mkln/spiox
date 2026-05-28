@@ -3,6 +3,9 @@
 #include "daggp.h"
 #include "ramadapt.h"
 
+#include <Eigen/SparseCholesky>
+#include <memory>
+
 using namespace std;
 
 int time_count(std::chrono::steady_clock::time_point tstart);
@@ -130,10 +133,28 @@ public:
   //               POSTERIOR is locked in.  POSTERIOR is the safe first
   //               choice — without its iter count, JACOBI could waste many
   //               sweeps before we'd know it's failing.
+  //   RESPONSE  : not a PCG branch.  Selects an alternative w-block sampler
+  //               (gibbs_w_block_marginal) that samples W in the covariance
+  //               (data) domain via the Bhattacharya algorithm, solving
+  //               systems with the marginal C+D rather than the precision
+  //               C^{-1}+D^{-1}.  Preconditioned by a fresh per-outcome
+  //               Vecchia factor of C+D (built with nugget = Ddiag).
+  //
+  //   VADU      : "Vecchia approximation with diagonal update" (Kündig &
+  //               Sigrist).  PCG branch on the same precision system as
+  //               JACOBI/POSTERIOR.  Reuses the prior Vecchia factor H_j and
+  //               folds the likelihood diagonal into it:
+  //                 P_VADU,j = B_j^T (W_j + Q_jj D_j^{-1}) B_j,
+  //               with H_j = D_j^{-1/2} B_j (B_j unit lower-tri, D_j = R_j).
+  //               Apply P^{-1} = two prior triangular solves + a diagonal
+  //               scale by 1/(R_j⊙w_j + Q_jj), plus the same R_corr Σ-mix
+  //               as POSTERIOR.  No per-sweep factor build (unlike VAPOP).
   enum PrecondChoice {
     PRECOND_PROBE     = 0,
     PRECOND_JACOBI    = 1,
-    PRECOND_POSTERIOR = 2
+    PRECOND_POSTERIOR = 2,
+    PRECOND_RESPONSE  = 3,
+    PRECOND_VADU      = 4
   };
   PrecondChoice precond_choice = PRECOND_PROBE;
 
@@ -152,20 +173,34 @@ public:
   int           jac_iter_cap       = 0;   // = 2 * post_iter_max; set after POSTERIOR phase
   bool          jac_converged_all  = true; // false if any sweep hit the cap without converging
 
-  // Per-outcome state for the POSTERIOR PC: Vecchia precision factor of
-  // A_j = Q_jj·H_j^T H_j + diag(invD.col(j)), built once via local regression
-  // on (m+1)x(m+1) sub-blocks of A_j.  Mirrored as col-major sparse Eigen
-  // for the fast double-mult apply.  Idempotent build via vaprec_n_builds.
-  // (Naming kept as "vaprec" for historical continuity with the build code.)
-  int vaprec_n_builds = 0;
-  std::vector<arma::vec>              vaprec_sqrtR;     // size q, each length n
-  std::vector<arma::field<arma::vec>> vaprec_h;         // size q, each length n
-  arma::field<arma::umat>             vaprec_children;  // length n, each rows = [k, t_of_i_in_parents_of_k]
-  std::vector<Eigen::SparseMatrix<double>> vaprec_H_eigen;   // size q (col-major lower)
-  std::vector<Eigen::SparseMatrix<double>> vaprec_Ht_eigen;  // size q (col-major upper, = transpose)
+  // Per-outcome state for the POSTERIOR PC.  VAPOP = "Vecchia Approximation
+  // of the POsterior Precision": for each outcome j we approximate
+  //   A_j^{-1} ≈ H_A,j^T · H_A,j
+  // where A_j = Q_jj·H_j^T H_j + diag(invD.col(j)) is the conditional
+  // posterior precision of W_j | W_{-j}, Y_j.  H_A,j is built once via local
+  // Vecchia regression on (m+1)x(m+1) sub-blocks of A_j and mirrored as
+  // col-major sparse Eigen for the fast double-mult apply.  Idempotent
+  // build guarded by vapop_n_builds.
+  int vapop_n_builds = 0;
+  std::vector<arma::vec>              vapop_sqrtR;     // size q, each length n
+  std::vector<arma::field<arma::vec>> vapop_h;         // size q, each length n
+  arma::field<arma::umat>             vapop_children;  // length n, each rows = [k, t_of_i_in_parents_of_k]
+  std::vector<Eigen::SparseMatrix<double>> vapop_H_eigen;   // size q (col-major lower)
+  std::vector<Eigen::SparseMatrix<double>> vapop_Ht_eigen;  // size q (col-major upper, = transpose)
+  // How the POSTERIOR W-half preconditioner factor of A_j = Q_jj·HᵀH + D⁻¹ is built:
+  //   0 = matrix-free  : assemble A_j entries on demand via DAG children-merge
+  //                      walk (A_at), local Vecchia regression -> bounded-m factor.
+  //   1 = precision    : form P = HᵀH explicitly once (Eigen sparse product),
+  //                      read its entries for the SAME local Vecchia regression.
+  //   2 = cholesky     : form A_j explicitly and take an EXACT sparse Cholesky
+  //                      (SimplicialLLT), reused as the (exact, per-outcome) PC.
+  // Methods 0/1 produce identical bounded-m factors (vapop_H_eigen); method 2
+  // stores an LLT per outcome and uses a split triangular-solve apply.
+  int vapop_build_method = 0;
+  std::vector<std::unique_ptr<Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>>> vapop_llt;
   // Build the Vecchia factors of A_j (no-op if already built).  Called once
   // on the first POSTERIOR apply.
-  void build_vaprec_factors();
+  void build_vapop_factors();
 
   // Telemetry: number of CG iterations used in the most-recent gibbs_BW_block
   // call, plus an integer code for which preconditioner ran
@@ -173,6 +208,10 @@ public:
   // and surfaced back to R.
   int last_cg_iter      = 0;
   int last_precond_used = 0;
+  // Wall-clock seconds spent on the one-time ("once" mode) preconditioner
+  // factor build (vapop / marginal-Vecchia / BW PC factors).  Accumulated the
+  // first time the PC is constructed; 0 thereafter.  Surfaced back to R.
+  double pc_build_seconds = 0.0;
   
   // latent model 
   int latent_model; // 0: response, 1: block, 2: row seq, 3: col seq
@@ -192,14 +231,39 @@ public:
   // Joint BW PCG sampler — the only block sampler that survives the cleanup.
   // PC dispatched on `precond`: PRECOND_JACOBI (diagonal of the joint
   // precision) or PRECOND_POSTERIOR (block-diagonal-on-(B,W) with cross-
-  // outcome Σ-mix on the W half via VAPREC factors).  `sampling` toggles
+  // outcome Σ-mix on the W half via VAPOP factors).  `sampling` toggles
   // between MCMC sampling mode (RHS includes Bhattacharya noise terms) and
   // posterior-mean mode (deterministic).  `cg_maxit_override` > 0 caps the
   // PCG iter count (used by the probe phase to budget JACOBI against
   // POSTERIOR's measured iter count); 0 means use the default cap (n).
   void gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling=true,
                       int cg_maxit_override=0);
-    
+
+  // Response covariance-form W-block sampler (PRECOND_RESPONSE).  Samples W as
+  // a block via the Bhattacharya algorithm in the data domain: solves systems
+  // with the marginal C+D (not the precision C^{-1}+D^{-1}) by matrix-free
+  // PCG, preconditioned by a fresh per-outcome Vecchia factor of C+D (built
+  // with nugget = Ddiag) sandwiched with the same R_corr Σ-mix as POSTERIOR.
+  // B is sampled separately (conjugate) before this call.  No missing-data
+  // support (covariance form needs finite D everywhere).
+  std::vector<DagGP> daggps_marginal;     // per-outcome Vecchia factor of C_j+D_j
+  // "Once" mode: the marginal Vecchia factor is built a single time from the
+  // starting theta + autostart Ddiag and then frozen.  A preconditioner only
+  // affects CG convergence speed, never the sampled target, so freezing it at
+  // the autostart values is exact and removes the per-sweep rebuild cost.
+  int marginal_n_builds = 0;
+  void build_marginal_daggps();           // build daggps_marginal once (nugget=Ddiag)
+  void gibbs_w_block_marginal(int& cg_iter, bool sampling=true);
+
+  // Frozen POSTERIOR/VADU preconditioner buffers (built once, "once" mode).
+  // chol_MBj : per-outcome p×p Cholesky of the B-half precision.
+  // bw_R_corr: q×q correlation matrix of Σ used as the W-half mid-mix.
+  // vadu_dscale: per-outcome sqrt(R_j⊙invD_j + Q_jj) diagonal scale (VADU only).
+  int bw_pc_n_builds = 0;
+  std::vector<arma::mat> bw_chol_MBj;
+  arma::mat              bw_R_corr;
+  std::vector<arma::vec> bw_vadu_dscale;
+
   arma::vec Ddiag;
   
   // centering of W and move to intercept (if there is one)

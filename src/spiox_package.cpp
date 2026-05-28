@@ -191,16 +191,30 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           const arma::uvec& update_Theta = arma::ones<arma::uvec>(4),
                           int num_threads = 1,
                           int sampling=2,
-                          int cg_preconditioner = 0){
+                          int cg_preconditioner = 0,
+                          int vapop_build_method = 0){
 
   // cg_preconditioner selector:
   //   0 = auto       (sampling=1: 2-way probe POSTERIOR vs JACOBI; sampling=3: POSTERIOR)
   //   1 = JACOBI     (sampling=1: diag of joint precision; sampling=3: diag of A_j)
-  //   2 = POSTERIOR  (sampling=1: block-diag PC with Σ-mixed VAPREC W half;
+  //   2 = POSTERIOR  (sampling=1: block-diag PC with Σ-mixed VAPOP W half;
   //                   sampling=3: per-outcome H_A,jᵀ H_A,j apply — Vecchia
   //                   approximation of each conditional precision A_j)
-  if(cg_preconditioner < 0 || cg_preconditioner > 2){
-    Rcpp::stop("cg_preconditioner must be in {0,1,2} (auto/jacobi/posterior).");
+  //   3 = RESPONSE   (sampling=1 only: covariance-form Bhattacharya w-block
+  //                   sampler preconditioned by a Vecchia factor of C+D)
+  //   4 = VADU       (sampling=1 only: Vecchia-approx-with-diagonal-update PC
+  //                   on the joint precision system, Kündig & Sigrist)
+  if(cg_preconditioner < 0 || cg_preconditioner > 4){
+    Rcpp::stop("cg_preconditioner must be in {0,1,2,3,4} (auto/jacobi/posterior/response/vadu).");
+  }
+  if((cg_preconditioner == 3 || cg_preconditioner == 4) && sampling != 1){
+    Rcpp::stop("cg_preconditioner 'response'/'vadu' require sampling=1 (joint block sampler).");
+  }
+  // vapop_build_method: how the POSTERIOR W-half factor is built
+  //   0 = matrix-free (DAG children-walk), 1 = assemble HᵀH then read,
+  //   2 = exact sparse Cholesky of A_j (reused as PC).  Ignored by other PCs.
+  if(vapop_build_method < 0 || vapop_build_method > 2){
+    Rcpp::stop("vapop_build_method must be in {0,1,2} (matrixfree/precision/cholesky).");
   }
 
   if(sampling==0){
@@ -258,6 +272,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   if((sampling == 1 || sampling == 3) && cg_preconditioner > 0){
     iox_model.precond_choice = static_cast<SpIOX::PrecondChoice>(cg_preconditioner);
   }
+  iox_model.vapop_build_method = vapop_build_method;
 
   // storage
   arma::cube Beta = arma::zeros(iox_model.p, q, mcmc);
@@ -267,7 +282,8 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   arma::cube W = arma::zeros(n, q, mcmc);
 
   // CG telemetry: per-iteration CG iteration count and an integer code
-  // recording which preconditioner ran (0 unset / 1 jacobi / 2 ppcg / 3 vrpc).
+  // recording which preconditioner ran
+  // (0 unset / 1 jacobi / 2 posterior / 3 response / 4 vadu).
   arma::ivec cg_iters(mcmc, arma::fill::zeros);
   arma::ivec cg_pcond(mcmc, arma::fill::zeros);
 
@@ -317,6 +333,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     Rcpp::Named("Ddiag") = Ddiag,
     Rcpp::Named("cg_iters") = cg_iters,
     Rcpp::Named("cg_preconditioner") = cg_pcond,
+    Rcpp::Named("pc_build_seconds") = iox_model.pc_build_seconds,
     Rcpp::Named("timings") = iox_model.timings,
     Rcpp::Named("markov_blanket") = iox_model.daggps[0].mblanket,
     Rcpp::Named("cache_map") = iox_model.daggps[0].cache_map

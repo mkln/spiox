@@ -67,6 +67,16 @@
 #'           sandwiched with the correlation matrix of Σ). Built once per
 #'           Gibbs sweep; tends to use far fewer CG iters than JACOBI when Σ
 #'           has substantial off-diagonal cross-outcome structure.
+#'         \item `"response"`: switches the W update to a covariance-form
+#'           Bhattacharya block sampler that solves systems with the marginal
+#'           `C + D` (rather than the precision `C^{-1} + D^{-1}`),
+#'           preconditioned by a fresh per-outcome Vecchia factor of `C + D`
+#'           (built with `nugget = Ddiag`). Effective when the nugget is small
+#'           and the prior dominates.
+#'         \item `"vadu"`: Vecchia-approximation-with-diagonal-update
+#'           preconditioner (Kündig & Sigrist). Reuses the prior Vecchia factor
+#'           and folds the likelihood diagonal into it, so no posterior factor
+#'           is built per sweep. Same Σ-mix as `"posterior"` on the W block.
 #'       }
 #'       Ignored for `debug$sampling != 1L` and for `method = "response"`.
 #'   }
@@ -193,7 +203,13 @@ spiox <- function(Y, X, coords, m = 15,
     # CG preconditioner choice for the joint BW block sampler (sampling = 1).
     # One of: "auto" (probe POSTERIOR vs JACOBI), "jacobi", "posterior".
     # Ignored for other samplers and for method = "response".
-    cg_preconditioner = "auto"
+    cg_preconditioner = "auto",
+    # How the POSTERIOR W-half preconditioner factor of A_j is built:
+    #   "matrixfree"/0 = DAG children-walk (default),
+    #   "precision"/1  = assemble HᵀH explicitly then read its entries,
+    #   "cholesky"/2   = exact sparse Cholesky of A_j, reused as PC.
+    # Only affects cg_preconditioner = "posterior".
+    vapop_build_method = "matrixfree"
   )
   opts <- modifyList(opts_defaults, if (is.null(opts)) list() else opts)
   opts$vi_pred_smp <- as.integer(opts$vi_pred_smp)
@@ -206,7 +222,9 @@ spiox <- function(Y, X, coords, m = 15,
   #   1 = jacobi     (diagonal of the joint precision operator)
   #   2 = posterior  (block-diagonal-on-(B,W) PC with exact dense B half and
   #                   Σ-mixed Vecchia-precision W half)
-  cg_pc_codes <- c(auto = 0L, jacobi = 1L, posterior = 2L)
+  #   3 = response   (covariance-form Bhattacharya w-block sampler, C+D Vecchia PC)
+  #   4 = vadu       (Vecchia-approx-with-diagonal-update PC; Kündig & Sigrist)
+  cg_pc_codes <- c(auto = 0L, jacobi = 1L, posterior = 2L, response = 3L, vadu = 4L)
   cg_pc_key <- if (is.numeric(opts$cg_preconditioner)) {
     as.integer(opts$cg_preconditioner)
   } else {
@@ -219,6 +237,18 @@ spiox <- function(Y, X, coords, m = 15,
     code
   }
   opts$cg_preconditioner_int <- cg_pc_key
+
+  vapop_codes <- c(matrixfree = 0L, precision = 1L, cholesky = 2L)
+  opts$vapop_build_method_int <- if (is.numeric(opts$vapop_build_method)) {
+    as.integer(opts$vapop_build_method)
+  } else {
+    code <- vapop_codes[tolower(as.character(opts$vapop_build_method))]
+    if (is.na(code)) {
+      stop("Invalid opts$vapop_build_method: '", opts$vapop_build_method,
+           "'. Use one of: ", paste(names(vapop_codes), collapse = ", "), ".")
+    }
+    code
+  }
 
 
   # Thread management
@@ -356,9 +386,10 @@ spiox <- function(Y, X, coords, m = 15,
       update_Theta      = update_Theta_full,
       num_threads       = as.integer(opts$num_threads),
       sampling          = as.integer(debug$sampling),
-      cg_preconditioner = opts$cg_preconditioner_int
+      cg_preconditioner = opts$cg_preconditioner_int,
+      vapop_build_method = opts$vapop_build_method_int
     ),
-    
+
     "response:vi" = spiox_response_vi(
       Y[dag$order,,drop=F], X[dag$order,,drop=F], coords[dag$order,,drop=F],  
       dag$dag, dag_opts,
