@@ -330,10 +330,12 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
   // PC-specific state lives at function scope so the lambdas (captured by
   // reference) hold valid pointers throughout the pcg_mf call.
   arma::vec Mdiag_vec;                   // JACOBI
-  // POSTERIOR/VADU PC factors live in members (bw_chol_MBj / bw_R_corr /
-  // bw_vadu_dscale) and are built once ("once" mode), then frozen — a PC only
-  // accelerates CG and never shifts the target, so the autostart-θ/Ddiag build
-  // is exact while skipping the per-sweep refactorisation.
+  // PC factors live in members (bw_chol_MBj / bw_R_corr / bw_vadu_dscale).
+  // POSTERIOR's expensive FSAI factor is built once ("once" mode) and frozen at
+  // the autostart θ/Ddiag (a PC only accelerates CG and never shifts the target,
+  // so a frozen build is still valid).  VADU is the exception: its only
+  // expensive object is the prior factor H_j (θ-owned), so its cheap Σ/Ddiag
+  // pieces are recomputed every sweep to track the live operator (see below).
   std::function<void(const arma::vec&, arma::vec&)> apply_Minv;
 
   if(precond == PRECOND_JACOBI){
@@ -442,33 +444,35 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
     // The W half then sandwiches the same R_corr Σ-mix as POSTERIOR; the B
     // half is identical to POSTERIOR (exact per-outcome dense Cholesky).
 
-    // All factors built once ("once" mode) and frozen at the autostart θ/Ddiag.
-    // bw_chol_MBj / bw_R_corr are shared with POSTERIOR (guarded by
-    // bw_pc_n_builds); bw_vadu_dscale is VADU-specific and gets its own guard,
-    // so a prior POSTERIOR build (which skips dscale) still triggers it here
-    // — this is the POSTERIOR→VADU order the probe uses under missing data.
-    if(bw_pc_n_builds == 0 || bw_vadu_dscale.empty()){
+    // Unlike POSTERIOR, VADU is NOT frozen.  The only θ-dependent (expensive)
+    // object it uses is the prior Vecchia factor H_j (via daggps[j]), which the
+    // θ-update owns — the PC never rebuilds it.  Every Σ/Ddiag-dependent piece
+    // (dscale, R_corr, MBj) is O(nq) cheap, so we RECOMPUTE all three from the
+    // live Σ/Ddiag on every sweep.  This keeps the PC tracking the current
+    // operator instead of going stale at the autostart values (which makes the
+    // frozen variant's CG count climb as Σ/Ddiag drift).  We deliberately do
+    // NOT touch bw_pc_n_builds: that flag guards POSTERIOR's expensive FSAI
+    // build, which VADU has nothing to do with.
+    {
       auto t_pc = std::chrono::steady_clock::now();
-      if(bw_pc_n_builds == 0){
-        bw_chol_MBj.assign(q, arma::mat());
-        for(unsigned int j = 0; j < q; ++j){
-          arma::mat DX = X;
-          DX.each_col() %= invD_mat.col(j);
-          arma::mat MBj = X.t() * DX;
-          MBj.diag()  += 1.0 / B_Var.col(j);
-          bw_chol_MBj[j] = arma::chol(arma::symmatu(MBj), "upper");
-        }
-        arma::vec inv_sqrt_diag = 1.0 / arma::sqrt(this->Sigma.diag());
-        bw_R_corr = arma::diagmat(inv_sqrt_diag) * this->Sigma * arma::diagmat(inv_sqrt_diag);
-        ++bw_pc_n_builds;
+      // B half: per-outcome p×p Cholesky from the current invD.
+      bw_chol_MBj.assign(q, arma::mat());
+      for(unsigned int j = 0; j < q; ++j){
+        arma::mat DX = X;
+        DX.each_col() %= invD_mat.col(j);
+        arma::mat MBj = X.t() * DX;
+        MBj.diag()  += 1.0 / B_Var.col(j);
+        bw_chol_MBj[j] = arma::chol(arma::symmatu(MBj), "upper");
       }
-      // dscale_j = sqrt(R_j ⊙ w_j + Q_jj),  R_j = sqrtR_j^2.
-      if(bw_vadu_dscale.empty()){
-        bw_vadu_dscale.assign(q, arma::vec());
-        for(unsigned int j = 0; j < q; ++j){
-          arma::vec Rj = arma::square(daggps[j].sqrtR);
-          bw_vadu_dscale[j] = arma::sqrt(Rj % invD_mat.col(j) + Q(j, j));
-        }
+      // Cross-outcome mix: correlation matrix of the current Σ.
+      arma::vec inv_sqrt_diag = 1.0 / arma::sqrt(this->Sigma.diag());
+      bw_R_corr = arma::diagmat(inv_sqrt_diag) * this->Sigma * arma::diagmat(inv_sqrt_diag);
+      // dscale_j = sqrt(R_j ⊙ w_j + Q_jj),  R_j = sqrtR_j^2 (prior factor, fixed);
+      // w_j = invD.col(j) and Q_jj are the only live Σ/Ddiag-dependent parts.
+      bw_vadu_dscale.assign(q, arma::vec());
+      for(unsigned int j = 0; j < q; ++j){
+        arma::vec Rj = arma::square(daggps[j].sqrtR);
+        bw_vadu_dscale[j] = arma::sqrt(Rj % invD_mat.col(j) + Q(j, j));
       }
       pc_build_seconds += time_count(t_pc) / 1e6;
     }
