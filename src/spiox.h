@@ -3,7 +3,6 @@
 #include "daggp.h"
 #include "ramadapt.h"
 
-#include <Eigen/SparseCholesky>
 #include <memory>
 
 using namespace std;
@@ -202,17 +201,15 @@ public:
   std::vector<Eigen::SparseMatrix<double>> vapop_Ht_eigen;  // size q (col-major upper, = transpose)
   // How the POSTERIOR W-half preconditioner factor of A_j = Q_jj·HᵀH + D⁻¹ is built:
   //   0 = matrix-free  : assemble A_j entries on demand via DAG children-merge
-  //                      walk (A_at), local Vecchia regression -> bounded-m factor.
+  //                      walk (A_at), local FSAI solve -> bounded-m factor.
   //   1 = precision    : form P = HᵀH explicitly once (Eigen sparse product),
-  //                      read its entries for the SAME local Vecchia regression.
-  //   2 = cholesky     : form A_j explicitly and take an EXACT sparse Cholesky
-  //                      (SimplicialLLT), reused as the (exact, per-outcome) PC.
-  // Methods 0/1 produce identical bounded-m factors (vapop_H_eigen); method 2
-  // stores an LLT per outcome and uses a split triangular-solve apply.
+  //                      read its entries for the SAME local FSAI solve.
+  // Both methods produce identical bounded-m factors (vapop_H_eigen).  The
+  // local FSAI solve is the factored-sparse-approximate-inverse / Vecchia
+  // inverse-Cholesky factor on the DAG sparsity pattern (see build_vapop_factors).
   int vapop_build_method = 0;
-  std::vector<std::unique_ptr<Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>>> vapop_llt;
-  // Build the Vecchia factors of A_j (no-op if already built).  Called once
-  // on the first POSTERIOR apply.
+  // Build the Vecchia/FSAI factors of A_j (no-op if already built).  Called
+  // once on the first POSTERIOR apply.
   void build_vapop_factors();
 
   // Telemetry: number of CG iterations used in the most-recent W-block update,

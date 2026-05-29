@@ -212,11 +212,11 @@ spiox <- function(Y, X, coords, m = 15,
     # One of: "auto" (probe posterior/response/vadu), "jacobi", "posterior",
     # "response", "vadu".  Ignored for other samplers and for method = "response".
     cg_preconditioner = "auto",
-    # How the POSTERIOR W-half preconditioner factor of A_j is built:
+    # How the POSTERIOR W-half FSAI preconditioner factor of A_j is built:
     #   "matrixfree"/0 = DAG children-walk (default),
-    #   "precision"/1  = assemble HᵀH explicitly then read its entries,
-    #   "cholesky"/2   = exact sparse Cholesky of A_j, reused as PC.
-    # Only affects cg_preconditioner = "posterior".
+    #   "precision"/1  = assemble HᵀH explicitly then read its entries.
+    # Both produce the identical bounded-m factor; only affects
+    # cg_preconditioner = "posterior".
     vapop_build_method = "matrixfree"
   )
   opts <- modifyList(opts_defaults, if (is.null(opts)) list() else opts)
@@ -249,7 +249,7 @@ spiox <- function(Y, X, coords, m = 15,
   }
   opts$cg_preconditioner_int <- cg_pc_key
 
-  vapop_codes <- c(matrixfree = 0L, precision = 1L, cholesky = 2L)
+  vapop_codes <- c(matrixfree = 0L, precision = 1L)
   opts$vapop_build_method_int <- if (is.numeric(opts$vapop_build_method)) {
     as.integer(opts$vapop_build_method)
   } else {

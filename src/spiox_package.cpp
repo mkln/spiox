@@ -210,11 +210,11 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   if((cg_preconditioner == 3 || cg_preconditioner == 4) && sampling != 1){
     Rcpp::stop("cg_preconditioner 'response'/'vadu' require sampling=1 (joint block sampler).");
   }
-  // vapop_build_method: how the POSTERIOR W-half factor is built
-  //   0 = matrix-free (DAG children-walk), 1 = assemble HᵀH then read,
-  //   2 = exact sparse Cholesky of A_j (reused as PC).  Ignored by other PCs.
-  if(vapop_build_method < 0 || vapop_build_method > 2){
-    Rcpp::stop("vapop_build_method must be in {0,1,2} (matrixfree/precision/cholesky).");
+  // vapop_build_method: how the POSTERIOR W-half FSAI factor is built
+  //   0 = matrix-free (DAG children-walk), 1 = assemble HᵀH then read.
+  //   Both produce the identical bounded-m factor.  Ignored by other PCs.
+  if(vapop_build_method < 0 || vapop_build_method > 1){
+    Rcpp::stop("vapop_build_method must be in {0,1} (matrixfree/precision).");
   }
 
   if(sampling==0){

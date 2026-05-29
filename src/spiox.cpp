@@ -408,51 +408,25 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
                                     arma::solve_opts::fast);
       }
       // ---- W half: per-outcome A_j^{-1}-like apply, dense q×q Σ-correlation
-      //      mid-mix.  Methods 0/1 use the bounded-m factor as a double-mult
-      //      H_A·r / H_Aᵀ·u; method 2 uses the exact split Cholesky solve
-      //      A_j^{-1} = Pᵀ L^{-T} L^{-1} P (forward solve, mix, backward solve).
+      //      mid-mix.  The bounded-m FSAI factor is applied as a double-mult
+      //      H_A·r (forward) and H_Aᵀ·u (adjoint) around the R_corr mix.
       arma::mat Y(n, q);
-      if(vapop_build_method == 2){
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
-        for(int j = 0; j < (int)q; ++j){
-          Eigen::Map<const Eigen::VectorXd> Rj(r_in.memptr() + Nb + (arma::uword)j * n, n);
-          Eigen::VectorXd t = vapop_llt[j]->permutationP() * Rj;   // P r
-          vapop_llt[j]->matrixL().solveInPlace(t);                 // L^{-1} P r
-          Eigen::Map<Eigen::VectorXd>(Y.memptr() + (arma::uword)j * n, n) = t;
-        }
-      } else {
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-        for(int j = 0; j < (int)q; ++j){
-          Eigen::Map<const Eigen::VectorXd> Rj(r_in.memptr() + Nb + (arma::uword)j * n, n);
-          Eigen::Map<Eigen::VectorXd>       Yj(Y.memptr()    + (arma::uword)j * n, n);
-          Yj.noalias() = vapop_H_eigen[j] * Rj;
-        }
+      for(int j = 0; j < (int)q; ++j){
+        Eigen::Map<const Eigen::VectorXd> Rj(r_in.memptr() + Nb + (arma::uword)j * n, n);
+        Eigen::Map<Eigen::VectorXd>       Yj(Y.memptr()    + (arma::uword)j * n, n);
+        Yj.noalias() = vapop_H_eigen[j] * Rj;
       }
       arma::mat U = Y * bw_R_corr;   // n×q · q×q dense mid-mix (cheap for small q)
-      if(vapop_build_method == 2){
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
-        for(int j = 0; j < (int)q; ++j){
-          Eigen::Map<const Eigen::VectorXd> Uj(U.memptr() + (arma::uword)j * n, n);
-          Eigen::VectorXd s = Uj;
-          vapop_llt[j]->matrixU().solveInPlace(s);                 // L^{-T} U
-          Eigen::VectorXd z = vapop_llt[j]->permutationP().transpose() * s;  // Pᵀ ·
-          Eigen::Map<Eigen::VectorXd>(z_out.memptr() + Nb + (arma::uword)j * n, n) = z;
-        }
-      } else {
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-        for(int j = 0; j < (int)q; ++j){
-          Eigen::Map<const Eigen::VectorXd> Uj(U.memptr()     + (arma::uword)j * n, n);
-          Eigen::Map<Eigen::VectorXd>       Zj(z_out.memptr() + Nb + (arma::uword)j * n, n);
-          Zj.noalias() = vapop_Ht_eigen[j] * Uj;
-        }
+      for(int j = 0; j < (int)q; ++j){
+        Eigen::Map<const Eigen::VectorXd> Uj(U.memptr()     + (arma::uword)j * n, n);
+        Eigen::Map<Eigen::VectorXd>       Zj(z_out.memptr() + Nb + (arma::uword)j * n, n);
+        Zj.noalias() = vapop_Ht_eigen[j] * Uj;
       }
     };
 
@@ -1247,29 +1221,6 @@ void SpIOX::gibbs_w_sequential_byoutcome(int& cg_iter, PrecondChoice precond){
 void SpIOX::build_vapop_factors(){
   if(vapop_n_builds > 0) return;
 
-  // ===== Method 2: exact sparse Cholesky of A_j (reused as preconditioner) ===
-  // Assemble A_j = Q_jj·HᵀH + diag(invD) explicitly (P = HᵀH via one Eigen
-  // sparse product) and take an exact SimplicialLLT.  No bounded-m factor is
-  // produced; the apply uses split triangular solves (see gibbs_BW_block).
-  if(vapop_build_method == 2){
-    vapop_llt.clear();
-    vapop_llt.resize(q);
-    for(int j = 0; j < (int)q; ++j){
-      Eigen::SparseMatrix<double> A = daggps[j].H_eigen.transpose() * daggps[j].H_eigen;
-      A *= Q(j, j);
-      const double invDj = 1.0 / Ddiag(j);
-      for(int i = 0; i < (int)n; ++i)
-        if(!missing_mat(i, j)) A.coeffRef(i, i) += invDj;
-      A.makeCompressed();
-      vapop_llt[j] = std::make_unique<Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>>();
-      vapop_llt[j]->compute(A);
-      if(vapop_llt[j]->info() != Eigen::Success)
-        Rcpp::stop("SimplicialLLT factorization of A_j failed (matrix not SPD?).");
-    }
-    ++vapop_n_builds;
-    return;
-  }
-
   // ---- Precompute children list (DAG is shared across outcomes) ----
   // vapop_children(i) = [k, t] rows where i = daggps[*].dag(k)(t).
   // Only the matrix-free path (method 0) walks this; method 1 reads HᵀH.
@@ -1418,7 +1369,6 @@ void SpIOX::build_vapop_factors(){
 
   ++vapop_n_builds;
 }
-
 
 
 void SpIOX::update_Ddiag_gibbs(){
