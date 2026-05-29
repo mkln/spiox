@@ -160,6 +160,27 @@ public:
   };
   PrecondChoice precond_choice = PRECOND_PROBE;
 
+  // How often the Σ/Ddiag-dependent preconditioner factors are rebuilt during
+  // MCMC.  A preconditioner only accelerates CG and never shifts the sampled
+  // target, so freezing it at the autostart values ("once") is exact, while
+  // rebuilding every sweep ("always") keeps it tracking the drifting operator at
+  // extra cost.
+  //   REBUILD_AUTO   : per-PC default — ALWAYS for VADU (its rebuild is O(nq)
+  //                    cheap: dscale / R_corr / per-outcome B Cholesky), ONCE for
+  //                    POSTERIOR (expensive FSAI factor of A_j) and RESPONSE
+  //                    (expensive C+D Vecchia refactor).
+  //   REBUILD_ALWAYS : rebuild every sweep regardless of PC.
+  //   REBUILD_ONCE   : build once at the autostart values, then freeze.
+  enum RebuildMode { REBUILD_AUTO = 0, REBUILD_ALWAYS = 1, REBUILD_ONCE = 2 };
+  int cg_rebuild = REBUILD_AUTO;
+  // Resolve cg_rebuild for PC `pc` given how many times its factors have already
+  // been built (`builds_done`): returns whether to (re)build this sweep.
+  bool pc_rebuild_now(PrecondChoice pc, int builds_done) const {
+    int mode = cg_rebuild;
+    if(mode == REBUILD_AUTO) mode = (pc == PRECOND_VADU) ? REBUILD_ALWAYS : REBUILD_ONCE;
+    return (mode == REBUILD_ALWAYS) ? true : (builds_done == 0);
+  }
+
   // Probe state.  The probe compares at most three candidate preconditioners —
   // {POSTERIOR, RESPONSE, VADU} — over probe_per_pc sweeps each, then locks in
   // the winner.  Jacobi is deliberately excluded (it stays a user-selectable
@@ -223,8 +244,18 @@ public:
   // first time the PC is constructed; 0 thereafter.  Surfaced back to R.
   double pc_build_seconds = 0.0;
   
-  // latent model 
+  // latent model
   int latent_model; // 0: response, 1: block, 2: row seq, 3: col seq
+  // For the block latent model (latent_model = 1):
+  //   joint_BW = true  (default): sample (B, W) jointly via gibbs_BW_block.
+  //   joint_BW = false          : blocked route — B|W (conjugate update_B),
+  //                               then W|B in the precision domain
+  //                               (gibbs_w_block_precision) or covariance domain
+  //                               (RESPONSE), followed by an ASIS non-centred B
+  //                               refresh (update_BW_asis), mirroring the
+  //                               latent_model 2/3 samplers.  Honours the same
+  //                               POSTERIOR / VADU / RESPONSE / JACOBI choices.
+  bool joint_BW = true;
   arma::mat W;
   void w_sequential_singlesite(const arma::uvec& theta_changed);
 
@@ -248,6 +279,17 @@ public:
   // POSTERIOR's measured iter count); 0 means use the default cap (n).
   void gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling=true,
                       int cg_maxit_override=0);
+
+  // W | B precision-domain block sampler (the W-only counterpart of
+  // gibbs_BW_block, used by the blocked route when joint_BW = false).  Holds B
+  // fixed (sampled separately by update_B + ASIS), solving the conditional
+  // W precision P_WW = Λ_W + diag(invD) via matrix-free PCG.  PC dispatched on
+  // `precond`: PRECOND_JACOBI / PRECOND_POSTERIOR (VAPOP) / PRECOND_VADU — the
+  // same W-half preconditioners as gibbs_BW_block, with no B half.  `sampling`
+  // toggles Bhattacharya noise on the RHS; `cg_maxit_override` > 0 caps the PCG
+  // iters (used by the probe), 0 = default cap (n).
+  void gibbs_w_block_precision(int& cg_iter, PrecondChoice precond,
+                               bool sampling=true, int cg_maxit_override=0);
 
   // Response covariance-form W-block sampler (PRECOND_RESPONSE).  Samples W as
   // a block via the Bhattacharya algorithm in the data domain: solves systems
@@ -277,6 +319,10 @@ public:
   // bw_R_corr: q×q correlation matrix of Σ used as the W-half mid-mix.
   // vadu_dscale: per-outcome sqrt(R_j⊙invD_j + Q_jj) diagonal scale (VADU only).
   int bw_pc_n_builds = 0;
+  // VADU-specific build counter (kept separate from bw_pc_n_builds, which guards
+  // POSTERIOR's FSAI build): tracks how many times the VADU factors have been
+  // (re)built so cg_rebuild = "once" can freeze them.
+  int vadu_pc_n_builds = 0;
   std::vector<arma::mat> bw_chol_MBj;
   arma::mat              bw_R_corr;
   std::vector<arma::vec> bw_vadu_dscale;

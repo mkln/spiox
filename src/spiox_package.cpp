@@ -192,7 +192,9 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           int num_threads = 1,
                           int sampling=2,
                           int cg_preconditioner = 0,
-                          int vapop_build_method = 0){
+                          int vapop_build_method = 0,
+                          bool joint_BW = true,
+                          int cg_rebuild = 0){
 
   // cg_preconditioner selector:
   //   0 = auto       (sampling=1: 2-way probe POSTERIOR vs JACOBI; sampling=3: POSTERIOR)
@@ -273,6 +275,15 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     iox_model.precond_choice = static_cast<SpIOX::PrecondChoice>(cg_preconditioner);
   }
   iox_model.vapop_build_method = vapop_build_method;
+  // joint_BW only governs the block latent sampler (sampling == 1); other
+  // samplers ignore it.  false => blocked B|W, W|B route with ASIS refresh.
+  iox_model.joint_BW = joint_BW;
+  // Preconditioner rebuild cadence: 0 = auto (always for VADU, once for
+  // POSTERIOR/RESPONSE), 1 = always (every sweep), 2 = once (frozen).
+  if(cg_rebuild < 0 || cg_rebuild > 2){
+    Rcpp::stop("cg_rebuild must be in {0,1,2} (auto/always/once).");
+  }
+  iox_model.cg_rebuild = cg_rebuild;
 
   // storage
   arma::cube Beta = arma::zeros(iox_model.p, q, mcmc);

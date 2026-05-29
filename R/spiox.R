@@ -212,6 +212,23 @@ spiox <- function(Y, X, coords, m = 15,
     # One of: "auto" (probe posterior/response/vadu), "jacobi", "posterior",
     # "response", "vadu".  Ignored for other samplers and for method = "response".
     cg_preconditioner = "auto",
+    # Block latent sampler (debug$sampling = 1L) only: how B and W are drawn.
+    #   TRUE  (default): joint (B, W) PCG sample (gibbs_BW_block).
+    #   FALSE          : blocked route — B|W (conjugate), W|B (precision-domain
+    #                    PCG with the same posterior/vadu PC, or covariance-form
+    #                    for cg_preconditioner = "response"), then an ASIS
+    #                    non-centred B refresh.  Ignored for other samplers /
+    #                    method = "response".
+    joint_BW = TRUE,
+    # How often the Σ/Ddiag-dependent preconditioner factors are rebuilt during
+    # MCMC (block latent sampler, debug$sampling = 1L).  A preconditioner only
+    # speeds up CG and never shifts the target, so freezing it ("once") is exact.
+    #   "auto" (default): per-PC — "always" for vadu (cheap rebuild), "once" for
+    #                     posterior (expensive FSAI) and response (expensive C+D
+    #                     Vecchia refactor).
+    #   "always"        : rebuild every sweep regardless of PC.
+    #   "once"          : build once at the autostart values, then freeze.
+    cg_rebuild = "auto",
     # How the POSTERIOR W-half FSAI preconditioner factor of A_j is built:
     #   "matrixfree"/0 = DAG children-walk (default),
     #   "precision"/1  = assemble HᵀH explicitly then read its entries.
@@ -248,6 +265,20 @@ spiox <- function(Y, X, coords, m = 15,
     code
   }
   opts$cg_preconditioner_int <- cg_pc_key
+
+  # Translate opts$cg_rebuild (preconditioner rebuild cadence) to integer:
+  #   0 = auto (always for vadu, once for posterior/response), 1 = always, 2 = once.
+  cg_rebuild_codes <- c(auto = 0L, always = 1L, once = 2L)
+  opts$cg_rebuild_int <- if (is.numeric(opts$cg_rebuild)) {
+    as.integer(opts$cg_rebuild)
+  } else {
+    code <- cg_rebuild_codes[tolower(as.character(opts$cg_rebuild))]
+    if (is.na(code)) {
+      stop("Invalid opts$cg_rebuild: '", opts$cg_rebuild,
+           "'. Use one of: ", paste(names(cg_rebuild_codes), collapse = ", "), ".")
+    }
+    code
+  }
 
   vapop_codes <- c(matrixfree = 0L, precision = 1L)
   opts$vapop_build_method_int <- if (is.numeric(opts$vapop_build_method)) {
@@ -398,7 +429,9 @@ spiox <- function(Y, X, coords, m = 15,
       num_threads       = as.integer(opts$num_threads),
       sampling          = as.integer(debug$sampling),
       cg_preconditioner = opts$cg_preconditioner_int,
-      vapop_build_method = opts$vapop_build_method_int
+      vapop_build_method = opts$vapop_build_method_int,
+      joint_BW          = isTRUE(opts$joint_BW),
+      cg_rebuild        = opts$cg_rebuild_int
     ),
 
     "response:vi" = spiox_response_vi(

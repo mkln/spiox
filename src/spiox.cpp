@@ -331,11 +331,11 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
   // reference) hold valid pointers throughout the pcg_mf call.
   arma::vec Mdiag_vec;                   // JACOBI
   // PC factors live in members (bw_chol_MBj / bw_R_corr / bw_vadu_dscale).
-  // POSTERIOR's expensive FSAI factor is built once ("once" mode) and frozen at
-  // the autostart θ/Ddiag (a PC only accelerates CG and never shifts the target,
-  // so a frozen build is still valid).  VADU is the exception: its only
-  // expensive object is the prior factor H_j (θ-owned), so its cheap Σ/Ddiag
-  // pieces are recomputed every sweep to track the live operator (see below).
+  // The rebuild cadence is governed by cg_rebuild (see pc_rebuild_now): a PC only
+  // accelerates CG and never shifts the target, so a frozen ("once") build is
+  // still valid.  Default cadence: POSTERIOR's expensive FSAI factor is built
+  // ONCE and frozen at the autostart θ/Ddiag; VADU's cheap Σ/Ddiag pieces are
+  // rebuilt ALWAYS (every sweep) to track the live operator (see below).
   std::function<void(const arma::vec&, arma::vec&)> apply_Minv;
 
   if(precond == PRECOND_JACOBI){
@@ -377,24 +377,25 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
     // recovers the (Σ ⊗ I) mix that A_W^{-1} has.  Reduces to a per-outcome PC
     // when Σ is diagonal (R_corr = I).
     //
-    // Build cost: all PC factors are built once ("once" mode) and frozen at the
-    // autostart θ/Ddiag — VAPOP factors, per-outcome dense B Cholesky, q×q R_corr.
-    if(vapop_n_builds == 0 || bw_pc_n_builds == 0){
+    // Build cadence governed by cg_rebuild: default ONCE for POSTERIOR (the FSAI
+    // factor of A_j is expensive), frozen at the autostart θ/Ddiag.  Under
+    // cg_rebuild = "always" every factor — VAPOP, per-outcome dense B Cholesky,
+    // q×q R_corr — is rebuilt from the live Σ/Ddiag each sweep.
+    if(pc_rebuild_now(PRECOND_POSTERIOR, bw_pc_n_builds)){
       auto t_pc = std::chrono::steady_clock::now();
+      vapop_n_builds = 0;            // force the idempotent FSAI build to (re)run
       build_vapop_factors();
-      if(bw_pc_n_builds == 0){
-        bw_chol_MBj.assign(q, arma::mat());
-        for(unsigned int j = 0; j < q; ++j){
-          arma::mat DX = X;
-          DX.each_col() %= invD_mat.col(j);
-          arma::mat MBj = X.t() * DX;
-          MBj.diag()  += 1.0 / B_Var.col(j);
-          bw_chol_MBj[j] = arma::chol(arma::symmatu(MBj), "upper");
-        }
-        arma::vec inv_sqrt_diag = 1.0 / arma::sqrt(this->Sigma.diag());
-        bw_R_corr = arma::diagmat(inv_sqrt_diag) * this->Sigma * arma::diagmat(inv_sqrt_diag);
-        ++bw_pc_n_builds;
+      bw_chol_MBj.assign(q, arma::mat());
+      for(unsigned int j = 0; j < q; ++j){
+        arma::mat DX = X;
+        DX.each_col() %= invD_mat.col(j);
+        arma::mat MBj = X.t() * DX;
+        MBj.diag()  += 1.0 / B_Var.col(j);
+        bw_chol_MBj[j] = arma::chol(arma::symmatu(MBj), "upper");
       }
+      arma::vec inv_sqrt_diag = 1.0 / arma::sqrt(this->Sigma.diag());
+      bw_R_corr = arma::diagmat(inv_sqrt_diag) * this->Sigma * arma::diagmat(inv_sqrt_diag);
+      ++bw_pc_n_builds;
       pc_build_seconds += time_count(t_pc) / 1e6;
     }
 
@@ -444,16 +445,16 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
     // The W half then sandwiches the same R_corr Σ-mix as POSTERIOR; the B
     // half is identical to POSTERIOR (exact per-outcome dense Cholesky).
 
-    // Unlike POSTERIOR, VADU is NOT frozen.  The only θ-dependent (expensive)
-    // object it uses is the prior Vecchia factor H_j (via daggps[j]), which the
-    // θ-update owns — the PC never rebuilds it.  Every Σ/Ddiag-dependent piece
-    // (dscale, R_corr, MBj) is O(nq) cheap, so we RECOMPUTE all three from the
-    // live Σ/Ddiag on every sweep.  This keeps the PC tracking the current
-    // operator instead of going stale at the autostart values (which makes the
-    // frozen variant's CG count climb as Σ/Ddiag drift).  We deliberately do
-    // NOT touch bw_pc_n_builds: that flag guards POSTERIOR's expensive FSAI
-    // build, which VADU has nothing to do with.
-    {
+    // Unlike POSTERIOR, VADU's only θ-dependent (expensive) object is the prior
+    // Vecchia factor H_j (via daggps[j]), which the θ-update owns — the PC never
+    // rebuilds it.  Every Σ/Ddiag-dependent piece (dscale, R_corr, MBj) is O(nq)
+    // cheap, so the default cadence (cg_rebuild = "always") RECOMPUTES all three
+    // from the live Σ/Ddiag on every sweep, keeping the PC tracking the current
+    // operator instead of going stale at the autostart values (which makes a
+    // frozen VADU's CG count climb as Σ/Ddiag drift).  cg_rebuild = "once"
+    // freezes them at the autostart values instead (guarded by vadu_pc_n_builds,
+    // kept separate from POSTERIOR's bw_pc_n_builds).
+    if(pc_rebuild_now(PRECOND_VADU, vadu_pc_n_builds)){
       auto t_pc = std::chrono::steady_clock::now();
       // B half: per-outcome p×p Cholesky from the current invD.
       bw_chol_MBj.assign(q, arma::mat());
@@ -474,6 +475,7 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
         arma::vec Rj = arma::square(daggps[j].sqrtR);
         bw_vadu_dscale[j] = arma::sqrt(Rj % invD_mat.col(j) + Q(j, j));
       }
+      ++vadu_pc_n_builds;
       pc_build_seconds += time_count(t_pc) / 1e6;
     }
 
@@ -560,15 +562,166 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
   YXB += X * (B_old - B);
 }
 
+void SpIOX::gibbs_w_block_precision(int& cg_iter, PrecondChoice precond,
+                                    bool sampling, int cg_maxit_override){
+  // W | B, Σ, θ, D  via precision-domain PCG with B held fixed at its current
+  // value.  This is the W-only counterpart of gibbs_BW_block: identical
+  // conditional W precision and identical W-half preconditioner, but B is NOT in
+  // the system — it is sampled separately (conjugate B|W via update_B, then a
+  // non-centred ASIS refresh).  Used by the blocked route (joint_BW = false).
+  //
+  //   conditional precision : P_WW = Λ_W + diag(invD)
+  //     Λ_W w : Hw.col(j)=H_j w.col(j); HwQ=Hw·Q; out.col(i)=H_iᵀ HwQ.col(i)
+  //   data term             : cW   = invD ⊙ (Y - XB)
+  //   Bhattacharya noise    : prior η ~ N(0, Λ_W)  (blkdiag(Hᵀ)·vec(Z·Siᵀ)),
+  //                           lik   ξ ~ N(0, D⁻¹)   (Z ⊙ invSqrtD).
+
+  // per-entry inverse noise variance (zero at missing)
+  arma::mat invD_mat(n, q, arma::fill::zeros);
+  arma::mat invSqrtD_mat(n, q, arma::fill::zeros);
+  for(unsigned int j = 0; j < q; ++j){
+    const double invDj  = 1.0 / Ddiag(j);
+    const double invSDj = 1.0 / std::sqrt(Ddiag(j));
+    for(unsigned int i = 0; i < n; ++i){
+      if(!missing_mat(i, j)){
+        invD_mat(i, j)     = invDj;
+        invSqrtD_mat(i, j) = invSDj;
+      }
+    }
+  }
+
+  const arma::uword Nw = n * q;
+
+  // ----- conditional W precision multiply: P_WW w = Λ_W w + invD ⊙ w -----
+  auto wprec_mv = [&](const arma::vec& x_in, arma::vec& y_out){
+    arma::mat Win (const_cast<double*>(x_in.memptr()), n, q, false, true);
+    arma::mat Wout(y_out.memptr(),                     n, q, false, true);
+    arma::mat Hw(n, q);
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+    for(unsigned int j = 0; j < q; ++j) Hw.col(j) = daggps[j].H_times_A(Win.col(j));
+    arma::mat HwQ = Hw * Q;
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+    for(unsigned int i = 0; i < q; ++i)
+      Wout.col(i) = daggps[i].Ht_times_A(HwQ.col(i)) + invD_mat.col(i) % Win.col(i);
+  };
+
+  // ----- W-half preconditioner (mirrors gibbs_BW_block, B half dropped) -----
+  arma::vec Mdiag_vec;   // JACOBI
+  std::function<void(const arma::vec&, arma::vec&)> apply_Minv;
+
+  if(precond == PRECOND_JACOBI){
+    arma::mat H_col_sq(n, q);
+    for(unsigned int i = 0; i < q; ++i) H_col_sq.col(i) = daggps[i].H_col_squared_norms();
+    arma::mat Mdiag_W(n, q);
+    for(unsigned int i = 0; i < q; ++i)
+      Mdiag_W.col(i) = Q(i, i) * H_col_sq.col(i) + invD_mat.col(i);
+    Mdiag_vec = arma::vectorise(Mdiag_W);
+    const double diag_floor = 1e-12;
+    for(arma::uword i = 0; i < Mdiag_vec.n_elem; ++i)
+      if(!(Mdiag_vec(i) > diag_floor)) Mdiag_vec(i) = diag_floor;
+    apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){ z_out = r_in / Mdiag_vec; };
+
+  } else if(precond == PRECOND_POSTERIOR){
+    // VAPOP W-half factors + R_corr; cadence governed by cg_rebuild (default
+    // ONCE — frozen at the autostart Σ/Ddiag; "always" rebuilds every sweep).
+    if(pc_rebuild_now(PRECOND_POSTERIOR, bw_pc_n_builds)){
+      auto t_pc = std::chrono::steady_clock::now();
+      vapop_n_builds = 0;            // force the idempotent FSAI build to (re)run
+      build_vapop_factors();
+      arma::vec inv_sqrt_diag = 1.0 / arma::sqrt(this->Sigma.diag());
+      bw_R_corr = arma::diagmat(inv_sqrt_diag) * this->Sigma * arma::diagmat(inv_sqrt_diag);
+      ++bw_pc_n_builds;
+      pc_build_seconds += time_count(t_pc) / 1e6;
+    }
+    apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){
+      arma::mat Yv(n, q);
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+      for(int j = 0; j < (int)q; ++j){
+        Eigen::Map<const Eigen::VectorXd> Rj(r_in.memptr() + (arma::uword)j * n, n);
+        Eigen::Map<Eigen::VectorXd>       Yj(Yv.memptr()   + (arma::uword)j * n, n);
+        Yj.noalias() = vapop_H_eigen[j] * Rj;
+      }
+      arma::mat U = Yv * bw_R_corr;
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+      for(int j = 0; j < (int)q; ++j){
+        Eigen::Map<const Eigen::VectorXd> Uj(U.memptr()     + (arma::uword)j * n, n);
+        Eigen::Map<Eigen::VectorXd>       Zj(z_out.memptr() + (arma::uword)j * n, n);
+        Zj.noalias() = vapop_Ht_eigen[j] * Uj;
+      }
+    };
+
+  } else {  // PRECOND_VADU — cadence governed by cg_rebuild (default ALWAYS).
+    if(pc_rebuild_now(PRECOND_VADU, vadu_pc_n_builds)){
+      auto t_pc = std::chrono::steady_clock::now();
+      arma::vec inv_sqrt_diag = 1.0 / arma::sqrt(this->Sigma.diag());
+      bw_R_corr = arma::diagmat(inv_sqrt_diag) * this->Sigma * arma::diagmat(inv_sqrt_diag);
+      bw_vadu_dscale.assign(q, arma::vec());
+      for(unsigned int j = 0; j < q; ++j){
+        arma::vec Rj = arma::square(daggps[j].sqrtR);
+        bw_vadu_dscale[j] = arma::sqrt(Rj % invD_mat.col(j) + Q(j, j));
+      }
+      ++vadu_pc_n_builds;
+      pc_build_seconds += time_count(t_pc) / 1e6;
+    }
+    apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){
+      arma::mat RW(const_cast<double*>(r_in.memptr()), n, q, false, true);
+      arma::mat Yv(n, q);
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+      for(int j = 0; j < (int)q; ++j)
+        Yv.col(j) = daggps[j].Ht_solve_A(RW.col(j)) / bw_vadu_dscale[j];
+      arma::mat U = Yv * bw_R_corr;
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(num_threads)
+#endif
+      for(int j = 0; j < (int)q; ++j){
+        arma::vec Zj = daggps[j].H_solve_A(U.col(j) / bw_vadu_dscale[j]);
+        std::copy(Zj.begin(), Zj.end(), z_out.memptr() + (arma::uword)j * n);
+      }
+    };
+  }
+
+  // ----- RHS (Bhattacharya) -----
+  arma::mat resid = Y - X * B;            // Y is 0 at missing; invD is 0 there
+  arma::mat cW    = invD_mat % resid;
+  arma::mat Unorm, Zlik_sc;
+  if(sampling){
+    Unorm = arma::randn(n, q) * Si.t();
+    for(unsigned int j = 0; j < q; ++j) Unorm.col(j) = daggps[j].Ht_times_A(Unorm.col(j));
+    Zlik_sc = arma::randn(n, q) % invSqrtD_mat;
+  } else {
+    Unorm   = arma::zeros(n, q);
+    Zlik_sc = arma::zeros(n, q);
+  }
+  arma::vec rhs = arma::vectorise(cW + Unorm + Zlik_sc);
+
+  arma::vec x0 = arma::zeros<arma::vec>(Nw);
+  const int cg_maxit = (cg_maxit_override > 0) ? cg_maxit_override : static_cast<int>(n);
+  arma::vec sol = pcg_mf(wprec_mv, apply_Minv, cg_iter, rhs, x0,
+                         5*1e-5, cg_maxit, num_threads);
+
+  W = arma::mat(sol.memptr(), n, q);
+}
+
 void SpIOX::build_marginal_daggps(){
   // Per-outcome Vecchia factor G_j of the marginal covariance C_j + D_j,
   // i.e. G_j^T G_j ≈ (C_j + Ddiag_j·I)^{-1}.  Built by adding a uniform
   // nugget = Ddiag_j to the covariance diagonal and re-running the Vecchia
   // factorisation on the SAME DAG as the prior factor (daggps).
-  // "Once" mode: built a single time from the starting theta + autostart Ddiag,
-  // then frozen (the marginal factor is only a CG preconditioner, so freezing
-  // it at the autostart values is exact and skips the per-sweep refactorisation).
-  if(marginal_n_builds > 0) return;
+  // Cadence governed by cg_rebuild: default ONCE — built a single time from the
+  // starting theta + autostart Ddiag, then frozen (the marginal factor is only a
+  // CG preconditioner, so freezing it at the autostart values is exact and skips
+  // the per-sweep refactorisation).  cg_rebuild = "always" rebuilds every sweep.
+  if(!pc_rebuild_now(PRECOND_RESPONSE, marginal_n_builds)) return;
   auto t_pc = std::chrono::steady_clock::now();
   daggps_marginal = daggps;   // inherit coords / dag / gridded cache
   for(unsigned int j = 0; j < q; ++j){
@@ -1729,15 +1882,36 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
     int cg_iter = 0;
     PrecondChoice precond_used_this_iter;
 
+    // One full W-sampling sweep with PC `pc`, CG cap `cap` (0 = uncapped),
+    // returning the W-solve CG iter count.
+    //   joint_BW = true  : sample (B, W) jointly via gibbs_BW_block.  RESPONSE is
+    //                      intrinsically blocked even here (B conjugate, then the
+    //                      covariance-form marginal W sampler).
+    //   joint_BW = false : always blocked — B|W (conjugate update_B), then W|B in
+    //                      the precision domain (gibbs_w_block_precision) or, for
+    //                      RESPONSE, the covariance domain (gibbs_w_block_marginal).
+    //                      An ASIS non-centred B refresh is appended after the
+    //                      sweep (see below).
+    auto run_sweep = [&](PrecondChoice pc, int cap)->int{
+      int iters = 0;
+      if(joint_BW && pc != PRECOND_RESPONSE){
+        gibbs_BW_block(iters, pc, /*sampling=*/true, cap);
+      } else {
+        if(sample_beta){
+          tstart = std::chrono::steady_clock::now();
+          update_B();
+          timings(0) += time_count(tstart);
+        }
+        if(pc == PRECOND_RESPONSE) gibbs_w_block_marginal(iters, /*sampling=*/true, cap);
+        else                       gibbs_w_block_precision(iters, pc, /*sampling=*/true, cap);
+      }
+      return iters;
+    };
+
     if(precond_choice == PRECOND_RESPONSE){
       // Covariance-form sampler: B conjugate (B|W), then W as a block via the
       // marginal (C+D) Bhattacharya sampler.
-      if(sample_beta){
-        tstart = std::chrono::steady_clock::now();
-        update_B();
-        timings(0) += time_count(tstart);
-      }
-      gibbs_w_block_marginal(cg_iter, /*sampling=*/true);
+      cg_iter = run_sweep(PRECOND_RESPONSE, 0);
       precond_used_this_iter = PRECOND_RESPONSE;
     } else if(precond_choice == PRECOND_PROBE){
       // Multi-candidate probe over {POSTERIOR, RESPONSE, VADU}, probe_per_pc
@@ -1752,22 +1926,9 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
       // every other candidate is capped at the reference's worst-case iters and
       // disqualified if it hits the cap without converging.  Winner = converged
       // candidate with the lowest mean iters (ties resolved to the reference).
-
-      // Dispatch one sweep with PC `pc`, PCG iter cap `cap` (0 = uncapped).
-      auto run_candidate = [&](PrecondChoice pc, int cap)->int{
-        int iters = 0;
-        if(pc == PRECOND_RESPONSE){
-          if(sample_beta){
-            tstart = std::chrono::steady_clock::now();
-            update_B();
-            timings(0) += time_count(tstart);
-          }
-          gibbs_w_block_marginal(iters, /*sampling=*/true, cap);
-        } else {
-          gibbs_BW_block(iters, pc, /*sampling=*/true, cap);
-        }
-        return iters;
-      };
+      // Each candidate is dispatched through run_sweep, so it honours joint_BW
+      // (joint (B,W) vs blocked B|W / W|B).
+      auto& run_candidate = run_sweep;
 
       if(probe_count == 0){
         // Lazily lay out the candidate order on the first probe sweep.
@@ -1814,7 +1975,18 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
       }
     } else {
       precond_used_this_iter = precond_choice;
-      gibbs_BW_block(cg_iter, precond_choice);
+      cg_iter = run_sweep(precond_choice, 0);
+    }
+
+    // ASIS interweaving (blocked route only): a non-centred B update holding
+    // eta = XB + W fixed, then recover W.  Mirrors the latent_model 2/3 path and
+    // breaks the B–W posterior correlation that the blocked Gibbs leaves behind.
+    if(!joint_BW && sample_beta){
+      int asis_iters = 0;
+      tstart = std::chrono::steady_clock::now();
+      update_BW_asis(asis_iters, B, W, /*sampling=*/true);
+      YXB = Y - X * B;
+      timings(5) += time_count(tstart);
     }
 
     // Surface telemetry to the outer MCMC driver.
