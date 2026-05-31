@@ -1,7 +1,7 @@
 #' Fit GP-IOX models for multivariate spatial outcomes
 #'
 #' @description
-#' Fits Gaussian Process Independent Output (GP-IOX) models for multivariate spatial data. 
+#' Fits Gaussian Process with Inside-Out Cross-covariance (GP-IOX) for multivariate spatial data. 
 #' The function supports two primary model formulations (Response or Latent) and two 
 #' inference frameworks (Markov Chain Monte Carlo or Variational Inference). 
 #' 
@@ -51,21 +51,19 @@
 #'     \item `tol`: numeric. Convergence tolerance for Variational Inference. Defaults to `1e-2`.
 #'     \item `vi_pred_smp`: integer. Number of predictive samples to draw when using VI. Defaults to 0.
 #'     \item `cg_preconditioner`: character or integer. CG preconditioner for
-#'       the joint BW block sampler (`method = "latent"`, `fit = "mcmc"`,
-#'       `debug$sampling = 1L`). Choices:
+#'       the latent MCMC samplers — the joint BW block sampler
+#'       (`debug$sampling = 1L`) and the per-outcome sequential sampler
+#'       (`debug$sampling = 3L`). Choices:
 #'       \itemize{
-#'         \item `"auto"` (default): probe the three substantive preconditioners
-#'           `"posterior"`, `"response"`, and `"vadu"` over the first few Gibbs
-#'           sweeps (5 each) and lock in the fastest. A reference candidate runs
-#'           first, uncapped, and sets a CG-iteration budget; the remaining
-#'           candidates run with their CG iterations capped at the reference's
-#'           worst case and are disqualified if they hit the cap without
-#'           converging. The reference is `"response"` when `Y` is fully observed
-#'           and `"posterior"` when `Y` has any missing values (the response
-#'           solve degrades under misalignment). The winner is the converged
-#'           candidate with the fewest CG iterations on average (ties resolved in
-#'           favour of the reference). `"jacobi"` is never auto-selected — choose
-#'           it explicitly if desired.
+#'         \item `"auto"` (default): a VADU-anchored probe. VADU — the robust
+#'           fallback — runs for a 10-sweep burn-in and its worst-case CG-iteration
+#'           count becomes a budget. The candidates `"postcov"`, `"posterior"`,
+#'           and `"response"` are then each trialled for 5 sweeps with their CG
+#'           iterations capped at that budget, and disqualified if they hit the cap
+#'           without converging. The winner is the converged candidate with the
+#'           fewest CG iterations on average that also beats VADU's burn-in mean;
+#'           if none qualifies, VADU is kept. All probe sweeps are real draws.
+#'           `"jacobi"` is never auto-selected — choose it explicitly if desired.
 #'         \item `"jacobi"`: diagonal of the joint precision operator. Cheap per
 #'           apply; usually weak. Available only by explicit request (excluded
 #'           from `"auto"`).
@@ -85,6 +83,13 @@
 #'           preconditioner (Kündig & Sigrist). Reuses the prior Vecchia factor
 #'           and folds the likelihood diagonal into it, so no posterior factor
 #'           is built per sweep. Same Σ-mix as `"posterior"` on the W block.
+#'         \item `"postcov"`: latent posterior-conditional preconditioner. Builds
+#'           a cheap Vecchia factor of the posterior \emph{covariance} from
+#'           single-datum approximate conditionals
+#'           `p(w_i | w_{N_i}, y) \approx p(w_i | w_{N_i}, y_i)`, rescaling the
+#'           prior Vecchia coefficients by a data-shrinkage factor. Applied as two
+#'           triangular solves around the same Σ-mix as `"posterior"`. O(nq)-cheap
+#'           to build, so it rebuilds every sweep.
 #'       }
 #'       Ignored for `debug$sampling != 1L` and for `method = "response"`.
 #'   }
@@ -208,51 +213,63 @@ spiox <- function(Y, X, coords, m = 15,
     matern            = 1,
     nu                = 0.5,
     vi_pred_smp       = 0,
-    # CG preconditioner choice for the joint BW block sampler (sampling = 1).
-    # One of: "auto" (probe posterior/response/vadu), "jacobi", "posterior",
-    # "response", "vadu".  Ignored for other samplers and for method = "response".
+    # CG preconditioner choice for the latent MCMC samplers (sampling = 1 and 3).
+    # One of: "auto" (VADU-anchored probe over postcov/posterior/response),
+    # "jacobi", "posterior", "response", "vadu", "postcov".  Ignored for
+    # method = "response" and the single-site sampler (sampling = 2).
     cg_preconditioner = "auto",
     # Block latent sampler (debug$sampling = 1L) only: how B and W are drawn.
     #   TRUE  (default): joint (B, W) PCG sample (gibbs_BW_block).
-    #   FALSE          : blocked route — B|W (conjugate), W|B (precision-domain
+    #   FALSE (default): blocked route — B|W (conjugate), W|B (precision-domain
     #                    PCG with the same posterior/vadu PC, or covariance-form
     #                    for cg_preconditioner = "response"), then an ASIS
     #                    non-centred B refresh.  Ignored for other samplers /
-    #                    method = "response".
-    joint_BW = TRUE,
+    #                    method = "response".  Must be FALSE for debug$sampling = 3L.
+    joint_BW = FALSE,
     # How often the Σ/Ddiag-dependent preconditioner factors are rebuilt during
     # MCMC (block latent sampler, debug$sampling = 1L).  A preconditioner only
     # speeds up CG and never shifts the target, so freezing it ("once") is exact.
-    #   "auto" (default): per-PC — "always" for vadu (cheap rebuild), "once" for
-    #                     posterior (expensive FSAI) and response (expensive C+D
-    #                     Vecchia refactor).
+    #   "once" (default): build once at the autostart values, then freeze.
+    #   "auto"          : per-PC — "always" for postcov (cheap rebuild), "once"
+    #                     for posterior (expensive FSAI) and response (expensive
+    #                     C+D Vecchia refactor).
     #   "always"        : rebuild every sweep regardless of PC.
-    #   "once"          : build once at the autostart values, then freeze.
-    cg_rebuild = "auto",
+    # NOTE: the "vadu" preconditioner always rebuilds regardless of this setting
+    # (its factor is a trivially cheap dscale/R_corr recompute).
+    cg_rebuild = "once",
     # How the POSTERIOR W-half FSAI preconditioner factor of A_j is built:
     #   "matrixfree"/0 = DAG children-walk (default),
     #   "precision"/1  = assemble HᵀH explicitly then read its entries.
     # Both produce the identical bounded-m factor; only affects
     # cg_preconditioner = "posterior".
     vapop_build_method = "matrixfree"
+    # (cg_diagonal is intentionally not exposed here: it is an internal flag that
+    #  drops the cross-outcome Σ-mix from the "posterior"/"postcov" PCs.  It is
+    #  forced TRUE in the spiox_latent call below.)
   )
   opts <- modifyList(opts_defaults, if (is.null(opts)) list() else opts)
   opts$vi_pred_smp <- as.integer(opts$vi_pred_smp)
   stopifnot("opts$update_Theta must be length 3" = length(opts$update_Theta) == 3L)
 
   # Translate opts$cg_preconditioner from string to integer code expected by
-  # the C++ side.  Codes (sampling = 1, the joint BW block sampler):
-  #   0 = auto       (probe posterior/response/vadu, 5 sweeps each; a reference
-  #                   candidate runs uncapped and sets a CG-iter budget for the
-  #                   rest; lock in the fastest converged candidate. Reference is
-  #                   "response" when fully observed, "posterior" when Y has NAs.
-  #                   jacobi is never auto-selected.)
-  #   1 = jacobi     (diagonal of the joint precision operator; manual only)
-  #   2 = posterior  (block-diagonal-on-(B,W) PC with exact dense B half and
-  #                   Σ-mixed Vecchia-precision W half)
-  #   3 = response   (covariance-form Bhattacharya w-block sampler, C+D Vecchia PC)
+  # the C++ side.  Codes (sampling = 1 block sampler and sampling = 3 per-outcome
+  # sequential sampler both honour all of these):
+  #   0 = auto       (VADU-anchored probe: run VADU for a 10-sweep burn-in and
+  #                   record its worst-case CG-iter count as a budget; trial
+  #                   postcov/posterior/response for 5 sweeps each capped at that
+  #                   budget; lock in the converged candidate with the lowest mean
+  #                   iters that also beats VADU, else fall back to VADU. jacobi is
+  #                   never auto-selected.)
+  #   1 = jacobi     (diagonal of the precision operator; manual only)
+  #   2 = posterior  (block-diagonal PC with exact dense B half and Σ-mixed
+  #                   Vecchia-precision W half; per-outcome A_j FSAI for sampling=3)
+  #   3 = response   (covariance-form Bhattacharya w-block sampler, C+D Vecchia PC;
+  #                   per-outcome conditional version for sampling=3)
   #   4 = vadu       (Vecchia-approx-with-diagonal-update PC; Kündig & Sigrist)
-  cg_pc_codes <- c(auto = 0L, jacobi = 1L, posterior = 2L, response = 3L, vadu = 4L)
+  #   5 = postcov    (latent posterior-conditional PC — cheap Vecchia factor of the
+  #                   posterior covariance via single-datum approximate conditionals)
+  cg_pc_codes <- c(auto = 0L, jacobi = 1L, posterior = 2L, response = 3L, vadu = 4L,
+                   postcov = 5L)
   cg_pc_key <- if (is.numeric(opts$cg_preconditioner)) {
     as.integer(opts$cg_preconditioner)
   } else {
@@ -309,16 +326,46 @@ spiox <- function(Y, X, coords, m = 15,
     sample_Ddiag = TRUE
   )
   debug <- modifyList(debug_defaults, if (is.null(debug)) list() else debug)
-  
+
+  # joint_BW is incompatible with the per-outcome sequential sampler (sampling=3),
+  # which has no joint (B, W) block to draw.
+  if (method == "latent" && isTRUE(opts$joint_BW) &&
+      as.integer(debug$sampling) == 3L) {
+    stop("opts$joint_BW = TRUE is incompatible with debug$sampling = 3L ",
+         "(per-outcome sequential sampler). Set opts$joint_BW = FALSE.")
+  }
+
   # ---------------------------------------------------------------------------
   # 4. Starting Values Initialization
   # ---------------------------------------------------------------------------
   auto_do <- is.character(starting) && length(starting) == 1 && starting == "auto"
-  
+
   if (!auto_do && !is.list(starting)) {
     stop("Invalid input for 'starting'. Specify 'auto' or provide a list.")
   }
-  
+
+  # Decide whether the starting values can be trusted as (untouched) autostart
+  # output.  TRUE for starting = "auto" or for an autostart() list left unchanged;
+  # FALSE for a user-built list or an autostart() list with any edited element.
+  # autostart() stamps a reference copy in attr(., "spiox_autostart_ref"); we
+  # recompute identity against it (see autostart()).
+  starting_edited <- FALSE       # autostart list that the user modified
+  starting_user   <- FALSE       # list not produced by autostart at all
+  if (auto_do) {
+    starting_is_autostart <- TRUE
+  } else {
+    ref <- attr(starting, "spiox_autostart_ref")
+    if (is.null(ref)) {
+      starting_is_autostart <- FALSE
+      starting_user <- TRUE
+    } else {
+      cur <- starting
+      attr(cur, "spiox_autostart_ref") <- NULL
+      starting_is_autostart <- identical(cur, ref)
+      starting_edited <- !starting_is_autostart
+    }
+  }
+
   if (auto_do) {
     # Generate automatic starting values
     starting <- autostart(Y, X, coords, method, m = m, opts$nu)
@@ -392,6 +439,22 @@ spiox <- function(Y, X, coords, m = 15,
     }
   }
   
+  # Warn when the starting values cannot be trusted as untouched autostart output
+  # for the latent MCMC sampler: the CG preconditioner is built (at least
+  # initially, and entirely under the default cg_rebuild = "once") from those
+  # values, so a poor start degrades CG efficiency.
+  if (!starting_is_autostart && method == "latent" && fit == "mcmc") {
+    src_msg <- if (starting_edited) {
+      "Starting values came from autostart() but at least one element was edited"
+    } else {
+      "Starting values were user-provided"
+    }
+    warning(src_msg, " (autostart_used = FALSE). The CG preconditioner is built ",
+            "from these starting values (only once under the default ",
+            "cg_rebuild = 'once'); a poor start can slow CG. Passing ",
+            "starting = 'auto' (or unmodified autostart() output) is a safer option.")
+  }
+
   # ---------------------------------------------------------------------------
   # 5. Model Dispatch
   # ---------------------------------------------------------------------------
@@ -431,7 +494,8 @@ spiox <- function(Y, X, coords, m = 15,
       cg_preconditioner = opts$cg_preconditioner_int,
       vapop_build_method = opts$vapop_build_method_int,
       joint_BW          = isTRUE(opts$joint_BW),
-      cg_rebuild        = opts$cg_rebuild_int
+      cg_rebuild        = opts$cg_rebuild_int,
+      cg_diagonal       = TRUE
     ),
 
     "response:vi" = spiox_response_vi(
@@ -463,7 +527,15 @@ spiox <- function(Y, X, coords, m = 15,
     
     stop("Unknown method/fit combination.")
   )
-  
+
+  # The single-site sampler (sampling = 2) has no CG solve, so any explicit
+  # cg_preconditioner choice is accepted but ignored.  Let the user know.
+  if (method == "latent" && fit == "mcmc" &&
+      as.integer(debug$sampling) == 2L && opts$cg_preconditioner_int > 0L) {
+    message("Note: cg_preconditioner is ignored for debug$sampling = 2L ",
+            "(single-site Gibbs has no CG solve).")
+  }
+
   # ---------------------------------------------------------------------------
   # 6. Format and Return Output
   # ---------------------------------------------------------------------------
@@ -510,6 +582,10 @@ spiox <- function(Y, X, coords, m = 15,
   out$call     <- match.call()
   out$method   <- method
   out$fit      <- fit
+  # TRUE when the run used trustworthy autostart values: starting = "auto" or an
+  # unmodified autostart() list.  FALSE for a user-built list or an autostart()
+  # list with any edited element.
+  out$autostart_used <- isTRUE(starting_is_autostart)
   out$gridded  <- gridded
   out$dag_opts <- dag_opts
   out$dag_info <- dag

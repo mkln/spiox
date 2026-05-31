@@ -96,8 +96,8 @@ spiox_response <- function(Y, X, coords, custom_dag, Beta_start, Sigma_start, Th
     .Call(`_spiox_spiox_response`, Y, X, coords, custom_dag, Beta_start, Sigma_start, Theta_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, update_Theta, num_threads)
 }
 
-spiox_latent <- function(Y, X, coords, custom_dag, Beta_start, W_start, Sigma_start, Theta_start, Ddiag_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_Beta = TRUE, sample_Sigma = TRUE, sample_Ddiag = TRUE, update_Theta, num_threads = 1L, sampling = 2L, cg_preconditioner = 0L, vapop_build_method = 0L, joint_BW = TRUE, cg_rebuild = 0L) {
-    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, Beta_start, W_start, Sigma_start, Theta_start, Ddiag_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, sample_Ddiag, update_Theta, num_threads, sampling, cg_preconditioner, vapop_build_method, joint_BW, cg_rebuild)
+spiox_latent <- function(Y, X, coords, custom_dag, Beta_start, W_start, Sigma_start, Theta_start, Ddiag_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_Beta = TRUE, sample_Sigma = TRUE, sample_Ddiag = TRUE, update_Theta, num_threads = 1L, sampling = 2L, cg_preconditioner = 0L, vapop_build_method = 0L, joint_BW = TRUE, cg_rebuild = 0L, cg_diagonal = FALSE) {
+    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, Beta_start, W_start, Sigma_start, Theta_start, Ddiag_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, sample_Ddiag, update_Theta, num_threads, sampling, cg_preconditioner, vapop_build_method, joint_BW, cg_rebuild, cg_diagonal)
 }
 
 spiox_response_vi <- function(Y, X, coords, custom_dag, dag_opts, Theta, Sigma_start, Beta_start, print_every = 0L, matern = 1L, num_threads = 1L) {

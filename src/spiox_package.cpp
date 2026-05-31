@@ -194,7 +194,8 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           int cg_preconditioner = 0,
                           int vapop_build_method = 0,
                           bool joint_BW = true,
-                          int cg_rebuild = 0){
+                          int cg_rebuild = 0,
+                          bool cg_diagonal = false){
 
   // cg_preconditioner selector:
   //   0 = auto       (sampling=1: 2-way probe POSTERIOR vs JACOBI; sampling=3: POSTERIOR)
@@ -202,15 +203,24 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   //   2 = POSTERIOR  (sampling=1: block-diag PC with Σ-mixed VAPOP W half;
   //                   sampling=3: per-outcome H_A,jᵀ H_A,j apply — Vecchia
   //                   approximation of each conditional precision A_j)
-  //   3 = RESPONSE   (sampling=1 only: covariance-form Bhattacharya w-block
-  //                   sampler preconditioned by a Vecchia factor of C+D)
-  //   4 = VADU       (sampling=1 only: Vecchia-approx-with-diagonal-update PC
-  //                   on the joint precision system, Kündig & Sigrist)
-  if(cg_preconditioner < 0 || cg_preconditioner > 4){
-    Rcpp::stop("cg_preconditioner must be in {0,1,2,3,4} (auto/jacobi/posterior/response/vadu).");
+  //   3 = RESPONSE   (sampling=1: covariance-form Bhattacharya w-block sampler
+  //                   preconditioned by a Vecchia factor of C+D; sampling=3:
+  //                   per-outcome covariance-form sampler of the same form)
+  //   4 = VADU       (sampling=1: Vecchia-approx-with-diagonal-update PC on the
+  //                   joint precision system, Kündig & Sigrist; sampling=3:
+  //                   per-outcome VADU apply of each conditional precision A_j)
+  //   5 = POSTCOV    (sampling=1 or 3: latent posterior-conditional PC — cheap
+  //                   Vecchia factor of the posterior covariance via single-datum
+  //                   approximate conditionals, two triangular solves [+ Σ-mix
+  //                   for sampling=1; per-outcome only for sampling=3])
+  if(cg_preconditioner < 0 || cg_preconditioner > 5){
+    Rcpp::stop("cg_preconditioner must be in {0,1,2,3,4,5} (auto/jacobi/posterior/response/vadu/postcov).");
   }
-  if((cg_preconditioner == 3 || cg_preconditioner == 4) && sampling != 1){
-    Rcpp::stop("cg_preconditioner 'response'/'vadu' require sampling=1 (joint block sampler).");
+  // cg_preconditioner only drives the CG-based latent samplers (sampling=1, 3).
+  // sampling=2 (single-site Gibbs) has no CG solve, so the choice is accepted but
+  // ignored (the R wrapper messages the user about this); other samplings reject.
+  if(cg_preconditioner > 0 && !(sampling == 1 || sampling == 2 || sampling == 3)){
+    Rcpp::stop("cg_preconditioner selection requires sampling=1, 2, or 3.");
   }
   // vapop_build_method: how the POSTERIOR W-half FSAI factor is built
   //   0 = matrix-free (DAG children-walk), 1 = assemble HᵀH then read.
@@ -284,6 +294,12 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     Rcpp::stop("cg_rebuild must be in {0,1,2} (auto/always/once).");
   }
   iox_model.cg_rebuild = cg_rebuild;
+  // cg_diagonal: when true, drop the cross-outcome Σ-mix (R_corr) from the
+  // POSTERIOR and POSTCOV preconditioners, leaving only the per-outcome
+  // (block-diagonal) factors.  Lets the rebuild-every-sweep cadence track the
+  // local Σ/Ddiag without re-introducing cross-outcome coupling.  No effect on
+  // VADU/RESPONSE/JACOBI or on sampling=3 (already per-outcome / uncoupled).
+  iox_model.pc_diagonal = cg_diagonal;
 
   // storage
   arma::cube Beta = arma::zeros(iox_model.p, q, mcmc);
@@ -326,7 +342,8 @@ Rcpp::List spiox_latent(const arma::mat& Y,
         cg_pcond(m) == 1 ? "jacobi"    :
         cg_pcond(m) == 2 ? "posterior" :
         cg_pcond(m) == 3 ? "response"  :
-        cg_pcond(m) == 4 ? "vadu"      : "n/a";
+        cg_pcond(m) == 4 ? "vadu"      :
+        cg_pcond(m) == 5 ? "postcov"   : "n/a";
       Rcpp::Rcout << "Iteration: " <<  m+1 << " of " << mcmc
                   << "  (CG: " << cg_iters(m)
                   << " iters, pc=" << pc_name << ")" << endl;

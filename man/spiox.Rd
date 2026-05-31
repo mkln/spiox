@@ -52,15 +52,48 @@ spiox(
   \item `update_Theta`: integer vector of length 3 indicating which of (`phi`, `nu`, `alpha`) to update via MCMC (1 = update, 0 = fixed). Defaults to `c(0,0,0)` for latent, `c(1,0,1)` for response. \emph{Note: `alpha` is forced to 0 for `method="latent"`}.
   \item `tol`: numeric. Convergence tolerance for Variational Inference. Defaults to `1e-2`.
   \item `vi_pred_smp`: integer. Number of predictive samples to draw when using VI. Defaults to 0.
-  \item `cg_preconditioner`: character or integer. CG preconditioner used by the latent full-block sampler (`method = "latent"`, `fit = "mcmc"`, `debug$sampling = 1L`). One of:
+  \item `cg_preconditioner`: character or integer. CG preconditioner for
+    the latent MCMC samplers — the joint BW block sampler
+    (`debug$sampling = 1L`) and the per-outcome sequential sampler
+    (`debug$sampling = 3L`). Choices:
     \itemize{
-      \item `"auto"` (default): probe Jacobi / PPCG / VRPC for ~15 Gibbs iterations and lock in the cheapest.
-      \item `"jacobi"`: diagonal preconditioner.
-      \item `"ppcg"`: block-diagonal prior-covariance preconditioner (`H^{-1} (Σ ⊗ I) H^{-T}`).
-      \item `"vecchia_response"` (alias `"vrpc"`): Vecchia-response preconditioner whose implied covariance has diagonal blocks equal to the exact per-outcome response marginal `Σ_jj R_j + Ddiag_j I`. Deployed inside a covariance-form Bhattacharya sampler: the CG system is `(K + D) w_aux = YXB - u - δ` with `apply_Minv = P_cov^{-1}`, and `W = u + K · w_aux`. B is sampled afterwards via the conjugate closed-form update.
+      \item `"auto"` (default): a VADU-anchored probe. VADU — the robust
+        fallback — runs for a 10-sweep burn-in and its worst-case CG-iteration
+        count becomes a budget. The candidates `"postcov"`, `"posterior"`,
+        and `"response"` are then each trialled for 5 sweeps with their CG
+        iterations capped at that budget, and disqualified if they hit the cap
+        without converging. The winner is the converged candidate with the
+        fewest CG iterations on average that also beats VADU's burn-in mean;
+        if none qualifies, VADU is kept. All probe sweeps are real draws.
+        `"jacobi"` is never auto-selected — choose it explicitly if desired.
+      \item `"jacobi"`: diagonal of the joint precision operator. Cheap per
+        apply; usually weak. Available only by explicit request (excluded
+        from `"auto"`).
+      \item `"posterior"`: block-diagonal-on-(B,W) preconditioner. Exact
+        dense Cholesky on the B block (per-outcome `p×p`), Σ-mixed
+        Vecchia-precision factors on the W block (per-outcome `H_A,j`
+        sandwiched with the correlation matrix of Σ). Built once per
+        Gibbs sweep; tends to use far fewer CG iters than JACOBI when Σ
+        has substantial off-diagonal cross-outcome structure.
+      \item `"response"`: switches the W update to a covariance-form
+        Bhattacharya block sampler that solves systems with the marginal
+        `C + D` (rather than the precision `C^{-1} + D^{-1}`),
+        preconditioned by a fresh per-outcome Vecchia factor of `C + D`
+        (built with `nugget = Ddiag`). Effective when the nugget is small
+        and the prior dominates.
+      \item `"vadu"`: Vecchia-approximation-with-diagonal-update
+        preconditioner (Kündig & Sigrist). Reuses the prior Vecchia factor
+        and folds the likelihood diagonal into it, so no posterior factor
+        is built per sweep. Same Σ-mix as `"posterior"` on the W block.
+      \item `"postcov"`: latent posterior-conditional preconditioner. Builds
+        a cheap Vecchia factor of the posterior \emph{covariance} from
+        single-datum approximate conditionals
+        `p(w_i | w_{N_i}, y) \approx p(w_i | w_{N_i}, y_i)`, rescaling the
+        prior Vecchia coefficients by a data-shrinkage factor. Applied as two
+        triangular solves around the same Σ-mix as `"posterior"`. O(nq)-cheap
+        to build, so it rebuilds every sweep.
     }
-    Ignored for other samplers and for `method = "response"`.
-  \item `m_pc`: integer or `NULL`. Optional separate Vecchia neighbour count to use only for the response preconditioner. `NULL` (default) means use the same `m` as the fit. Smaller values cheapen the per-Gibbs PC build at some cost in CG iterations; larger values tighten the PC at higher build cost. Only used when the VRPC preconditioner is active.
+    Ignored for `debug$sampling != 1L` and for `method = "response"`.
 }}
 
 \item{debug}{Optional named list of MCMC controls, primarily for targeted development and sampling restriction:
@@ -81,7 +114,7 @@ A comprehensively formatted list containing:
 }
 }
 \description{
-Fits Gaussian Process Independent Output (GP-IOX) models for multivariate spatial data. 
+Fits Gaussian Process with Inside-Out Cross-covariance (GP-IOX) for multivariate spatial data. 
 The function supports two primary model formulations (Response or Latent) and two 
 inference frameworks (Markov Chain Monte Carlo or Variational Inference). 
 

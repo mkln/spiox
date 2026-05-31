@@ -4,6 +4,7 @@
 #include "ramadapt.h"
 
 #include <memory>
+#include <functional>
 
 using namespace std;
 
@@ -156,7 +157,8 @@ public:
     PRECOND_JACOBI    = 1,
     PRECOND_POSTERIOR = 2,
     PRECOND_RESPONSE  = 3,
-    PRECOND_VADU      = 4
+    PRECOND_VADU      = 4,
+    PRECOND_POSTCOV   = 5
   };
   PrecondChoice precond_choice = PRECOND_PROBE;
 
@@ -165,46 +167,63 @@ public:
   // target, so freezing it at the autostart values ("once") is exact, while
   // rebuilding every sweep ("always") keeps it tracking the drifting operator at
   // extra cost.
-  //   REBUILD_AUTO   : per-PC default — ALWAYS for VADU (its rebuild is O(nq)
-  //                    cheap: dscale / R_corr / per-outcome B Cholesky), ONCE for
-  //                    POSTERIOR (expensive FSAI factor of A_j) and RESPONSE
-  //                    (expensive C+D Vecchia refactor).
+  //   REBUILD_AUTO   : per-PC default — ALWAYS for POSTCOV (its rebuild is O(nq)
+  //                    cheap), ONCE for POSTERIOR (expensive FSAI factor of A_j)
+  //                    and RESPONSE (expensive C+D Vecchia refactor).
   //   REBUILD_ALWAYS : rebuild every sweep regardless of PC.
   //   REBUILD_ONCE   : build once at the autostart values, then freeze.
+  // VADU is a special case: its factor always rebuilds (see pc_rebuild_now)
+  // regardless of this setting, because the recompute is trivially cheap.
   enum RebuildMode { REBUILD_AUTO = 0, REBUILD_ALWAYS = 1, REBUILD_ONCE = 2 };
   int cg_rebuild = REBUILD_AUTO;
+  // When true, the POSTERIOR and POSTCOV preconditioners drop the cross-outcome
+  // Σ-mix (R_corr) and apply only their per-outcome (block-diagonal) factors:
+  //   block(j,k) = δ_{jk}·(per-outcome A_j^{-1} approx).
+  // This isolates the local-Σ/Ddiag tracking of cg_rebuild="always" from the
+  // cross-outcome coupling (which can hurt CG conditioning when Σ is strongly
+  // correlated).  No effect on VADU/RESPONSE/JACOBI, nor on the sampling=3
+  // per-outcome sequential sampler (which is already uncoupled).
+  bool pc_diagonal = false;
   // Resolve cg_rebuild for PC `pc` given how many times its factors have already
   // been built (`builds_done`): returns whether to (re)build this sweep.
   bool pc_rebuild_now(PrecondChoice pc, int builds_done) const {
+    // VADU always rebuilds: its factor is an O(nq) trivial recompute (dscale /
+    // R_corr), so freezing it saves nothing and a stale dscale only hurts CG.
+    // This overrides cg_rebuild = "once" (now the global default) for VADU only.
+    if(pc == PRECOND_VADU) return true;
     int mode = cg_rebuild;
-    if(mode == REBUILD_AUTO) mode = (pc == PRECOND_VADU) ? REBUILD_ALWAYS : REBUILD_ONCE;
+    if(mode == REBUILD_AUTO) mode = (pc == PRECOND_POSTCOV) ? REBUILD_ALWAYS : REBUILD_ONCE;
     return (mode == REBUILD_ALWAYS) ? true : (builds_done == 0);
   }
 
-  // Probe state.  The probe compares at most three candidate preconditioners —
-  // {POSTERIOR, RESPONSE, VADU} — over probe_per_pc sweeps each, then locks in
-  // the winner.  Jacobi is deliberately excluded (it stays a user-selectable
-  // option but never participates in auto-selection).
-  //
-  // Candidate ordering depends on the data:
-  //   - any missing data  : reference = POSTERIOR (the marginal C+D response
-  //                          solve degrades when the selection operator kicks
-  //                          in), then RESPONSE, then VADU.
-  //   - fully observed     : reference = RESPONSE (covariance-domain Bhattacharya
-  //                          is typically fastest with aligned data), then
-  //                          POSTERIOR, then VADU.
-  // The reference candidate (probe_order[0]) runs uncapped and sets the iter
-  // budget; every other candidate runs with maxit capped at the reference's
-  // worst-case (max) iteration count.  A candidate that hits the cap without
-  // converging is disqualified.  The winner is the converged candidate with the
-  // lowest mean iteration count (ties resolved in favour of the reference).
-  std::vector<PrecondChoice> probe_order;          // candidates, reference first
-  int           probe_count   = 0;                 // sweeps done so far (across all candidates)
-  int           probe_cap     = 0;                 // iter cap applied to non-reference candidates
+  // Probe state.  VADU-anchored probe (used by both the sampling=1 block sampler
+  // and the sampling=3 per-outcome sampler via probe_step):
+  //   Phase 0 (burn-in): run VADU — the robust fallback — for probe_vadu_burnin
+  //     sweeps (uncapped) and record its worst-case (max) iteration count, which
+  //     becomes the iteration cap for every other candidate.
+  //   Phase 1 (trials)  : try the candidates {POSTCOV, POSTERIOR, RESPONSE} for
+  //     probe_per_pc sweeps each, capped at the VADU max.  A candidate that hits
+  //     the cap without converging is disqualified.
+  //   Decision          : pick the converged candidate with the lowest mean iters
+  //     that also beats VADU's own burn-in mean; if none qualifies, fall back to
+  //     VADU.  Jacobi is deliberately excluded (manual-only).
+  // All probe sweeps are real MCMC draws (only the preconditioner differs).
+  std::vector<PrecondChoice> probe_order;          // candidate list (excludes VADU)
+  int           probe_count   = 0;                 // sweeps done so far (burn-in + trials)
+  int           probe_cap     = 0;                 // iter cap = VADU burn-in worst case
   std::vector<double> probe_iter_sum;              // per-candidate cumulative iters
   std::vector<int>    probe_iter_max;              // per-candidate worst-case iters
-  std::vector<bool>   probe_converged;             // per-candidate: still converging within budget?
-  static constexpr int probe_per_pc = 5;
+  std::vector<bool>   probe_converged;             // per-candidate: converged within the cap?
+  double        probe_vadu_sum = 0.0;              // VADU burn-in cumulative iters
+  int           probe_vadu_max = 0;                // VADU burn-in worst-case iters
+  static constexpr int probe_per_pc      = 5;      // trial sweeps per candidate
+  static constexpr int probe_vadu_burnin = 10;     // VADU burn-in sweeps
+  // One probe step: `run(pc, cap)` performs a real W-sampling sweep with PC `pc`
+  // (cap = maxit, 0 = uncapped) and returns its CG iteration count.  Advances the
+  // probe state machine, sets precond_choice when the winner is locked in, fills
+  // cg_iter, and returns the PC actually used this sweep.
+  PrecondChoice probe_step(int& cg_iter,
+                           const std::function<int(PrecondChoice, int)>& run);
 
   // Per-outcome state for the POSTERIOR PC.  VAPOP = "Vecchia Approximation
   // of the POsterior Precision": for each outcome j we approximate
@@ -232,6 +251,26 @@ public:
   // Build the Vecchia/FSAI factors of A_j (no-op if already built).  Called
   // once on the first POSTERIOR apply.
   void build_vapop_factors();
+
+  // Per-outcome state for the POSTCOV PC.  "Latent posterior-conditional"
+  // preconditioner: instead of a Vecchia factor of the posterior PRECISION
+  // (VAPOP), we build a cheap Vecchia factor of the posterior COVARIANCE using
+  // single-datum approximate conditionals
+  //     p(w_i | w_{N_i}, y) ≈ p(w_i | w_{N_i}, y_i)
+  //                         ∝ p(w_i | w_{N_i}) · p(y_i | w_i).
+  // Per outcome j, reusing the PRIOR daggps[j] coefficients b_i = daggps[j].h(i)
+  // and r_i = daggps[j].sqrtR(i)^2, with invDj = 1/Ddiag(j) (0 at missing):
+  //     g_i = Q_jj / (Q_jj + r_i·invDj)         (shrinkage toward data, ∈(0,1])
+  //     f_i = r_i  / (Q_jj + r_i·invDj)          (conditional variance)
+  // The lower-tri factor Ũ_j has rows [1/√f_i at i, -g_i·b_i/√f_i at parents]
+  // so that Ũ_jᵀŨ_j ≈ A_j (the posterior precision), applied as A_j⁻¹ ≈
+  // Ũ_j⁻¹Ũ_j⁻ᵀ by two triangular solves, then mixed across outcomes by R_corr.
+  // Build is O(nq) cheap (just rescales prior coefs), so it rebuilds every sweep.
+  int postcov_pc_n_builds = 0;
+  std::vector<Eigen::SparseMatrix<double>> postcov_U_eigen;   // size q (col-major lower)
+  std::vector<Eigen::SparseMatrix<double>> postcov_Ut_eigen;  // size q (col-major upper, = transpose)
+  // Build the latent posterior-conditional factors Ũ_j (rebuilt every sweep).
+  void build_postcov_factors();
 
   // Telemetry: number of CG iterations used in the most-recent W-block update,
   // plus an integer code for which preconditioner / sampler ran
@@ -262,7 +301,8 @@ public:
   // Per-outcome sequential sampler for W (latent_model = 3).  Uses a fixed
   // sparse-precision-form CG with Jacobi PC (pcg_diag_solve) — the precond
   // enum is accepted for ABI compatibility but ignored.
-  void gibbs_w_sequential_byoutcome(int& cg_iter, PrecondChoice precond);
+  void gibbs_w_sequential_byoutcome(int& cg_iter, PrecondChoice precond,
+                                    int cg_maxit_override = 0);
 
   // β-conditional W update (ASIS reparameterisation) used by the non-block
   // latent samplers (latent_model = 2, 3) when sample_Beta is on.  Carries

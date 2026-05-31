@@ -94,8 +94,19 @@ autostart <- function(Y, X, coords, method=c("response", "latent"), m=15, nu=0.5
       Ddiag = Ddiag
     )
   }
-  
+
+  # Tamper-evident autostart marker.  We stash a reference copy of the freshly
+  # produced list as an attribute (the copy itself carries no such attribute).
+  # spiox() can then tell three cases apart by comparing the list against this
+  # reference with identical():
+  #   - attribute absent          -> user-built list (warn: PC built on them)
+  #   - present and identical      -> untouched autostart values (trusted)
+  #   - present but not identical  -> user edited some element(s) (warn)
+  # The attribute survives `$<-` / `[[<-` element edits, so any manual change to
+  # Theta/Sigma/W/Ddiag/Beta is detected.
+  attr(out, "spiox_autostart_ref") <- out
+
   return(out)
-  
-  
+
+
 }
