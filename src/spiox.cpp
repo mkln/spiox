@@ -2215,8 +2215,9 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
     //       joint (B,W) PCG via gibbs_BW_block.
     //   PRECOND_RESPONSE : covariance-domain Bhattacharya via update_B +
     //       gibbs_w_block_marginal.
-    //   PRECOND_PROBE : auto-select among {POSTERIOR, RESPONSE, VADU} — see below.
-    //       Jacobi is excluded from the probe (stays a manual option only).
+    //   PRECOND_PROBE : VADU-anchored auto-select over candidates {POSTCOV,
+    //       POSTERIOR, RESPONSE} — see below.  Jacobi is excluded from the probe
+    //       (stays a manual option only); VADU is the anchor / robust fallback.
     int cg_iter = 0;
     PrecondChoice precond_used_this_iter;
 
@@ -2278,11 +2279,12 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
     // Non-block latent samplers — they manage B, W, and any inner CG themselves.
     //   latent_model == 2 : single-site Gibbs (w_sequential_singlesite, no PC dispatch).
     //   latent_model == 3 : per-outcome / single-outcome sequential sampler
-    //                       (gibbs_w_sequential_byoutcome).  Honours JACOBI,
-    //                       POSTERIOR, or POSTCOV via the precond_choice enum.
-    //                       PROBE / RESPONSE / VADU fall back to POSTERIOR
-    //                       (per-outcome probe not implemented; POSTERIOR is the
-    //                       safe-default choice).
+    //                       (gibbs_w_sequential_byoutcome).  Honours JACOBI /
+    //                       POSTERIOR / POSTCOV / VADU / RESPONSE directly via
+    //                       the precond_choice enum.  PROBE (the default) runs
+    //                       the VADU-anchored per-outcome probe (probe_step)
+    //                       over the {POSTCOV, POSTERIOR, RESPONSE} candidates
+    //                       and locks in the fastest.
     if(sample_beta){
       tstart = std::chrono::steady_clock::now();
       update_B();

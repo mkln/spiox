@@ -126,16 +126,14 @@ public:
   //               PC at Σ diagonal.  Extra cost vs the diagonal-Σ version:
   //               one n×q · q×q dense multiply per CG iter (cheap for q small).
   //
-  //   PROBE     : adaptive default.  Compares {POSTERIOR, RESPONSE, VADU}
-  //               (Jacobi excluded) over probe_per_pc sweeps each, then locks
-  //               in the fastest.  A reference candidate runs first, uncapped,
-  //               and sets a CG-iter budget; the rest run capped at the
-  //               reference's worst case and are disqualified if they hit the
-  //               cap without converging.  Reference = RESPONSE when Y is fully
-  //               observed, POSTERIOR when Y has missing entries (the response
-  //               C+D solve degrades under misalignment).  Winner = converged
-  //               candidate with the fewest mean iters (ties to the reference).
-  //               See the probe-state block below.
+  //   PROBE     : adaptive default.  VADU-anchored: VADU runs first as an
+  //               uncapped burn-in and its worst-case iter count sets the cap,
+  //               then the candidates {POSTCOV, POSTERIOR, RESPONSE} (Jacobi
+  //               excluded) are trialed probe_per_pc sweeps each, capped at the
+  //               VADU worst case and disqualified if they hit the cap without
+  //               converging.  Winner = converged candidate with the fewest
+  //               mean iters that also beats VADU's burn-in mean; otherwise VADU
+  //               is the robust fallback.  See the probe-state block below.
   //   RESPONSE  : not a PCG branch.  Selects an alternative w-block sampler
   //               (gibbs_w_block_marginal) that samples W in the covariance
   //               (data) domain via the Bhattacharya algorithm, solving

@@ -277,10 +277,10 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                   0);                 // vi_min_iter
 
   // Override the default adaptive-probe choice if the caller requested a fixed
-  // preconditioner.  PROBE = 0 (the default) runs the auto-pick logic in the
-  // sampling=1 path; sampling=3 falls back to POSTERIOR on PROBE.  Both the
-  // joint BW block sampler (sampling=1) and the per-outcome sequential
-  // sampler (sampling=3) honour JACOBI / POSTERIOR.
+  // preconditioner.  PROBE = 0 (the default) runs the auto-pick logic — the
+  // VADU-anchored probe (probe_step) — in both the sampling=1 (joint BW block)
+  // and sampling=3 (per-outcome sequential) paths.  A nonzero cg_preconditioner
+  // pins a fixed PC, honoured directly by both samplers.
   if((sampling == 1 || sampling == 3) && cg_preconditioner > 0){
     iox_model.precond_choice = static_cast<SpIOX::PrecondChoice>(cg_preconditioner);
   }
