@@ -213,8 +213,13 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   //                   Vecchia factor of the posterior covariance via single-datum
   //                   approximate conditionals, two triangular solves [+ Σ-mix
   //                   for sampling=1; per-outcome only for sampling=3])
-  if(cg_preconditioner < 0 || cg_preconditioner > 5){
-    Rcpp::stop("cg_preconditioner must be in {0,1,2,3,4,5} (auto/jacobi/posterior/response/vadu/postcov).");
+  //   6 = POSTCOV_MV (sampling=1: MULTIVARIATE postcov — one block-Vecchia factor
+  //                   of the JOINT posterior covariance, q×q blocks coupling all
+  //                   outcomes per location via R_i = Λ_iΣΛ_i shrunk by the local
+  //                   datum; no R_corr mix.  Reduces to POSTCOV at diagonal Σ.
+  //                   sampling=3 falls back to POSTCOV [operator is per-outcome].)
+  if(cg_preconditioner < 0 || cg_preconditioner > 6){
+    Rcpp::stop("cg_preconditioner must be in {0,1,2,3,4,5,6} (auto/jacobi/posterior/response/vadu/postcov/postcov_mv).");
   }
   // cg_preconditioner only drives the CG-based latent samplers (sampling=1, 3).
   // sampling=2 (single-site Gibbs) has no CG solve, so the choice is accepted but
@@ -343,7 +348,8 @@ Rcpp::List spiox_latent(const arma::mat& Y,
         cg_pcond(m) == 2 ? "posterior" :
         cg_pcond(m) == 3 ? "response"  :
         cg_pcond(m) == 4 ? "vadu"      :
-        cg_pcond(m) == 5 ? "postcov"   : "n/a";
+        cg_pcond(m) == 5 ? "postcov"   :
+        cg_pcond(m) == 6 ? "postcov_mv": "n/a";
       Rcpp::Rcout << "Iteration: " <<  m+1 << " of " << mcmc
                   << "  (CG: " << cg_iters(m)
                   << " iters, pc=" << pc_name << ")" << endl;

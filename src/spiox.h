@@ -126,14 +126,13 @@ public:
   //               PC at Σ diagonal.  Extra cost vs the diagonal-Σ version:
   //               one n×q · q×q dense multiply per CG iter (cheap for q small).
   //
-  //   PROBE     : adaptive default.  VADU-anchored: VADU runs first as an
-  //               uncapped burn-in and its worst-case iter count sets the cap,
-  //               then the candidates {POSTCOV, POSTERIOR, RESPONSE} (Jacobi
-  //               excluded) are trialed probe_per_pc sweeps each, capped at the
-  //               VADU worst case and disqualified if they hit the cap without
-  //               converging.  Winner = converged candidate with the fewest
-  //               mean iters that also beats VADU's burn-in mean; otherwise VADU
-  //               is the robust fallback.  See the probe-state block below.
+  //   PROBE     : adaptive default.  Two-candidate, q-keyed: the PRIMARY anchor
+  //               (POSTCOV_MV if q>10 else POSTCOV) runs an uncapped probe_burnin
+  //               and its worst-case iter count sets the cap; the SECONDARY (the
+  //               other) is then trialed probe_trial sweeps capped at that, and
+  //               adopted only if it converges within the cap with a lower mean
+  //               than the primary; otherwise the primary is kept.  See the
+  //               probe-state block below.
   //   RESPONSE  : not a PCG branch.  Selects an alternative w-block sampler
   //               (gibbs_w_block_marginal) that samples W in the covariance
   //               (data) domain via the Bhattacharya algorithm, solving
@@ -156,7 +155,8 @@ public:
     PRECOND_POSTERIOR = 2,
     PRECOND_RESPONSE  = 3,
     PRECOND_VADU      = 4,
-    PRECOND_POSTCOV   = 5
+    PRECOND_POSTCOV   = 5,
+    PRECOND_POSTCOV_MV = 6
   };
   PrecondChoice precond_choice = PRECOND_PROBE;
 
@@ -190,32 +190,34 @@ public:
     // This overrides cg_rebuild = "once" (now the global default) for VADU only.
     if(pc == PRECOND_VADU) return true;
     int mode = cg_rebuild;
-    if(mode == REBUILD_AUTO) mode = (pc == PRECOND_POSTCOV) ? REBUILD_ALWAYS : REBUILD_ONCE;
+    // POSTCOV and POSTCOV_MV default to ALWAYS: their rebuild is cheap (POSTCOV is
+    // an O(nq) coefficient rescale; POSTCOV_MV overwrites preallocated q×q block
+    // values in place, parallel over locations) and tracking the live Σ/Ddiag
+    // empirically beats freezing at the autostart values.
+    if(mode == REBUILD_AUTO)
+      mode = (pc == PRECOND_POSTCOV || pc == PRECOND_POSTCOV_MV) ? REBUILD_ALWAYS : REBUILD_ONCE;
     return (mode == REBUILD_ALWAYS) ? true : (builds_done == 0);
   }
 
-  // Probe state.  VADU-anchored probe (used by both the sampling=1 block sampler
-  // and the sampling=3 per-outcome sampler via probe_step):
-  //   Phase 0 (burn-in): run VADU — the robust fallback — for probe_vadu_burnin
-  //     sweeps (uncapped) and record its worst-case (max) iteration count, which
-  //     becomes the iteration cap for every other candidate.
-  //   Phase 1 (trials)  : try the candidates {POSTCOV, POSTERIOR, RESPONSE} for
-  //     probe_per_pc sweeps each, capped at the VADU max.  A candidate that hits
-  //     the cap without converging is disqualified.
-  //   Decision          : pick the converged candidate with the lowest mean iters
-  //     that also beats VADU's own burn-in mean; if none qualifies, fall back to
-  //     VADU.  Jacobi is deliberately excluded (manual-only).
+  // Probe state.  Two-candidate q-keyed probe (used by both the sampling=1 block
+  // sampler and the sampling=3 per-outcome sampler via probe_step):
+  //   Phase 0 (burn-in): run the PRIMARY anchor — POSTCOV_MV if q>10 else POSTCOV —
+  //     for probe_burnin sweeps (uncapped) and record its worst-case (max) iters,
+  //     which becomes the iteration cap for the secondary.
+  //   Phase 1 (trial)   : run the SECONDARY (the other of POSTCOV/POSTCOV_MV) for
+  //     probe_trial sweeps, capped at the primary max; disqualified if it hits the
+  //     cap without converging.
+  //   Decision          : adopt the secondary only if it converged within the cap
+  //     with a lower mean than the primary; otherwise keep the primary.
   // All probe sweeps are real MCMC draws (only the preconditioner differs).
-  std::vector<PrecondChoice> probe_order;          // candidate list (excludes VADU)
-  int           probe_count   = 0;                 // sweeps done so far (burn-in + trials)
-  int           probe_cap     = 0;                 // iter cap = VADU burn-in worst case
-  std::vector<double> probe_iter_sum;              // per-candidate cumulative iters
-  std::vector<int>    probe_iter_max;              // per-candidate worst-case iters
-  std::vector<bool>   probe_converged;             // per-candidate: converged within the cap?
-  double        probe_vadu_sum = 0.0;              // VADU burn-in cumulative iters
-  int           probe_vadu_max = 0;                // VADU burn-in worst-case iters
-  static constexpr int probe_per_pc      = 5;      // trial sweeps per candidate
-  static constexpr int probe_vadu_burnin = 10;     // VADU burn-in sweeps
+  int           probe_count         = 0;           // sweeps done (burn-in + trial)
+  int           probe_cap           = 0;           // secondary iter cap = primary max
+  double        probe_primary_sum   = 0.0;         // primary burn-in cumulative iters
+  int           probe_primary_max   = 0;           // primary burn-in worst-case iters
+  double        probe_secondary_sum = 0.0;         // secondary trial cumulative iters
+  bool          probe_secondary_ok  = true;        // secondary converged within the cap?
+  static constexpr int probe_burnin = 10;          // primary burn-in sweeps (probe length)
+  static constexpr int probe_trial  = 5;           // secondary trial sweeps
   // One probe step: `run(pc, cap)` performs a real W-sampling sweep with PC `pc`
   // (cap = maxit, 0 = uncapped) and returns its CG iteration count.  Advances the
   // probe state machine, sets precond_choice when the winner is locked in, fills
@@ -269,6 +271,54 @@ public:
   std::vector<Eigen::SparseMatrix<double>> postcov_Ut_eigen;  // size q (col-major upper, = transpose)
   // Build the latent posterior-conditional factors Ũ_j (rebuilt every sweep).
   void build_postcov_factors();
+
+  // Per-location state for the MULTIVARIATE POSTCOV PC ("postcov_mv").  Instead
+  // of q separate per-outcome factors mixed by a uniform R_corr, this builds a
+  // SINGLE block-Vecchia inverse-Cholesky factor U of the JOINT posterior
+  // covariance, with q×q blocks coupling all outcomes at a location.  The IOX
+  // prior has V = HW with rows v_i = (V_{i1..iq}) iid N(0,Σ), so the multivariate
+  // prior conditional is
+  //     w_i | w_{N_i} ~ N(M_i w_{N_i}, R_i),  R_i = Λ_i Σ Λ_i,
+  // with Λ_i = diag_j sqrtR_i^{(j)} (the per-outcome conditional sd, from
+  // daggps[j].sqrtR(i)) and M_i's parent-t block = diag_j b_i^{(j)}(t) (from
+  // daggps[j].h(i)(t); the shared parents are daggps[0].dag(i)).  Folding the
+  // local datum y_i (precision Ω_i = diag_j invD_ij, 0 at missing) gives the
+  // posterior conditional covariance F_i = (R_i^{-1}+Ω_i)^{-1} = L_i L_iᵀ and the
+  // mean coefficient G_i = F_i R_i^{-1} M_i.  The block factor U (location-major,
+  // lower-block-triangular) has diagonal block L_i^{-1} and parent-t block
+  // -L_i^{-1} G_i^{(t)}, so UᵀU ≈ joint posterior precision and M^{-1} = U^{-1}U^{-ᵀ}.
+  // Stored as dense q×q blocks (NOT an Eigen sparse matrix — for dense q×q blocks
+  // the BLAS gemv beats a scalar sparse triangular solve, measured 2–3× at q=10–30):
+  //     postcov_mv_L[i] = L_i                          (q×q lower)
+  //     postcov_mv_B[i] = [ -L_i^{-1}G_i^{(1)} | ... ] (q × q·m_i; empty if root)
+  // Reduces EXACTLY to POSTCOV when Σ is diagonal.  Per-rebuild work O(n(q³+m q²))
+  // (rows independent → OpenMP-parallel), reusing R_i^{-1}=Λ_i^{-1}QΛ_i^{-1} (Q=Σ^{-1}
+  // is a member, so only one q×q SPD inverse per location).
+  //
+  // Apply M^{-1}=U^{-1}U^{-ᵀ} is a block triangular solve — inherently serial along
+  // the DAG.  We parallelise it by LEVEL SCHEDULING: level[i] = 1+max level over
+  // parents; locations within a level are mutually independent, so each level is an
+  // OpenMP-parallel sweep (forward = levels up, gathering from parents; back = levels
+  // down, gathering from children).  Both passes run in place on one q×n buffer.
+  // The level/children structure is DAG-only (θ/Σ/Ddiag-independent) → precomputed
+  // once.  This is the lever postcov lacked: location- (n-) parallelism rather than
+  // the per-outcome q-parallelism, where postcov_mv's far fewer CG iters pays off.
+  int  postcov_mv_n_builds = 0;
+  bool postcov_mv_setup_done = false;             // levels/children/storage precomputed?
+  std::vector<arma::mat> postcov_mv_L;            // size n, each q×q lower-triangular
+  std::vector<arma::mat> postcov_mv_B;            // size n, each q×(q·m_i) (empty if root)
+  arma::uvec             postcov_mv_order;        // locations sorted by level (stable)
+  arma::uvec             postcov_mv_level_ptr;    // size n_levels+1: level slices into order
+  arma::field<arma::uvec> postcov_mv_child_k;     // per i: children k (i is a parent of k)
+  arma::field<arma::uvec> postcov_mv_child_t;     // per i: position of i in k's parent list
+  arma::mat              postcov_mv_buf;          // reused q×n location-major apply buffer
+  std::vector<arma::vec> postcov_mv_acc;          // per-thread scratch, length q
+  std::vector<arma::vec> postcov_mv_zpar;         // per-thread scratch, length q·max_parents
+  void postcov_mv_setup();                        // one-time levels + children + storage
+  void build_postcov_mv_factors();
+  // Apply the postcov_mv W-half PC to one W-block: z = U^{-1}U^{-ᵀ} r, r_w / z_w
+  // length nq (outcome-major).  Level-scheduled parallel block substitution.
+  void postcov_mv_apply(const double* r_w, double* z_w);
 
   // Telemetry: number of CG iterations used in the most-recent W-block update,
   // plus an integer code for which preconditioner / sampler ran

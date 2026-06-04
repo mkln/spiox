@@ -55,15 +55,14 @@
 #'       (`debug$sampling = 1L`) and the per-outcome sequential sampler
 #'       (`debug$sampling = 3L`). Choices:
 #'       \itemize{
-#'         \item `"auto"` (default): a VADU-anchored probe. VADU — the robust
-#'           fallback — runs for a 10-sweep burn-in and its worst-case CG-iteration
-#'           count becomes a budget. The candidates `"postcov"`, `"posterior"`,
-#'           and `"response"` are then each trialled for 5 sweeps with their CG
-#'           iterations capped at that budget, and disqualified if they hit the cap
-#'           without converging. The winner is the converged candidate with the
-#'           fewest CG iterations on average that also beats VADU's burn-in mean;
-#'           if none qualifies, VADU is kept. All probe sweeps are real draws.
-#'           `"jacobi"` is never auto-selected — choose it explicitly if desired.
+#'         \item `"auto"` (default): a two-candidate probe keyed on `q`. The anchor
+#'           is the better default for the regime — `"postcov_mv"` if `q > 10` else
+#'           `"postcov"` — which runs for a 10-sweep burn-in; its worst-case
+#'           CG-iteration count becomes a cap. The other candidate is then trialled
+#'           for 5 sweeps with its CG iterations capped at that, and adopted only if
+#'           it converges within the cap with a lower mean than the anchor; otherwise
+#'           the anchor is kept. All probe sweeps are real draws. `"jacobi"` is never
+#'           auto-selected — choose it explicitly if desired.
 #'         \item `"jacobi"`: diagonal of the joint precision operator. Cheap per
 #'           apply; usually weak. Available only by explicit request (excluded
 #'           from `"auto"`).
@@ -90,6 +89,16 @@
 #'           prior Vecchia coefficients by a data-shrinkage factor. Applied as two
 #'           triangular solves around the same Σ-mix as `"posterior"`. O(nq)-cheap
 #'           to build, so it rebuilds every sweep.
+#'         \item `"postcov_mv"`: multivariate `"postcov"`. Instead of `q` separate
+#'           per-outcome factors mixed by the prior correlation of Σ, builds a
+#'           single block-Vecchia factor of the \emph{joint} posterior covariance
+#'           with `q×q` blocks that couple all outcomes at a location through
+#'           `R_i = Λ_i Σ Λ_i` shrunk by the local datum. The cross-outcome
+#'           coupling is thus local and data-aware rather than a uniform mix.
+#'           Reduces exactly to `"postcov"` when Σ is diagonal. Build is
+#'           `O(n(q³ + m q²))`, so it defaults to building once (frozen at the
+#'           autostart Σ/Ddiag). Block latent sampler (`debug$sampling = 1L`) only;
+#'           `debug$sampling = 3L` falls back to `"postcov"`.
 #'       }
 #'       Ignored for `debug$sampling != 1L` and for `method = "response"`.
 #'   }
@@ -214,29 +223,30 @@ spiox <- function(Y, X, coords, m = 15,
     nu                = 0.5,
     vi_pred_smp       = 0,
     # CG preconditioner choice for the latent MCMC samplers (sampling = 1 and 3).
-    # One of: "auto" (VADU-anchored probe over postcov/posterior/response),
-    # "jacobi", "posterior", "response", "vadu", "postcov".  Ignored for
+    # One of: "auto", "jacobi", "posterior", "response", "vadu", "postcov",
+    # "postcov_mv".  "auto" (default) is a two-candidate probe keyed on q: it anchors
+    # on the better default for the regime — postcov_mv if q > 10 else postcov — runs
+    # it for a 10-sweep burn-in, then trials the other capped at the anchor's
+    # worst-case CG iters, switching only if it converges faster.  Ignored for
     # method = "response" and the single-site sampler (sampling = 2).
     cg_preconditioner = "auto",
     # Block latent sampler (debug$sampling = 1L) only: how B and W are drawn.
-    #   TRUE  (default): joint (B, W) PCG sample (gibbs_BW_block).
-    #   FALSE (default): blocked route — B|W (conjugate), W|B (precision-domain
-    #                    PCG with the same posterior/vadu PC, or covariance-form
-    #                    for cg_preconditioner = "response"), then an ASIS
-    #                    non-centred B refresh.  Ignored for other samplers /
-    #                    method = "response".  Must be FALSE for debug$sampling = 3L.
-    joint_BW = FALSE,
-    # How often the Σ/Ddiag-dependent preconditioner factors are rebuilt during
-    # MCMC (block latent sampler, debug$sampling = 1L).  A preconditioner only
-    # speeds up CG and never shifts the target, so freezing it ("once") is exact.
-    #   "once" (default): build once at the autostart values, then freeze.
-    #   "auto"          : per-PC — "always" for postcov (cheap rebuild), "once"
-    #                     for posterior (expensive FSAI) and response (expensive
-    #                     C+D Vecchia refactor).
-    #   "always"        : rebuild every sweep regardless of PC.
-    # NOTE: the "vadu" preconditioner always rebuilds regardless of this setting
-    # (its factor is a trivially cheap dscale/R_corr recompute).
-    cg_rebuild = "once",
+    #   TRUE  (default): joint (B, W) PCG sample (gibbs_BW_block); the B-W coupling is
+    #                    preconditioned by a shared symmetric block Gauss-Seidel wrap.
+    #   FALSE          : blocked route — B|W (conjugate), W|B (precision-domain PCG),
+    #                    then an ASIS non-centred B refresh.  Forced FALSE for
+    #                    sampling != 1 (no joint block) and method = "response".
+    joint_BW = TRUE,
+    # How often the Σ/Ddiag-dependent preconditioner factors are rebuilt during MCMC.
+    # A preconditioner only speeds up CG and never shifts the target, so any cadence
+    # is valid; tracking the live Σ/Ddiag ("always") empirically beats freezing.
+    #   "always" (default): rebuild every sweep from the live Σ/Ddiag.
+    #   "auto"            : per-PC — "always" for postcov/postcov_mv (cheap rebuild),
+    #                       "once" for posterior/response (expensive factor).
+    #   "once"            : build once at the autostart values, then freeze (exact).
+    # NOTE: "vadu" always rebuilds regardless (its factor is a trivially cheap
+    # dscale/R_corr recompute).
+    cg_rebuild = "always",
     # How the POSTERIOR W-half FSAI preconditioner factor of A_j is built:
     #   "matrixfree"/0 = DAG children-walk (default),
     #   "precision"/1  = assemble HᵀH explicitly then read its entries.
@@ -268,8 +278,12 @@ spiox <- function(Y, X, coords, m = 15,
   #   4 = vadu       (Vecchia-approx-with-diagonal-update PC; Kündig & Sigrist)
   #   5 = postcov    (latent posterior-conditional PC — cheap Vecchia factor of the
   #                   posterior covariance via single-datum approximate conditionals)
+  #   6 = postcov_mv (multivariate postcov — one block-Vecchia factor of the JOINT
+  #                   posterior covariance, q×q blocks coupling all outcomes per
+  #                   location; reduces to postcov at diagonal Sigma. sampling=1 only,
+  #                   sampling=3 falls back to postcov.)
   cg_pc_codes <- c(auto = 0L, jacobi = 1L, posterior = 2L, response = 3L, vadu = 4L,
-                   postcov = 5L)
+                   postcov = 5L, postcov_mv = 6L)
   cg_pc_key <- if (is.numeric(opts$cg_preconditioner)) {
     as.integer(opts$cg_preconditioner)
   } else {
@@ -327,12 +341,11 @@ spiox <- function(Y, X, coords, m = 15,
   )
   debug <- modifyList(debug_defaults, if (is.null(debug)) list() else debug)
 
-  # joint_BW is incompatible with the per-outcome sequential sampler (sampling=3),
-  # which has no joint (B, W) block to draw.
-  if (method == "latent" && isTRUE(opts$joint_BW) &&
-      as.integer(debug$sampling) == 3L) {
-    stop("opts$joint_BW = TRUE is incompatible with debug$sampling = 3L ",
-         "(per-outcome sequential sampler). Set opts$joint_BW = FALSE.")
+  # joint_BW only applies to the block sampler (sampling=1); the single-site (2) and
+  # per-outcome sequential (3) samplers have no joint (B, W) block, so force it FALSE
+  # there rather than erroring on the joint_BW = TRUE default.
+  if (method == "latent" && as.integer(debug$sampling) != 1L) {
+    opts$joint_BW <- FALSE
   }
 
   # ---------------------------------------------------------------------------
