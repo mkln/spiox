@@ -26,10 +26,6 @@ public:
   arma::mat coords;
   arma::vec theta;
 
-  // Optional per-location nugget added to the diagonal of the covariance
-  // blocks consumed by compute_comps.  Empty (default) means "no nugget".
-  arma::vec nugget;
-
   double precision_logdeterminant;
   double logdens(const arma::vec& x);
   void update_theta(const arma::vec& newtheta);

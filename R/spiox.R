@@ -72,12 +72,6 @@
 #'           sandwiched with the correlation matrix of Σ). Built once per
 #'           Gibbs sweep; tends to use far fewer CG iters than JACOBI when Σ
 #'           has substantial off-diagonal cross-outcome structure.
-#'         \item `"response"`: switches the W update to a covariance-form
-#'           Bhattacharya block sampler that solves systems with the marginal
-#'           `C + D` (rather than the precision `C^{-1} + D^{-1}`),
-#'           preconditioned by a fresh per-outcome Vecchia factor of `C + D`
-#'           (built with `nugget = Ddiag`). Effective when the nugget is small
-#'           and the prior dominates.
 #'         \item `"vadu"`: Vecchia-approximation-with-diagonal-update
 #'           preconditioner (Kündig & Sigrist). Reuses the prior Vecchia factor
 #'           and folds the likelihood diagonal into it, so no posterior factor
@@ -223,8 +217,8 @@ spiox <- function(Y, X, coords, m = 15,
     nu                = 0.5,
     vi_pred_smp       = 0,
     # CG preconditioner choice for the latent MCMC samplers (sampling = 1 and 3).
-    # One of: "auto", "jacobi", "posterior", "response", "vadu", "postcov",
-    # "postcov_mv".  "auto" (default) is a two-candidate probe keyed on q: it anchors
+    # One of: "auto", "jacobi", "posterior", "vadu", "postcov", "postcov_mv".
+    # "auto" (default) is a two-candidate probe keyed on q: it anchors
     # on the better default for the regime — postcov_mv if q > 10 else postcov — runs
     # it for a 10-sweep burn-in, then trials the other capped at the anchor's
     # worst-case CG iters, switching only if it converges faster.  Ignored for
@@ -242,7 +236,7 @@ spiox <- function(Y, X, coords, m = 15,
     # is valid; tracking the live Σ/Ddiag ("always") empirically beats freezing.
     #   "always" (default): rebuild every sweep from the live Σ/Ddiag.
     #   "auto"            : per-PC — "always" for postcov/postcov_mv (cheap rebuild),
-    #                       "once" for posterior/response (expensive factor).
+    #                       "once" for posterior (expensive factor).
     #   "once"            : build once at the autostart values, then freeze (exact).
     # NOTE: "vadu" always rebuilds regardless (its factor is a trivially cheap
     # dscale/R_corr recompute).
@@ -253,9 +247,6 @@ spiox <- function(Y, X, coords, m = 15,
     # Both produce the identical bounded-m factor; only affects
     # cg_preconditioner = "posterior".
     vapop_build_method = "matrixfree"
-    # (cg_diagonal is intentionally not exposed here: it is an internal flag that
-    #  drops the cross-outcome Σ-mix from the "posterior"/"postcov" PCs.  It is
-    #  forced TRUE in the spiox_latent call below.)
   )
   opts <- modifyList(opts_defaults, if (is.null(opts)) list() else opts)
   opts$vi_pred_smp <- as.integer(opts$vi_pred_smp)
@@ -264,26 +255,21 @@ spiox <- function(Y, X, coords, m = 15,
   # Translate opts$cg_preconditioner from string to integer code expected by
   # the C++ side.  Codes (sampling = 1 block sampler and sampling = 3 per-outcome
   # sequential sampler both honour all of these):
-  #   0 = auto       (VADU-anchored probe: run VADU for a 10-sweep burn-in and
-  #                   record its worst-case CG-iter count as a budget; trial
-  #                   postcov/posterior/response for 5 sweeps each capped at that
-  #                   budget; lock in the converged candidate with the lowest mean
-  #                   iters that also beats VADU, else fall back to VADU. jacobi is
-  #                   never auto-selected.)
+  #   0 = auto       (q-keyed 2-candidate probe: anchor postcov_mv if q>10 else
+  #                   postcov for a 10-sweep burn-in, trial the other capped at the
+  #                   anchor's worst-case iters, switch only if it converges faster)
   #   1 = jacobi     (diagonal of the precision operator; manual only)
   #   2 = posterior  (block-diagonal PC with exact dense B half and Σ-mixed
   #                   Vecchia-precision W half; per-outcome A_j FSAI for sampling=3)
-  #   3 = response   (covariance-form Bhattacharya w-block sampler, C+D Vecchia PC;
-  #                   per-outcome conditional version for sampling=3)
-  #   4 = vadu       (Vecchia-approx-with-diagonal-update PC; Kündig & Sigrist)
-  #   5 = postcov    (latent posterior-conditional PC — cheap Vecchia factor of the
+  #   3 = vadu       (Vecchia-approx-with-diagonal-update PC; Kündig & Sigrist)
+  #   4 = postcov    (latent posterior-conditional PC — cheap Vecchia factor of the
   #                   posterior covariance via single-datum approximate conditionals)
-  #   6 = postcov_mv (multivariate postcov — one block-Vecchia factor of the JOINT
+  #   5 = postcov_mv (multivariate postcov — one block-Vecchia factor of the JOINT
   #                   posterior covariance, q×q blocks coupling all outcomes per
   #                   location; reduces to postcov at diagonal Sigma. sampling=1 only,
   #                   sampling=3 falls back to postcov.)
-  cg_pc_codes <- c(auto = 0L, jacobi = 1L, posterior = 2L, response = 3L, vadu = 4L,
-                   postcov = 5L, postcov_mv = 6L)
+  cg_pc_codes <- c(auto = 0L, jacobi = 1L, posterior = 2L, vadu = 3L,
+                   postcov = 4L, postcov_mv = 5L)
   cg_pc_key <- if (is.numeric(opts$cg_preconditioner)) {
     as.integer(opts$cg_preconditioner)
   } else {
@@ -298,7 +284,7 @@ spiox <- function(Y, X, coords, m = 15,
   opts$cg_preconditioner_int <- cg_pc_key
 
   # Translate opts$cg_rebuild (preconditioner rebuild cadence) to integer:
-  #   0 = auto (always for vadu, once for posterior/response), 1 = always, 2 = once.
+  #   0 = auto (always for vadu/postcov/postcov_mv, once for posterior), 1 = always, 2 = once.
   cg_rebuild_codes <- c(auto = 0L, always = 1L, once = 2L)
   opts$cg_rebuild_int <- if (is.numeric(opts$cg_rebuild)) {
     as.integer(opts$cg_rebuild)
@@ -507,8 +493,7 @@ spiox <- function(Y, X, coords, m = 15,
       cg_preconditioner = opts$cg_preconditioner_int,
       vapop_build_method = opts$vapop_build_method_int,
       joint_BW          = isTRUE(opts$joint_BW),
-      cg_rebuild        = opts$cg_rebuild_int,
-      cg_diagonal       = TRUE
+      cg_rebuild        = opts$cg_rebuild_int
     ),
 
     "response:vi" = spiox_response_vi(

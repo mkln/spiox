@@ -243,7 +243,6 @@ void DagGP::compute_comps(){
       if (pxg.n_elem == 0u) { Pinv_cache(g).reset(); continue; }
       
       arma::mat Pg  = Correlationf(coords, pxg, pxg, theta, bessel_ws, matern, /*same=*/true);
-      if (nugget.n_elem > 0) Pg.diag() += nugget(pxg);
       Pinv_cache(g) = arma::inv_sympd(Pg);
       
       if(gridded){
@@ -286,7 +285,6 @@ void DagGP::compute_comps(){
       ax(i) = arma::join_vert(ix, px);
       
       arma::mat CC  = Correlationf(coords, ix, ix, theta, bessel_ws, matern, true);
-      if (nugget.n_elem > 0) CC(0, 0) += nugget(i);
 
       arma::mat CPC;
       arma::vec hi;

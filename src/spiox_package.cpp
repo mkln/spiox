@@ -194,32 +194,29 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           int cg_preconditioner = 0,
                           int vapop_build_method = 0,
                           bool joint_BW = true,
-                          int cg_rebuild = 0,
-                          bool cg_diagonal = false){
+                          int cg_rebuild = 0){
 
   // cg_preconditioner selector:
-  //   0 = auto       (sampling=1: 2-way probe POSTERIOR vs JACOBI; sampling=3: POSTERIOR)
+  //   0 = auto       (q-keyed 2-candidate probe: anchor POSTCOV_MV if q>10 else
+  //                   POSTCOV, trial the other; sampling=3 settles on POSTCOV)
   //   1 = JACOBI     (sampling=1: diag of joint precision; sampling=3: diag of A_j)
   //   2 = POSTERIOR  (sampling=1: block-diag PC with Σ-mixed VAPOP W half;
   //                   sampling=3: per-outcome H_A,jᵀ H_A,j apply — Vecchia
   //                   approximation of each conditional precision A_j)
-  //   3 = RESPONSE   (sampling=1: covariance-form Bhattacharya w-block sampler
-  //                   preconditioned by a Vecchia factor of C+D; sampling=3:
-  //                   per-outcome covariance-form sampler of the same form)
-  //   4 = VADU       (sampling=1: Vecchia-approx-with-diagonal-update PC on the
+  //   3 = VADU       (sampling=1: Vecchia-approx-with-diagonal-update PC on the
   //                   joint precision system, Kündig & Sigrist; sampling=3:
   //                   per-outcome VADU apply of each conditional precision A_j)
-  //   5 = POSTCOV    (sampling=1 or 3: latent posterior-conditional PC — cheap
+  //   4 = POSTCOV    (sampling=1 or 3: latent posterior-conditional PC — cheap
   //                   Vecchia factor of the posterior covariance via single-datum
   //                   approximate conditionals, two triangular solves [+ Σ-mix
   //                   for sampling=1; per-outcome only for sampling=3])
-  //   6 = POSTCOV_MV (sampling=1: MULTIVARIATE postcov — one block-Vecchia factor
+  //   5 = POSTCOV_MV (sampling=1: MULTIVARIATE postcov — one block-Vecchia factor
   //                   of the JOINT posterior covariance, q×q blocks coupling all
   //                   outcomes per location via R_i = Λ_iΣΛ_i shrunk by the local
   //                   datum; no R_corr mix.  Reduces to POSTCOV at diagonal Σ.
   //                   sampling=3 falls back to POSTCOV [operator is per-outcome].)
-  if(cg_preconditioner < 0 || cg_preconditioner > 6){
-    Rcpp::stop("cg_preconditioner must be in {0,1,2,3,4,5,6} (auto/jacobi/posterior/response/vadu/postcov/postcov_mv).");
+  if(cg_preconditioner < 0 || cg_preconditioner > 5){
+    Rcpp::stop("cg_preconditioner must be in {0,1,2,3,4,5} (auto/jacobi/posterior/vadu/postcov/postcov_mv).");
   }
   // cg_preconditioner only drives the CG-based latent samplers (sampling=1, 3).
   // sampling=2 (single-site Gibbs) has no CG solve, so the choice is accepted but
@@ -293,18 +290,12 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   // joint_BW only governs the block latent sampler (sampling == 1); other
   // samplers ignore it.  false => blocked B|W, W|B route with ASIS refresh.
   iox_model.joint_BW = joint_BW;
-  // Preconditioner rebuild cadence: 0 = auto (always for VADU, once for
-  // POSTERIOR/RESPONSE), 1 = always (every sweep), 2 = once (frozen).
+  // Preconditioner rebuild cadence: 0 = auto (always for VADU/POSTCOV/POSTCOV_MV,
+  // once for POSTERIOR), 1 = always (every sweep), 2 = once (frozen).
   if(cg_rebuild < 0 || cg_rebuild > 2){
     Rcpp::stop("cg_rebuild must be in {0,1,2} (auto/always/once).");
   }
   iox_model.cg_rebuild = cg_rebuild;
-  // cg_diagonal: when true, drop the cross-outcome Σ-mix (R_corr) from the
-  // POSTERIOR and POSTCOV preconditioners, leaving only the per-outcome
-  // (block-diagonal) factors.  Lets the rebuild-every-sweep cadence track the
-  // local Σ/Ddiag without re-introducing cross-outcome coupling.  No effect on
-  // VADU/RESPONSE/JACOBI or on sampling=3 (already per-outcome / uncoupled).
-  iox_model.pc_diagonal = cg_diagonal;
 
   // storage
   arma::cube Beta = arma::zeros(iox_model.p, q, mcmc);
@@ -315,7 +306,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
 
   // CG telemetry: per-iteration CG iteration count and an integer code
   // recording which preconditioner ran
-  // (0 unset / 1 jacobi / 2 posterior / 3 response / 4 vadu).
+  // (0 unset / 1 jacobi / 2 posterior / 3 vadu / 4 postcov / 5 postcov_mv).
   arma::ivec cg_iters(mcmc, arma::fill::zeros);
   arma::ivec cg_pcond(mcmc, arma::fill::zeros);
 
@@ -346,10 +337,9 @@ Rcpp::List spiox_latent(const arma::mat& Y,
       const char* pc_name =
         cg_pcond(m) == 1 ? "jacobi"    :
         cg_pcond(m) == 2 ? "posterior" :
-        cg_pcond(m) == 3 ? "response"  :
-        cg_pcond(m) == 4 ? "vadu"      :
-        cg_pcond(m) == 5 ? "postcov"   :
-        cg_pcond(m) == 6 ? "postcov_mv": "n/a";
+        cg_pcond(m) == 3 ? "vadu"      :
+        cg_pcond(m) == 4 ? "postcov"   :
+        cg_pcond(m) == 5 ? "postcov_mv": "n/a";
       Rcpp::Rcout << "Iteration: " <<  m+1 << " of " << mcmc
                   << "  (CG: " << cg_iters(m)
                   << " iters, pc=" << pc_name << ")" << endl;

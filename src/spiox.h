@@ -106,25 +106,19 @@ public:
   void sample_Y_misaligned(const arma::uvec& theta_changed);
   
   // Preconditioner / W-sampler choices for the block latent model.
-  // PROBE (the default) auto-selects among POSTERIOR, RESPONSE, and VADU.
+  // PROBE (the default) auto-selects between POSTCOV and POSTCOV_MV (q-keyed).
   //
   //   JACOBI    : diagonal of the joint operator (precision form).
   //               O(nq + pq) per apply; nearly free; tends to be a weak PC.
   //
-  //   POSTERIOR : block-diagonal-on-(B,W) PC with cross-outcome Σ-mix on
-  //               the W half.  B half: per-outcome exact dense Cholesky of
+  //   POSTERIOR : block-diagonal-on-(B,W), per-outcome on the W half.  B half:
+  //               per-outcome exact dense Cholesky of
   //                 M_B,j = diag(1/B_Var.col(j)) + X^T·diag(invD.col(j))·X
-  //               W half: blkdiag(H_A,j^T)·(R_corr ⊗ I)·blkdiag(H_A,j)
-  //                 with R_corr = D_σ^{-1}·Σ·D_σ^{-1}, the correlation matrix
-  //                 of Σ.  H_A,j is the per-outcome Vecchia precision factor
-  //                 of A_j = Q_jj·H_j^T H_j + diag(invD.col(j)), built once
-  //                 per chain via local regression on (m+1)x(m+1) sub-blocks
-  //                 of A_j and mirrored as col-major sparse Eigen for the
-  //                 fast double-mult apply.
-  //               R_corr chosen so the PC equals A_W^{-1} exactly in the
-  //               D→0 limit (modulo Vecchia); reduces to a per-outcome block
-  //               PC at Σ diagonal.  Extra cost vs the diagonal-Σ version:
-  //               one n×q · q×q dense multiply per CG iter (cheap for q small).
+  //               W half: blkdiag_j(H_A,j^T H_A,j), the per-outcome Vecchia precision
+  //                 factor of A_j = Q_jj·H_j^T H_j + diag(invD.col(j)), built once
+  //                 per chain via local regression on (m+1)x(m+1) sub-blocks of A_j
+  //                 and mirrored as col-major sparse Eigen for the fast double-mult
+  //                 apply.  No cross-outcome coupling.
   //
   //   PROBE     : adaptive default.  Two-candidate, q-keyed: the PRIMARY anchor
   //               (POSTCOV_MV if q>10 else POSTCOV) runs an uncapped probe_burnin
@@ -133,30 +127,22 @@ public:
   //               adopted only if it converges within the cap with a lower mean
   //               than the primary; otherwise the primary is kept.  See the
   //               probe-state block below.
-  //   RESPONSE  : not a PCG branch.  Selects an alternative w-block sampler
-  //               (gibbs_w_block_marginal) that samples W in the covariance
-  //               (data) domain via the Bhattacharya algorithm, solving
-  //               systems with the marginal C+D rather than the precision
-  //               C^{-1}+D^{-1}.  Preconditioned by a fresh per-outcome
-  //               Vecchia factor of C+D (built with nugget = Ddiag).
-  //
-  //   VADU      : "Vecchia approximation with diagonal update" (Kündig &
-  //               Sigrist).  PCG branch on the same precision system as
-  //               JACOBI/POSTERIOR.  Reuses the prior Vecchia factor H_j and
-  //               folds the likelihood diagonal into it:
-  //                 P_VADU,j = B_j^T (W_j + Q_jj D_j^{-1}) B_j,
-  //               with H_j = D_j^{-1/2} B_j (B_j unit lower-tri, D_j = R_j).
-  //               Apply P^{-1} = two prior triangular solves + a diagonal
-  //               scale by 1/(R_j⊙w_j + Q_jj), plus the same R_corr Σ-mix
-  //               as POSTERIOR.  No per-sweep factor build (unlike VAPOP).
+  //   VADU      : MULTIVARIATE "Vecchia approximation with diagonal update" (Kündig
+  //               & Sigrist).  Reuses the per-outcome prior Vecchia factors H_j and
+  //               folds the likelihood, coupling outcomes EXACTLY via Q:
+  //                 P_VADU = Hᵀ(Q⊗I_n + diag(R⊙w))H,  H = blkdiag(H_1,…,H_q).
+  //               The middle is block-diagonal by location (M_i = Q + diag_j R_i^{(j)}w_i^{(j)}),
+  //               so Apply P^{-1} = H^{-1}M^{-1}H^{-ᵀ} is a SEPARABLE fully-parallel sweep:
+  //               per-outcome prior triangular solves around a per-location q×q M_i^{-1}.
+  //               Reduces to the scalar 1/(R_j⊙w_j+Q_jj) at Σ diagonal.  Only per-sweep
+  //               build is the n cheap q×q inverses (no FSAI factor, unlike VAPOP).
   enum PrecondChoice {
-    PRECOND_PROBE     = 0,
-    PRECOND_JACOBI    = 1,
-    PRECOND_POSTERIOR = 2,
-    PRECOND_RESPONSE  = 3,
-    PRECOND_VADU      = 4,
-    PRECOND_POSTCOV   = 5,
-    PRECOND_POSTCOV_MV = 6
+    PRECOND_PROBE      = 0,
+    PRECOND_JACOBI     = 1,
+    PRECOND_POSTERIOR  = 2,
+    PRECOND_VADU       = 3,
+    PRECOND_POSTCOV    = 4,
+    PRECOND_POSTCOV_MV = 5
   };
   PrecondChoice precond_choice = PRECOND_PROBE;
 
@@ -165,23 +151,14 @@ public:
   // target, so freezing it at the autostart values ("once") is exact, while
   // rebuilding every sweep ("always") keeps it tracking the drifting operator at
   // extra cost.
-  //   REBUILD_AUTO   : per-PC default — ALWAYS for POSTCOV (its rebuild is O(nq)
-  //                    cheap), ONCE for POSTERIOR (expensive FSAI factor of A_j)
-  //                    and RESPONSE (expensive C+D Vecchia refactor).
+  //   REBUILD_AUTO   : per-PC default — ALWAYS for POSTCOV/POSTCOV_MV (cheap
+  //                    rebuild), ONCE for POSTERIOR (expensive FSAI factor of A_j).
   //   REBUILD_ALWAYS : rebuild every sweep regardless of PC.
   //   REBUILD_ONCE   : build once at the autostart values, then freeze.
   // VADU is a special case: its factor always rebuilds (see pc_rebuild_now)
   // regardless of this setting, because the recompute is trivially cheap.
   enum RebuildMode { REBUILD_AUTO = 0, REBUILD_ALWAYS = 1, REBUILD_ONCE = 2 };
   int cg_rebuild = REBUILD_AUTO;
-  // When true, the POSTERIOR and POSTCOV preconditioners drop the cross-outcome
-  // Σ-mix (R_corr) and apply only their per-outcome (block-diagonal) factors:
-  //   block(j,k) = δ_{jk}·(per-outcome A_j^{-1} approx).
-  // This isolates the local-Σ/Ddiag tracking of cg_rebuild="always" from the
-  // cross-outcome coupling (which can hurt CG conditioning when Σ is strongly
-  // correlated).  No effect on VADU/RESPONSE/JACOBI, nor on the sampling=3
-  // per-outcome sequential sampler (which is already uncoupled).
-  bool pc_diagonal = false;
   // Resolve cg_rebuild for PC `pc` given how many times its factors have already
   // been built (`builds_done`): returns whether to (re)build this sweep.
   bool pc_rebuild_now(PrecondChoice pc, int builds_done) const {
@@ -287,38 +264,60 @@ public:
   // mean coefficient G_i = F_i R_i^{-1} M_i.  The block factor U (location-major,
   // lower-block-triangular) has diagonal block L_i^{-1} and parent-t block
   // -L_i^{-1} G_i^{(t)}, so UᵀU ≈ joint posterior precision and M^{-1} = U^{-1}U^{-ᵀ}.
-  // Stored as dense q×q blocks (NOT an Eigen sparse matrix — for dense q×q blocks
-  // the BLAS gemv beats a scalar sparse triangular solve, measured 2–3× at q=10–30):
+  // KEY (Lever 1): the parent-t block is NOT a general q×q matrix — it factors as
+  //     -L_i^{-1} G_i^{(t)} = -E_i D_i^{(t)},   E_i = L_iᵀ Λ_i^{-1} Q  (LOCATION-only, q×q),
+  //                                             D_i^{(t)} = diag(b_i^{(t)}/sqrtR_i)  (DIAGONAL).
+  // All m parent-blocks at i share ONE E_i and differ only by a q-vector of diagonal scalings,
+  // so the apply gathers parents/children with a cheap diagonal weighting (O(mq)) and does ONE
+  // q×q gemv per location instead of m — per-edge work q²→q, matching VADU's flop order.  Stored
+  // as dense blocks (NOT Eigen sparse — BLAS gemv beats a scalar sparse triangular solve, ~2–3×):
   //     postcov_mv_L[i] = L_i                          (q×q lower)
-  //     postcov_mv_B[i] = [ -L_i^{-1}G_i^{(1)} | ... ] (q × q·m_i; empty if root)
-  // Reduces EXACTLY to POSTCOV when Σ is diagonal.  Per-rebuild work O(n(q³+m q²))
-  // (rows independent → OpenMP-parallel), reusing R_i^{-1}=Λ_i^{-1}QΛ_i^{-1} (Q=Σ^{-1}
-  // is a member, so only one q×q SPD inverse per location).
+  //     postcov_mv_E[i] = L_iᵀ Λ_i^{-1} Q              (q×q;     zeros if root)
+  //     postcov_mv_D[i] = [ d_i^{(1)} | ... ]          (q × m_i; col t = b_i^{(t)}/sqrtR_i; empty if root)
+  // Reduces EXACTLY to POSTCOV when Σ is diagonal (then E_i, D_i^{(t)} are diagonal, so the block
+  // solve decouples per outcome).  Per-rebuild work O(n(q³+m q)) (was O(n(q³+m q²)); rows
+  // independent → OpenMP-parallel), reusing R_i^{-1}=Λ_i^{-1}QΛ_i^{-1} (Q=Σ^{-1} a member, one
+  // q×q SPD inverse per location).
   //
   // Apply M^{-1}=U^{-1}U^{-ᵀ} is a block triangular solve — inherently serial along
   // the DAG.  We parallelise it by LEVEL SCHEDULING: level[i] = 1+max level over
   // parents; locations within a level are mutually independent, so each level is an
   // OpenMP-parallel sweep (forward = levels up, gathering from parents; back = levels
-  // down, gathering from children).  Both passes run in place on one q×n buffer.
+  // down, gathering from children).  Runs on two q×n buffers (the solution s and the
+  // back-pass g_i = E_iᵀ s_i that i's parents read).
   // The level/children structure is DAG-only (θ/Σ/Ddiag-independent) → precomputed
   // once.  This is the lever postcov lacked: location- (n-) parallelism rather than
   // the per-outcome q-parallelism, where postcov_mv's far fewer CG iters pays off.
   int  postcov_mv_n_builds = 0;
   bool postcov_mv_setup_done = false;             // levels/children/storage precomputed?
   std::vector<arma::mat> postcov_mv_L;            // size n, each q×q lower-triangular
-  std::vector<arma::mat> postcov_mv_B;            // size n, each q×(q·m_i) (empty if root)
+  std::vector<arma::mat> postcov_mv_E;            // size n, each q×q (E_i = L_iᵀ Λ_i⁻¹ Q; zeros if root)
+  std::vector<arma::mat> postcov_mv_D;            // size n, each q×m_i (col t = d_i^{(t)}; empty if root)
   arma::uvec             postcov_mv_order;        // locations sorted by level (stable)
   arma::uvec             postcov_mv_level_ptr;    // size n_levels+1: level slices into order
   arma::field<arma::uvec> postcov_mv_child_k;     // per i: children k (i is a parent of k)
   arma::field<arma::uvec> postcov_mv_child_t;     // per i: position of i in k's parent list
-  arma::mat              postcov_mv_buf;          // reused q×n location-major apply buffer
+  arma::mat              postcov_mv_buf;          // reused q×n location-major apply buffer (sol s)
+  arma::mat              postcov_mv_g;            // reused q×n back-pass buffer (g_i = E_iᵀ s_i)
   std::vector<arma::vec> postcov_mv_acc;          // per-thread scratch, length q
-  std::vector<arma::vec> postcov_mv_zpar;         // per-thread scratch, length q·max_parents
+  std::vector<arma::vec> postcov_mv_u;            // per-thread scratch, length q (forward parent gather)
   void postcov_mv_setup();                        // one-time levels + children + storage
   void build_postcov_mv_factors();
   // Apply the postcov_mv W-half PC to one W-block: z = U^{-1}U^{-ᵀ} r, r_w / z_w
   // length nq (outcome-major).  Level-scheduled parallel block substitution.
   void postcov_mv_apply(const double* r_w, double* z_w);
+
+  // MULTIVARIATE VADU.  Folds the likelihood diagonal into the per-outcome prior
+  // Vecchia factors H_j and couples outcomes EXACTLY (full Q, not the old separable
+  // R_corr): P_VADU = Hᵀ(Q⊗I_n + diag(R⊙w))H, H = blkdiag(H_1,…,H_q).  The middle
+  // M = Q⊗I_n + diag(R⊙w) is block-diagonal in LOCATION order, M_i = Q + diag_j(R_i^{(j)}w_i^{(j)})
+  // (R_i^{(j)} = sqrtR_i^{(j)2}, w_i^{(j)} = invD_ij), so the apply is SEPARABLE and fully
+  // parallel — per-outcome H_j^{-ᵀ}/H_j^{-1} triangular solves (over q) around a per-location
+  // q×q solve M_i^{-1} (over n); no serial DAG substitution.  Reduces to the scalar
+  // dscale VADU when Q is diagonal.  bw_vadu_Minv[i] = M_i^{-1}, built per sweep.
+  std::vector<arma::mat> bw_vadu_Minv;            // size n, each q×q (= M_i^{-1})
+  void build_vadu_Minv();                          // per-location M_i^{-1} (parallel over n)
+  void vadu_mv_apply(const double* r_w, double* z_w);  // H^{-1} M^{-1} H^{-ᵀ}, length nq
 
   // Telemetry: number of CG iterations used in the most-recent W-block update,
   // plus an integer code for which preconditioner / sampler ran
@@ -327,7 +326,7 @@ public:
   int last_cg_iter      = 0;
   int last_precond_used = 0;
   // Wall-clock seconds spent on the one-time ("once" mode) preconditioner
-  // factor build (vapop / marginal-Vecchia / BW PC factors).  Accumulated the
+  // factor build (vapop / BW PC factors).  Accumulated the
   // first time the PC is constructed; 0 thereafter.  Surfaced back to R.
   double pc_build_seconds = 0.0;
   
@@ -337,11 +336,10 @@ public:
   //   joint_BW = true  (default): sample (B, W) jointly via gibbs_BW_block.
   //   joint_BW = false          : blocked route — B|W (conjugate update_B),
   //                               then W|B in the precision domain
-  //                               (gibbs_w_block_precision) or covariance domain
-  //                               (RESPONSE), followed by an ASIS non-centred B
-  //                               refresh (update_BW_asis), mirroring the
-  //                               latent_model 2/3 samplers.  Honours the same
-  //                               POSTERIOR / VADU / RESPONSE / JACOBI choices.
+  //                               (gibbs_w_block_precision), followed by an ASIS
+  //                               non-centred B refresh (update_BW_asis), mirroring
+  //                               the latent_model 2/3 samplers.  Honours the same
+  //                               JACOBI / POSTERIOR / VADU / POSTCOV choices.
   bool joint_BW = true;
   arma::mat W;
   void w_sequential_singlesite(const arma::uvec& theta_changed);
@@ -379,32 +377,8 @@ public:
   void gibbs_w_block_precision(int& cg_iter, PrecondChoice precond,
                                bool sampling=true, int cg_maxit_override=0);
 
-  // Response covariance-form W-block sampler (PRECOND_RESPONSE).  Samples W as
-  // a block via the Bhattacharya algorithm in the data domain: solves systems
-  // with the marginal C+D (not the precision C^{-1}+D^{-1}) by matrix-free
-  // PCG, preconditioned by a fresh per-outcome Vecchia factor of C+D (built
-  // with nugget = Ddiag) sandwiched with the same R_corr Σ-mix as POSTERIOR.
-  // B is sampled separately (conjugate) before this call.  Missing data
-  // (misalignment) is handled via the selection-Bhattacharya reformulation:
-  // a diagonal projection P (mask of observed entries) restricts the solve to
-  // the observed block (M = ΦCΦᵀ + D_o), with the latent field at missing
-  // entries kriged from the same draw — efficient when missingness is light.
-  std::vector<DagGP> daggps_marginal;     // per-outcome Vecchia factor of C_j+D_j
-  // "Once" mode: the marginal Vecchia factor is built a single time from the
-  // starting theta + autostart Ddiag and then frozen.  A preconditioner only
-  // affects CG convergence speed, never the sampled target, so freezing it at
-  // the autostart values is exact and removes the per-sweep rebuild cost.
-  int marginal_n_builds = 0;
-  void build_marginal_daggps();           // build daggps_marginal once (nugget=Ddiag)
-  // cg_maxit_override > 0 caps the PCG iteration count (used by the probe to
-  // budget the RESPONSE candidate against the reference's measured iters);
-  // 0 means use the default cap (n).
-  void gibbs_w_block_marginal(int& cg_iter, bool sampling=true,
-                              int cg_maxit_override=0);
-
   // Frozen POSTERIOR/VADU preconditioner buffers (built once, "once" mode).
   // chol_MBj : per-outcome p×p Cholesky of the B-half precision.
-  // bw_R_corr: q×q correlation matrix of Σ used as the W-half mid-mix.
   // vadu_dscale: per-outcome sqrt(R_j⊙invD_j + Q_jj) diagonal scale (VADU only).
   int bw_pc_n_builds = 0;
   // VADU-specific build counter (kept separate from bw_pc_n_builds, which guards
@@ -412,7 +386,6 @@ public:
   // (re)built so cg_rebuild = "once" can freeze them.
   int vadu_pc_n_builds = 0;
   std::vector<arma::mat> bw_chol_MBj;
-  arma::mat              bw_R_corr;
   std::vector<arma::vec> bw_vadu_dscale;
 
   arma::vec Ddiag;
