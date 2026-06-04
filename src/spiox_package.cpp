@@ -2,7 +2,30 @@
 #include "interrupt.h"
 #include <RcppArmadillo.h>
 #include <chrono>
+#include <sstream>
+#include <iomanip>
 using namespace Rcpp;
+
+// One-line progress/ETA suffix for the MCMC iteration print.  `done` = iterations
+// completed, `total` = planned count.  ETA extrapolates the average per-iteration
+// wall time over the remaining iterations (minutes).  `last_print` is updated in
+// place, so "since last print" measures the gap between successive prints (seconds).
+static std::string mcmc_eta_str(std::chrono::steady_clock::time_point t0,
+                                std::chrono::steady_clock::time_point& last_print,
+                                unsigned int done, unsigned int total){
+  auto now = std::chrono::steady_clock::now();
+  double elapsed_s    = std::chrono::duration<double>(now - t0).count();
+  double since_last_s = std::chrono::duration<double>(now - last_print).count();
+  last_print = now;
+  double eta_min = (done > 0)
+      ? (elapsed_s / (double)done) * (double)(total - done) / 60.0
+      : 0.0;
+  std::ostringstream os;
+  os << std::fixed << std::setprecision(1)
+     << "[elapsed " << elapsed_s << "s | +" << since_last_s
+     << "s | ETA " << eta_min << " min]";
+  return os.str();
+}
 
 //[[Rcpp::export]]
 arma::field<arma::sp_mat> spiox_H_list(const arma::mat& coords,
@@ -127,9 +150,11 @@ Rcpp::List spiox_response(const arma::mat& Y,
     Rcpp::Rcout << "Starting MCMC" << endl;
   }
   bool theta_needs_updating = arma::any(update_Theta == 1);
-  
+  auto mcmc_t0 = std::chrono::steady_clock::now();
+  auto mcmc_last_print = mcmc_t0;
+
   for(unsigned int m=0; m<mcmc; m++){
-    
+
     iox_model.response_gibbs(m, sample_precision, sample_Beta, theta_needs_updating);
 
     Beta.slice(m) = iox_model.B;
@@ -144,7 +169,8 @@ Rcpp::List spiox_response(const arma::mat& Y,
       print_condition = print_condition & (!(m % print_every));
     };
     if(print_condition){
-      Rcpp::Rcout << "Iteration: " <<  m+1 << " of " << mcmc << endl;
+      Rcpp::Rcout << "Iteration: " <<  m+1 << " of " << mcmc << "  "
+                  << mcmc_eta_str(mcmc_t0, mcmc_last_print, m+1, mcmc) << endl;
     }
     
     bool interrupted = checkInterrupt();
@@ -192,43 +218,27 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           int num_threads = 1,
                           int sampling=2,
                           int cg_preconditioner = 0,
-                          int vapop_build_method = 0,
                           bool joint_BW = true,
                           int cg_rebuild = 0){
 
   // cg_preconditioner selector:
-  //   0 = auto       (q-keyed 2-candidate probe: anchor POSTCOV_MV if q>10 else
-  //                   POSTCOV, trial the other; sampling=3 settles on POSTCOV)
+  //   0 = auto       (resolves to VADU)
   //   1 = JACOBI     (sampling=1: diag of joint precision; sampling=3: diag of A_j)
-  //   2 = POSTERIOR  (sampling=1: block-diag PC with Σ-mixed VAPOP W half;
-  //                   sampling=3: per-outcome H_A,jᵀ H_A,j apply — Vecchia
-  //                   approximation of each conditional precision A_j)
-  //   3 = VADU       (sampling=1: Vecchia-approx-with-diagonal-update PC on the
-  //                   joint precision system, Kündig & Sigrist; sampling=3:
-  //                   per-outcome VADU apply of each conditional precision A_j)
-  //   4 = POSTCOV    (sampling=1 or 3: latent posterior-conditional PC — cheap
-  //                   Vecchia factor of the posterior covariance via single-datum
-  //                   approximate conditionals, two triangular solves [+ Σ-mix
-  //                   for sampling=1; per-outcome only for sampling=3])
-  //   5 = POSTCOV_MV (sampling=1: MULTIVARIATE postcov — one block-Vecchia factor
-  //                   of the JOINT posterior covariance, q×q blocks coupling all
-  //                   outcomes per location via R_i = Λ_iΣΛ_i shrunk by the local
-  //                   datum; no R_corr mix.  Reduces to POSTCOV at diagonal Σ.
-  //                   sampling=3 falls back to POSTCOV [operator is per-outcome].)
-  if(cg_preconditioner < 0 || cg_preconditioner > 5){
-    Rcpp::stop("cg_preconditioner must be in {0,1,2,3,4,5} (auto/jacobi/posterior/vadu/postcov/postcov_mv).");
+  //   2 = VADU       (sampling=1: Vecchia-approx-with-diagonal-update PC on the joint
+  //                   precision system, Kündig & Sigrist; sampling=3: per-outcome VADU
+  //                   apply of each conditional precision A_j)
+  //   3 = POSTCOV (sampling=1: MULTIVARIATE — one block-Vecchia factor of the JOINT
+  //                   posterior covariance, q×q blocks coupling all outcomes per
+  //                   location via R_i = Λ_iΣΛ_i shrunk by the local datum; no R_corr
+  //                   mix.  sampling=3 falls back to VADU [operator is per-outcome].)
+  if(cg_preconditioner < 0 || cg_preconditioner > 3){
+    Rcpp::stop("cg_preconditioner must be in {0,1,2,3} (auto/jacobi/vadu/postcov).");
   }
   // cg_preconditioner only drives the CG-based latent samplers (sampling=1, 3).
   // sampling=2 (single-site Gibbs) has no CG solve, so the choice is accepted but
   // ignored (the R wrapper messages the user about this); other samplings reject.
   if(cg_preconditioner > 0 && !(sampling == 1 || sampling == 2 || sampling == 3)){
     Rcpp::stop("cg_preconditioner selection requires sampling=1, 2, or 3.");
-  }
-  // vapop_build_method: how the POSTERIOR W-half FSAI factor is built
-  //   0 = matrix-free (DAG children-walk), 1 = assemble HᵀH then read.
-  //   Both produce the identical bounded-m factor.  Ignored by other PCs.
-  if(vapop_build_method < 0 || vapop_build_method > 1){
-    Rcpp::stop("vapop_build_method must be in {0,1} (matrixfree/precision).");
   }
 
   if(sampling==0){
@@ -278,20 +288,17 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                   num_threads,
                   0);                 // vi_min_iter
 
-  // Override the default adaptive-probe choice if the caller requested a fixed
-  // preconditioner.  PROBE = 0 (the default) runs the auto-pick logic — the
-  // VADU-anchored probe (probe_step) — in both the sampling=1 (joint BW block)
-  // and sampling=3 (per-outcome sequential) paths.  A nonzero cg_preconditioner
-  // pins a fixed PC, honoured directly by both samplers.
+  // Override the default AUTO choice if the caller requested a fixed preconditioner.
+  // 0 = AUTO (resolves to VADU); a nonzero cg_preconditioner pins a fixed PC, honoured
+  // directly by both the sampling=1 and sampling=3 samplers.
   if((sampling == 1 || sampling == 3) && cg_preconditioner > 0){
     iox_model.precond_choice = static_cast<SpIOX::PrecondChoice>(cg_preconditioner);
   }
-  iox_model.vapop_build_method = vapop_build_method;
   // joint_BW only governs the block latent sampler (sampling == 1); other
   // samplers ignore it.  false => blocked B|W, W|B route with ASIS refresh.
   iox_model.joint_BW = joint_BW;
-  // Preconditioner rebuild cadence: 0 = auto (always for VADU/POSTCOV/POSTCOV_MV,
-  // once for POSTERIOR), 1 = always (every sweep), 2 = once (frozen).
+  // Preconditioner rebuild cadence: 0 = auto (always for VADU/POSTCOV), 1 = always
+  // (every sweep), 2 = once (frozen).
   if(cg_rebuild < 0 || cg_rebuild > 2){
     Rcpp::stop("cg_rebuild must be in {0,1,2} (auto/always/once).");
   }
@@ -306,7 +313,7 @@ Rcpp::List spiox_latent(const arma::mat& Y,
 
   // CG telemetry: per-iteration CG iteration count and an integer code
   // recording which preconditioner ran
-  // (0 unset / 1 jacobi / 2 posterior / 3 vadu / 4 postcov / 5 postcov_mv).
+  // (0 unset / 1 jacobi / 2 vadu / 3 postcov).
   arma::ivec cg_iters(mcmc, arma::fill::zeros);
   arma::ivec cg_pcond(mcmc, arma::fill::zeros);
 
@@ -315,6 +322,8 @@ Rcpp::List spiox_latent(const arma::mat& Y,
   }
 
   bool theta_needs_updating = arma::any(update_Theta == 1);
+  auto mcmc_t0 = std::chrono::steady_clock::now();
+  auto mcmc_last_print = mcmc_t0;
 
   for(unsigned int m=0; m<mcmc; m++){
 
@@ -336,13 +345,12 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     if(print_condition){
       const char* pc_name =
         cg_pcond(m) == 1 ? "jacobi"    :
-        cg_pcond(m) == 2 ? "posterior" :
-        cg_pcond(m) == 3 ? "vadu"      :
-        cg_pcond(m) == 4 ? "postcov"   :
-        cg_pcond(m) == 5 ? "postcov_mv": "n/a";
+        cg_pcond(m) == 2 ? "vadu"      :
+        cg_pcond(m) == 3 ? "postcov"   : "n/a";
       Rcpp::Rcout << "Iteration: " <<  m+1 << " of " << mcmc
                   << "  (CG: " << cg_iters(m)
-                  << " iters, pc=" << pc_name << ")" << endl;
+                  << " iters, pc=" << pc_name << ")  "
+                  << mcmc_eta_str(mcmc_t0, mcmc_last_print, m+1, mcmc) << endl;
     }
 
     bool interrupted = checkInterrupt();

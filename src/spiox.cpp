@@ -330,7 +330,7 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
   // PC-specific state lives at function scope so the lambdas (captured by
   // reference) hold valid pointers throughout the pcg_mf call.
   arma::vec Mdiag_vec;                   // JACOBI
-  // PC factors live in members (bw_chol_MBj / bw_vadu_Minv / vapop / postcov factors).
+  // PC factors live in members (bw_chol_MBj / bw_vadu_Minv / postcov factors).
   // The rebuild cadence is governed by cg_rebuild (see pc_rebuild_now): a PC only
   // accelerates CG and never shifts the target, so a frozen ("once") build is
   // still valid.  Default cadence: POSTERIOR's expensive FSAI factor is built
@@ -367,57 +367,6 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
       z_out = r_in / Mdiag_vec;
     };
 
-  } else if(precond == PRECOND_POSTERIOR){
-    // Block-diagonal-on-(B,W) PC, per-outcome on the W half (no cross-outcome mix).
-    //   PC = blkdiag(M_B, M_W)
-    //   M_B = blkdiag_j( diag(1/B_Var.col(j)) + X^T·diag(invD.col(j))·X )
-    //         — exact dense, per-outcome p×p; CG sees identity on the B sub-block.
-    //   M_W = blkdiag_j( H_A,j^T H_A,j ),  the bounded-m FSAI factor of A_j applied
-    //         per outcome (no Σ cross-outcome coupling).
-    //
-    // Build cadence governed by cg_rebuild: default ONCE for POSTERIOR (the FSAI
-    // factor of A_j is expensive), frozen at the autostart θ/Ddiag.  Under
-    // cg_rebuild = "always" the VAPOP factors + per-outcome dense B Cholesky are
-    // rebuilt from the live Σ/Ddiag each sweep.
-    if(pc_rebuild_now(PRECOND_POSTERIOR, bw_pc_n_builds)){
-      auto t_pc = std::chrono::steady_clock::now();
-      vapop_n_builds = 0;            // force the idempotent FSAI build to (re)run
-      build_vapop_factors();
-      bw_chol_MBj.assign(q, arma::mat());
-      for(unsigned int j = 0; j < q; ++j){
-        arma::mat DX = X;
-        DX.each_col() %= invD_mat.col(j);
-        arma::mat MBj = X.t() * DX;
-        MBj.diag()  += 1.0 / B_Var.col(j);
-        bw_chol_MBj[j] = arma::chol(arma::symmatu(MBj), "upper");
-      }
-      ++bw_pc_n_builds;
-      pc_build_seconds += time_count(t_pc) / 1e6;
-    }
-
-    // W half: per-outcome A_j^{-1} apply — the bounded-m FSAI factor as a
-    // double-mult H_A·r (forward) and H_Aᵀ·u (adjoint).
-    apply_W = [&](const double* rW, double* zW){
-      arma::mat Y(n, q);
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-      for(int j = 0; j < (int)q; ++j){
-        Eigen::Map<const Eigen::VectorXd> Rj(rW + (arma::uword)j * n, n);
-        Eigen::Map<Eigen::VectorXd>       Yj(Y.memptr() + (arma::uword)j * n, n);
-        Yj.noalias() = vapop_H_eigen[j] * Rj;
-      }
-      arma::mat U = Y;
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-      for(int j = 0; j < (int)q; ++j){
-        Eigen::Map<const Eigen::VectorXd> Uj(U.memptr() + (arma::uword)j * n, n);
-        Eigen::Map<Eigen::VectorXd>       Zj(zW + (arma::uword)j * n, n);
-        Zj.noalias() = vapop_Ht_eigen[j] * Uj;
-      }
-    };
-
   } else if(precond == PRECOND_VADU){
     // MULTIVARIATE "Vecchia approximation with diagonal update" (Kündig & Sigrist,
     // multivariate).  Reuses the per-outcome prior Vecchia factors H_j and folds the
@@ -429,17 +378,15 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
     // M_i = Q + diag_j(R_i^{(j)}w_i^{(j)}), so P^{-1} = H^{-1}M^{-1}H^{-ᵀ} applies as a
     // SEPARABLE, fully-parallel sweep: per-outcome H_j^{-ᵀ}/H_j^{-1} solves around a
     // per-location q×q M_i^{-1} (build_vadu_Minv / vadu_mv_apply).  Reduces to the
-    // scalar dscale VADU when Q is diagonal.  B half: identical to POSTERIOR (exact
-    // per-outcome dense Cholesky).
+    // scalar dscale VADU when Q is diagonal.  B half: exact per-outcome dense Cholesky.
 
-    // Unlike POSTERIOR, VADU's only θ-dependent (expensive) object is the prior
-    // Vecchia factor H_j (via daggps[j]), which the θ-update owns — the PC never
-    // rebuilds it.  Every Σ/Ddiag-dependent piece (M_i^{-1}, MBj) is O(n·q³) cheap,
-    // so the default cadence (cg_rebuild = "always") RECOMPUTES both from the live
-    // Σ/Ddiag every sweep, keeping the PC tracking the current operator instead of
-    // going stale (which makes a frozen VADU's CG count climb as Σ/Ddiag drift).
-    // cg_rebuild = "once" freezes them at the autostart values instead (guarded by
-    // vadu_pc_n_builds, kept separate from POSTERIOR's bw_pc_n_builds).
+    // VADU's only θ-dependent (expensive) object is the prior Vecchia factor H_j (via
+    // daggps[j]), which the θ-update owns — the PC never rebuilds it.  Every
+    // Σ/Ddiag-dependent piece (M_i^{-1}, MBj) is O(n·q³) cheap, so the default cadence
+    // (cg_rebuild = "always") RECOMPUTES both from the live Σ/Ddiag every sweep, keeping
+    // the PC tracking the current operator instead of going stale (which makes a frozen
+    // VADU's CG count climb as Σ/Ddiag drift).  cg_rebuild = "once" freezes them at the
+    // autostart values instead (guarded by vadu_pc_n_builds).
     if(pc_rebuild_now(PRECOND_VADU, vadu_pc_n_builds)){
       auto t_pc = std::chrono::steady_clock::now();
       // B half: per-outcome p×p Cholesky from the current invD.
@@ -461,35 +408,13 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
     // around the per-location q×q M_i^{-1} (exact cross-outcome Q coupling).
     apply_W = [&](const double* rW, double* zW){ vadu_mv_apply(rW, zW); };
 
-  } else if(precond == PRECOND_POSTCOV_MV){
+  } else if(precond == PRECOND_POSTCOV){
     // Multivariate latent posterior-conditional PC.  W half: a SINGLE block-Vecchia
     // factor of the joint posterior covariance (q×q blocks couple all outcomes per
-    // location); no R_corr mix (the coupling lives in the blocks).  Reduces to POSTCOV
-    // at diagonal Σ (W factor); cadence per cg_rebuild (AUTO → ALWAYS).  (B half +
+    // location); no R_corr mix (the coupling lives in the blocks).  Decouples per
+    // outcome at diagonal Σ; cadence per cg_rebuild (AUTO → ALWAYS).  (B half +
     // B–W coupling handled by the shared block Gauss-Seidel wrapper after the chain.)
-    if(pc_rebuild_now(PRECOND_POSTCOV_MV, postcov_mv_n_builds)){
-      auto t_pc = std::chrono::steady_clock::now();
-      bw_chol_MBj.assign(q, arma::mat());
-      for(unsigned int j = 0; j < q; ++j){
-        arma::mat DX = X;
-        DX.each_col() %= invD_mat.col(j);
-        arma::mat MBj = X.t() * DX;
-        MBj.diag()  += 1.0 / B_Var.col(j);
-        bw_chol_MBj[j] = arma::chol(arma::symmatu(MBj), "upper");
-      }
-      build_postcov_mv_factors();
-      pc_build_seconds += time_count(t_pc) / 1e6;
-    }
-    // W half: block fwd/back substitution over the joint factor.
-    apply_W = [&](const double* rW, double* zW){ postcov_mv_apply(rW, zW); };
-
-  } else {  // PRECOND_POSTCOV — latent posterior-conditional, rebuilt every sweep.
-    // W half: cheap Vecchia factor of the posterior covariance from single-datum
-    // approximate conditionals (build_postcov_factors), applied per outcome as two
-    // triangular solves (no cross-outcome Σ-mix).  B half: identical to POSTERIOR/VADU
-    // (exact per-outcome dense Cholesky).  All pieces are O(nq) cheap, so the
-    // default cadence rebuilds every sweep from the live Σ/Ddiag.
-    if(pc_rebuild_now(PRECOND_POSTCOV, postcov_pc_n_builds)){
+    if(pc_rebuild_now(PRECOND_POSTCOV, postcov_n_builds)){
       auto t_pc = std::chrono::steady_clock::now();
       bw_chol_MBj.assign(q, arma::mat());
       for(unsigned int j = 0; j < q; ++j){
@@ -502,30 +427,9 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
       build_postcov_factors();
       pc_build_seconds += time_count(t_pc) / 1e6;
     }
+    // W half: block fwd/back substitution over the joint factor.
+    apply_W = [&](const double* rW, double* zW){ postcov_apply(rW, zW); };
 
-    // W half: per outcome z_j = Ũ_j^{-1} Ũ_j^{-ᵀ} r_j (two triangular solves).
-    apply_W = [&](const double* rW, double* zW){
-      arma::mat Tv(n, q);
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-      for(int j = 0; j < (int)q; ++j){
-        Eigen::Map<const Eigen::VectorXd> Rj(rW + (arma::uword)j * n, n);
-        Eigen::Map<Eigen::VectorXd>       Tj(Tv.memptr() + (arma::uword)j * n, n);
-        Tj = Rj;
-        postcov_Ut_eigen[j].triangularView<Eigen::Upper>().solveInPlace(Tj);
-      }
-      arma::mat S = Tv;
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-      for(int j = 0; j < (int)q; ++j){
-        Eigen::Map<const Eigen::VectorXd> Sj(S.memptr() + (arma::uword)j * n, n);
-        Eigen::Map<Eigen::VectorXd>       Zj(zW + (arma::uword)j * n, n);
-        Zj = Sj;
-        postcov_U_eigen[j].triangularView<Eigen::Lower>().solveInPlace(Zj);
-      }
-    };
   }
 
   // Combine the exact B-solve with the chosen W-half (apply_W) via SYMMETRIC BLOCK
@@ -677,37 +581,6 @@ void SpIOX::gibbs_w_block_precision(int& cg_iter, PrecondChoice precond,
       if(!(Mdiag_vec(i) > diag_floor)) Mdiag_vec(i) = diag_floor;
     apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){ z_out = r_in / Mdiag_vec; };
 
-  } else if(precond == PRECOND_POSTERIOR){
-    // VAPOP W-half factors (per outcome); cadence governed by cg_rebuild (default
-    // ONCE — frozen at the autostart Σ/Ddiag; "always" rebuilds every sweep).
-    if(pc_rebuild_now(PRECOND_POSTERIOR, bw_pc_n_builds)){
-      auto t_pc = std::chrono::steady_clock::now();
-      vapop_n_builds = 0;            // force the idempotent FSAI build to (re)run
-      build_vapop_factors();
-      ++bw_pc_n_builds;
-      pc_build_seconds += time_count(t_pc) / 1e6;
-    }
-    apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){
-      arma::mat Yv(n, q);
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-      for(int j = 0; j < (int)q; ++j){
-        Eigen::Map<const Eigen::VectorXd> Rj(r_in.memptr() + (arma::uword)j * n, n);
-        Eigen::Map<Eigen::VectorXd>       Yj(Yv.memptr()   + (arma::uword)j * n, n);
-        Yj.noalias() = vapop_H_eigen[j] * Rj;
-      }
-      arma::mat U = Yv;
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-      for(int j = 0; j < (int)q; ++j){
-        Eigen::Map<const Eigen::VectorXd> Uj(U.memptr()     + (arma::uword)j * n, n);
-        Eigen::Map<Eigen::VectorXd>       Zj(z_out.memptr() + (arma::uword)j * n, n);
-        Zj.noalias() = vapop_Ht_eigen[j] * Uj;
-      }
-    };
-
   } else if(precond == PRECOND_VADU){  // cadence governed by cg_rebuild (default ALWAYS).
     if(pc_rebuild_now(PRECOND_VADU, vadu_pc_n_builds)){
       auto t_pc = std::chrono::steady_clock::now();
@@ -719,50 +592,20 @@ void SpIOX::gibbs_w_block_precision(int& cg_iter, PrecondChoice precond,
       vadu_mv_apply(r_in.memptr(), z_out.memptr());   // H^{-1} M^{-1} H^{-ᵀ}
     };
 
-  } else if(precond == PRECOND_POSTCOV_MV){
+  } else if(precond == PRECOND_POSTCOV){
     // Multivariate latent posterior-conditional: a SINGLE block-Vecchia factor of
     // the joint posterior covariance (q×q blocks couple all outcomes per location
     // via R_i = Λ_iΣΛ_i shrunk by the local datum).  No R_corr mix — the coupling
-    // is inside the factor.  Reduces to POSTCOV at diagonal Σ.  Default cadence ONCE.
-    if(pc_rebuild_now(PRECOND_POSTCOV_MV, postcov_mv_n_builds)){
-      auto t_pc = std::chrono::steady_clock::now();
-      build_postcov_mv_factors();
-      pc_build_seconds += time_count(t_pc) / 1e6;
-    }
-    apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){
-      postcov_mv_apply(r_in.memptr(), z_out.memptr());
-    };
-
-  } else {  // PRECOND_POSTCOV — latent posterior-conditional, rebuilt every sweep.
-    if(pc_rebuild_now(PRECOND_POSTCOV, postcov_pc_n_builds)){
+    // is inside the factor.  Decouples per outcome at diagonal Σ.  Default cadence ONCE.
+    if(pc_rebuild_now(PRECOND_POSTCOV, postcov_n_builds)){
       auto t_pc = std::chrono::steady_clock::now();
       build_postcov_factors();
       pc_build_seconds += time_count(t_pc) / 1e6;
     }
-    // Apply M^{-1} per outcome: z_j = Ũ_j^{-1} Ũ_j^{-ᵀ} r_j (two triangular solves,
-    // no cross-outcome mix).
     apply_Minv = [&](const arma::vec& r_in, arma::vec& z_out){
-      arma::mat Tv(n, q);
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-      for(int j = 0; j < (int)q; ++j){
-        Eigen::Map<const Eigen::VectorXd> Rj(r_in.memptr() + (arma::uword)j * n, n);
-        Eigen::Map<Eigen::VectorXd>       Tj(Tv.memptr()   + (arma::uword)j * n, n);
-        Tj = Rj;
-        postcov_Ut_eigen[j].triangularView<Eigen::Upper>().solveInPlace(Tj);
-      }
-      arma::mat S = Tv;
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(num_threads)
-#endif
-      for(int j = 0; j < (int)q; ++j){
-        Eigen::Map<const Eigen::VectorXd> Sj(S.memptr()     + (arma::uword)j * n, n);
-        Eigen::Map<Eigen::VectorXd>       Zj(z_out.memptr() + (arma::uword)j * n, n);
-        Zj = Sj;
-        postcov_U_eigen[j].triangularView<Eigen::Lower>().solveInPlace(Zj);
-      }
+      postcov_apply(r_in.memptr(), z_out.memptr());
     };
+
   }
 
   // ----- RHS (Bhattacharya) -----
@@ -1216,40 +1059,18 @@ void SpIOX::gibbs_w_sequential_byoutcome(int& cg_iter, PrecondChoice precond,
   //     + sqrt(Q_jj) · H_jᵀ · z_prior   (z_prior ~ N(0, I_n))
   //     + invSqrtD ⊙ z_lik              (z_lik   ~ N(0, I_n) zeroed at missing)
   //
-  // Solved by matrix-free PCG.  Both supported preconditioners use Eigen
-  // ops via daggps[j] — no arma::sp_mat is materialised here.
+  // Solved by matrix-free PCG.  The supported preconditioners use Eigen ops via
+  // daggps[j] — no arma::sp_mat is materialised here.
   //
-  // PRECOND_JACOBI    : M^{-1} = diag(A_j)^{-1}
-  //                     diag(A_j)(k) = Q_jj · ||H_j.col(k)||² + invD(k)
-  // PRECOND_POSTERIOR : M^{-1} = H_A,jᵀ H_A,j   (two sparse mults via Eigen)
-  //                     where H_A,j is the Vecchia precision factor of A_j
-  //                     built once per chain by build_vapop_factors().
-  //                     This is the per-outcome analogue of the BW POSTERIOR
-  //                     PC, since each conditional precision A_j has the same
-  //                     "Vecchia of K_j-precision + diagonal" shape that
-  //                     vapop is designed for.
+  // PRECOND_JACOBI : M^{-1} = diag(A_j)^{-1}
+  //                  diag(A_j)(k) = Q_jj · ||H_j.col(k)||² + invD(k)
+  // PRECOND_VADU   : per-outcome Vecchia-diagonal-update factor (see below).
 
-  // Build (or rebuild) the per-outcome factors honouring cg_rebuild.  Previously
-  // build_vapop_factors() was called unconditionally and is idempotent, so the
-  // factor was frozen at the first sweep regardless of cg_rebuild — that is why
-  // "once" and "always" showed no delta in sampling=3.  Now we reset the build
-  // guard and rebuild when pc_rebuild_now says so (POSTERIOR default ONCE,
-  // POSTCOV default ALWAYS), so "always" tracks the drifting Σ/Ddiag.
-  //
-  // PRECOND_POSTCOV_MV (the joint multivariate factor) has no cross-outcome term
-  // to exploit here: the sampling=3 operator A_j is already per-outcome, so the MV
-  // factor would reduce to the univariate one anyway.  Fall back to POSTCOV.
-  if(precond == PRECOND_POSTCOV_MV) precond = PRECOND_POSTCOV;
-  if(precond == PRECOND_POSTERIOR){
-    if(pc_rebuild_now(PRECOND_POSTERIOR, vapop_n_builds)){
-      vapop_n_builds = 0;        // force the idempotent FSAI build to (re)run
-      build_vapop_factors();
-    }
-  } else if(precond == PRECOND_POSTCOV){
-    if(pc_rebuild_now(PRECOND_POSTCOV, postcov_pc_n_builds)){
-      build_postcov_factors();   // reassigns factors each call (no early-return)
-    }
-  } else if(precond == PRECOND_VADU){
+  // POSTCOV (the joint multivariate factor) has no cross-outcome term to exploit
+  // here — the sampling=3 operator A_j is already per-outcome — so it falls back to
+  // VADU.  Build (or rebuild) the per-outcome VADU factor honouring cg_rebuild.
+  if(precond == PRECOND_POSTCOV) precond = PRECOND_VADU;
+  if(precond == PRECOND_VADU){
     // Per-outcome VADU: P_VADU,j^{-1} r = H_j^{-1}[ (H_j^{-T} r) / dscale_j^2 ],
     // dscale_j = sqrt(R_j ⊙ invD_j + Q_jj), R_j = sqrtR_j^2 (the per-location
     // Vecchia conditional variance of C_j).  No cross-outcome Σ-mix (R_corr = I)
@@ -1310,27 +1131,7 @@ void SpIOX::gibbs_w_sequential_byoutcome(int& cg_iter, PrecondChoice precond,
     // PC apply
     arma::vec Mdiag;                                       // JACOBI: lives at outer scope so the lambda's reference stays valid
     std::function<void(const arma::vec&, arma::vec&)> apply_Minv;
-    if(precond == PRECOND_POSTERIOR){
-      apply_Minv = [&, j](const arma::vec& r_in, arma::vec& z_out){
-        z_out.set_size(n);
-        Eigen::Map<const Eigen::VectorXd> Re(r_in.memptr(),  n);
-        Eigen::Map<Eigen::VectorXd>       Ze(z_out.memptr(), n);
-        Eigen::VectorXd y = vapop_H_eigen[j]  * Re;       // y = H_A · r
-        Ze.noalias()      = vapop_Ht_eigen[j] * y;        // z = H_Aᵀ · y
-      };
-    } else if(precond == PRECOND_POSTCOV){
-      // Per-outcome latent posterior-conditional apply: A_j^{-1} ≈ Ũ_j^{-1}Ũ_j^{-ᵀ}
-      // via two triangular solves.  No cross-outcome Σ-mix here — the sampling=3
-      // operator A_j is already per-outcome (coupling lives in the RHS).
-      apply_Minv = [&, j](const arma::vec& r_in, arma::vec& z_out){
-        z_out.set_size(n);
-        Eigen::Map<const Eigen::VectorXd> Re(r_in.memptr(),  n);
-        Eigen::Map<Eigen::VectorXd>       Ze(z_out.memptr(), n);
-        Ze = Re;
-        postcov_Ut_eigen[j].triangularView<Eigen::Upper>().solveInPlace(Ze);  // Ũ_j^{-ᵀ}
-        postcov_U_eigen[j].triangularView<Eigen::Lower>().solveInPlace(Ze);   // Ũ_j^{-1}
-      };
-    } else if(precond == PRECOND_VADU){
+    if(precond == PRECOND_VADU){
       // Per-outcome VADU: z = H_j^{-1}[ (H_j^{-T} r) / dscale_j^2 ].
       apply_Minv = [&, j](const arma::vec& r_in, arma::vec& z_out){
         arma::vec t = daggps[j].Ht_solve_A(r_in) / bw_vadu_dscale[j];
@@ -1373,271 +1174,12 @@ void SpIOX::gibbs_w_sequential_byoutcome(int& cg_iter, PrecondChoice precond,
   cg_iter = cg_iter_sum;
 }
 
-// ---------------------------------------------------------------------------
-// probe_step : one sweep of the two-candidate q-keyed preconditioner probe, shared
-//   by the sampling=1 block sampler and the sampling=3 per-outcome sampler.  The
-//   caller passes `run(pc, cap)`, which performs a real W-sampling sweep with
-//   preconditioner `pc` (cap = CG maxit, 0 = uncapped) and returns the CG iter count.
-//   PRIMARY = POSTCOV_MV if q>10 else POSTCOV (the better default for that regime);
-//   SECONDARY = the other.  Run PRIMARY uncapped for probe_burnin sweeps and take its
-//   worst-case iters as the cap; trial SECONDARY for probe_trial sweeps capped at
-//   that; adopt SECONDARY only if it converged within the cap with a lower mean.
-//   (Under sampling=3 POSTCOV_MV falls back to POSTCOV, so the probe is a no-op pick.)
-// ---------------------------------------------------------------------------
-SpIOX::PrecondChoice SpIOX::probe_step(int& cg_iter,
-                                       const std::function<int(PrecondChoice, int)>& run){
-  const PrecondChoice primary   = (q > 10) ? PRECOND_POSTCOV_MV : PRECOND_POSTCOV;
-  const PrecondChoice secondary = (q > 10) ? PRECOND_POSTCOV    : PRECOND_POSTCOV_MV;
 
-  if(probe_count < probe_burnin){
-    // Phase 0: primary burn-in (uncapped); worst case becomes the secondary's cap.
-    cg_iter = run(primary, 0);
-    probe_primary_sum += cg_iter;
-    if(cg_iter > probe_primary_max) probe_primary_max = cg_iter;
-    if(probe_count == probe_burnin - 1) probe_cap = probe_primary_max;
-    ++probe_count;
-    return primary;
-
-  } else if(probe_count < probe_burnin + probe_trial){
-    // Phase 1: trial the secondary, capped at the primary worst case.
-    cg_iter = run(secondary, probe_cap);
-    probe_secondary_sum += cg_iter;
-    if(probe_cap > 0 && cg_iter >= probe_cap) probe_secondary_ok = false;
-    ++probe_count;
-    return secondary;
-
-  } else {
-    // Decision: adopt the secondary only if it converged within the cap with a
-    // lower mean than the primary; else keep the primary.
-    const double primary_mean   = probe_primary_sum   / std::max(1, probe_burnin);
-    const double secondary_mean = probe_secondary_sum / std::max(1, probe_trial);
-    precond_choice = (probe_secondary_ok && secondary_mean < primary_mean) ? secondary
-                                                                           : primary;
-    cg_iter = run(precond_choice, 0);
-    return precond_choice;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// build_vapop_factors : Per-outcome Vecchia factor of A_j = Q_jj·H_jᵀH_j +
-//   diag(W_j) where W_j(i) = 1/Ddiag(j) at obs, 0 at miss.  At each location
-//   i with parents N(i), compute the local Vecchia regression on the
-//   (m+1)x(m+1) sub-block of A_j: coef = A_NN⁻¹·A_Ni, cond_var = A_ii − coef·A_Ni.
-//   Store (sqrtR_A, h_A) per outcome.  Children list (DAG shared across q
-//   outcomes) is also precomputed.  Idempotent: no-op if already built.
-// ---------------------------------------------------------------------------
-void SpIOX::build_vapop_factors(){
-  if(vapop_n_builds > 0) return;
-
-  // ---- Precompute children list (DAG is shared across outcomes) ----
-  // vapop_children(i) = [k, t] rows where i = daggps[*].dag(k)(t).
-  // Only the matrix-free path (method 0) walks this; method 1 reads HᵀH.
-  if(vapop_build_method == 0){
-    std::vector<std::vector<std::pair<unsigned,unsigned>>> ci(n);
-    for(int k = 0; k < (int)n; ++k){
-      const arma::uvec& pk = daggps[0].dag(k);
-      for(arma::uword t = 0; t < pk.n_elem; ++t){
-        ci[pk(t)].push_back({(unsigned)k, (unsigned)t});
-      }
-    }
-    vapop_children = arma::field<arma::umat>(n);
-    for(int i = 0; i < (int)n; ++i){
-      vapop_children(i).set_size(ci[i].size(), 2);
-      for(size_t r = 0; r < ci[i].size(); ++r){
-        vapop_children(i)(r, 0) = ci[i][r].first;
-        vapop_children(i)(r, 1) = ci[i][r].second;
-      }
-    }
-  }
-
-  vapop_sqrtR.assign(q, arma::vec());
-  vapop_h.assign(q, arma::field<arma::vec>());
-
-  for(int j = 0; j < (int)q; ++j){
-    vapop_sqrtR[j].set_size(n);
-    vapop_h[j] = arma::field<arma::vec>(n);
-
-    const double Qjj  = Q(j, j);
-    const double invDj = 1.0 / Ddiag(j);
-
-    // Method 1: form P = HᵀH once and read its entries below.
-    Eigen::SparseMatrix<double> Pj;
-    if(vapop_build_method == 1){
-      Pj = daggps[j].H_eigen.transpose() * daggps[j].H_eigen;
-      Pj.makeCompressed();
-    }
-
-    // A_j[a, b] = Q_jj·(H_jᵀ H_j)[a,b] + δ_{ab}·W_j(a).  (HᵀH)[a,b] is either
-    // read from the assembled P (method 1) or walked from the DAG (method 0).
-    auto A_at = [&](int a, int b) -> double {
-      double KinvAB = 0.0;
-      if(vapop_build_method == 1){
-        KinvAB = Pj.coeff(a, b);
-      } else {
-      // k = a (if b ∈ ax(a))
-      {
-        const arma::vec& hrows_a = daggps[j].hrows(a);
-        const arma::uvec& ax_a   = daggps[j].ax(a);
-        double H_aa = 0, H_ab = 0;
-        for(arma::uword t = 0; t < ax_a.n_elem; ++t){
-          if(ax_a(t) == (arma::uword)a) H_aa = hrows_a(t);
-          if(ax_a(t) == (arma::uword)b) H_ab = hrows_a(t);
-        }
-        if(H_aa != 0 && H_ab != 0) KinvAB += H_aa * H_ab;
-      }
-      // k = b (if a ∈ ax(b)), avoiding double-count when a == b
-      if(a != b){
-        const arma::vec& hrows_b = daggps[j].hrows(b);
-        const arma::uvec& ax_b   = daggps[j].ax(b);
-        double H_ba = 0, H_bb = 0;
-        for(arma::uword t = 0; t < ax_b.n_elem; ++t){
-          if(ax_b(t) == (arma::uword)a) H_ba = hrows_b(t);
-          if(ax_b(t) == (arma::uword)b) H_bb = hrows_b(t);
-        }
-        if(H_ba != 0 && H_bb != 0) KinvAB += H_ba * H_bb;
-      }
-      // common children
-      const arma::umat& ch_a = vapop_children(a);
-      const arma::umat& ch_b = vapop_children(b);
-      arma::uword ia = 0, ib = 0;
-      while(ia < ch_a.n_rows && ib < ch_b.n_rows){
-        const unsigned ka = ch_a(ia, 0);
-        const unsigned kb = ch_b(ib, 0);
-        if(ka == kb){
-          const arma::vec& hrows_k = daggps[j].hrows(ka);
-          const double H_ka = hrows_k(1 + ch_a(ia, 1));
-          const double H_kb = hrows_k(1 + ch_b(ib, 1));
-          KinvAB += H_ka * H_kb;
-          ++ia; ++ib;
-        } else if(ka < kb){
-          ++ia;
-        } else {
-          ++ib;
-        }
-      }
-      } // end method-0 walk
-      double val = Qjj * KinvAB;
-      if(a == b && !missing_mat(a, j)) val += invDj;
-      return val;
-    };
-
-    for(int i = 0; i < (int)n; ++i){
-      const arma::uvec& parents_i = daggps[j].dag(i);
-      const arma::uword m_i = parents_i.n_elem;
-
-      if(m_i == 0){
-        vapop_sqrtR[j](i) = std::sqrt(std::max(A_at(i, i), 1e-12));
-        vapop_h[j](i) = arma::vec();
-      } else {
-        arma::mat A_NN(m_i, m_i);
-        for(arma::uword a = 0; a < m_i; ++a)
-          for(arma::uword b = 0; b < m_i; ++b)
-            A_NN(a, b) = A_at(parents_i(a), parents_i(b));
-        arma::vec A_iN(m_i);
-        for(arma::uword a = 0; a < m_i; ++a)
-          A_iN(a) = A_at(i, parents_i(a));
-
-        arma::vec coef;
-        bool ok = arma::solve(coef, arma::symmatu(A_NN), A_iN,
-                              arma::solve_opts::likely_sympd);
-        if(!ok) coef = arma::vec(m_i, arma::fill::zeros);
-        double cond_var = A_at(i, i) - arma::dot(coef, A_iN);
-        if(!(cond_var > 0)) cond_var = 1e-12;
-        vapop_sqrtR[j](i) = std::sqrt(cond_var);
-        vapop_h[j](i)     = coef;
-      }
-    }
-  }
-
-  // Eigen mirror of H_A,j (col-major lower triangular) plus explicit
-  // transpose (upper) for the two-mult apply.  Built from the arma rep
-  // above; same one-time amortisation as build_vapop_factors itself.
-  vapop_H_eigen.assign(q, Eigen::SparseMatrix<double>());
-  vapop_Ht_eigen.assign(q, Eigen::SparseMatrix<double>());
-  for(int j = 0; j < (int)q; ++j){
-    std::vector<Eigen::Triplet<double>> trips;
-    arma::uword nnz_guess = n;
-    for(int i = 0; i < (int)n; ++i) nnz_guess += daggps[j].dag(i).n_elem;
-    trips.reserve(nnz_guess);
-    for(int i = 0; i < (int)n; ++i){
-      const double inv_sqrtR = 1.0 / vapop_sqrtR[j](i);
-      trips.emplace_back(i, i, inv_sqrtR);
-      const arma::uvec& parents_i = daggps[j].dag(i);
-      const arma::vec&  h_i       = vapop_h[j](i);
-      for(arma::uword t = 0; t < parents_i.n_elem; ++t){
-        trips.emplace_back(i, (int)parents_i(t), -h_i(t) * inv_sqrtR);
-      }
-    }
-    vapop_H_eigen[j].resize(n, n);
-    vapop_H_eigen[j].setFromTriplets(trips.begin(), trips.end());
-    vapop_H_eigen[j].makeCompressed();
-    vapop_Ht_eigen[j] = vapop_H_eigen[j].transpose();
-    vapop_Ht_eigen[j].makeCompressed();
-  }
-
-  ++vapop_n_builds;
-}
-
-
-// Latent posterior-conditional preconditioner (PRECOND_POSTCOV).
-//
-// Cheap Vecchia factor of the posterior COVARIANCE built from single-datum
-// approximate conditionals
-//     p(w_i | w_{N_i}, y) ≈ p(w_i | w_{N_i}, y_i) ∝ p(w_i | w_{N_i})·p(y_i | w_i).
-// For outcome j the prior conditional is p(w_i|w_{N_i}) = N(b_iᵀ w_{N_i}, r_i)
-// with b_i = daggps[j].h(i), r_i = daggps[j].sqrtR(i)^2; multiplying by the
-// own datum likelihood N(w_i, Ddiag_j) (precision invDj, dropped when (i,j)
-// is missing) shrinks toward the data:
-//     g_i = Q_jj / (Q_jj + r_i·invDj)   (∈ (0,1], = 1 when missing)
-//     f_i = r_i  / (Q_jj + r_i·invDj)   (posterior conditional variance)
-// giving the lower-tri factor Ũ_j with rows [1/√f_i at i, -g_i·b_i/√f_i at
-// parents], so Ũ_jᵀŨ_j ≈ A_j and A_j⁻¹ ≈ Ũ_j⁻¹Ũ_j⁻ᵀ.  O(nq) cheap: just a
-// rescale of the prior daggps[j] coefficients, so it rebuilds every sweep.
-void SpIOX::build_postcov_factors(){
-  postcov_U_eigen.assign(q, Eigen::SparseMatrix<double>());
-  postcov_Ut_eigen.assign(q, Eigen::SparseMatrix<double>());
-
-  for(int j = 0; j < (int)q; ++j){
-    const double Qjj   = Q(j, j);
-    const double invDj = 1.0 / Ddiag(j);
-
-    std::vector<Eigen::Triplet<double>> trips;
-    arma::uword nnz_guess = n;
-    for(int i = 0; i < (int)n; ++i) nnz_guess += daggps[j].dag(i).n_elem;
-    trips.reserve(nnz_guess);
-
-    for(int i = 0; i < (int)n; ++i){
-      const double w_i   = missing_mat(i, j) ? 0.0 : invDj;
-      const double r_i   = daggps[j].sqrtR(i) * daggps[j].sqrtR(i);
-      const double denom = Qjj + r_i * w_i;          // > 0 (Qjj > 0, r_i ≥ 0)
-      const double g_i   = Qjj / denom;              // shrinkage toward data
-      double f_i         = r_i / denom;              // conditional variance
-      if(!(f_i > 0)) f_i = 1e-12;
-      const double inv_sqrtf = 1.0 / std::sqrt(f_i);
-
-      trips.emplace_back(i, i, inv_sqrtf);
-      const arma::uvec& parents_i = daggps[j].dag(i);
-      const arma::vec&  b_i       = daggps[j].h(i);
-      for(arma::uword t = 0; t < parents_i.n_elem; ++t){
-        trips.emplace_back(i, (int)parents_i(t), -g_i * b_i(t) * inv_sqrtf);
-      }
-    }
-    postcov_U_eigen[j].resize(n, n);
-    postcov_U_eigen[j].setFromTriplets(trips.begin(), trips.end());
-    postcov_U_eigen[j].makeCompressed();
-    postcov_Ut_eigen[j] = postcov_U_eigen[j].transpose();
-    postcov_Ut_eigen[j].makeCompressed();
-  }
-
-  ++postcov_pc_n_builds;
-}
-
-
-// One-time DAG-only precompute for postcov_mv (see spiox.h postcov_mv_*): the level
+// One-time DAG-only precompute for postcov (see spiox.h postcov_*): the level
 // schedule (for the parallel block solve), the children adjacency (for the back-solve
 // gather), and the preallocated block storage + apply buffer.  Independent of θ/Σ/Ddiag,
 // so it runs once and is reused across every rebuild and apply.
-void SpIOX::postcov_mv_setup(){
+void SpIOX::postcov_setup(){
   // levels: level[i] = 1 + max level over parents (0 for roots).  daggps[0].dag(i)
   // holds indices < i (DAG order), so a single forward pass suffices.
   arma::uvec level(n, arma::fill::zeros);
@@ -1653,13 +1195,13 @@ void SpIOX::postcov_mv_setup(){
   // counting sort of locations by level -> order, level_ptr
   arma::uvec cnt(nlev, arma::fill::zeros);
   for(int i = 0; i < (int)n; ++i) cnt(level(i))++;
-  postcov_mv_level_ptr.set_size(nlev + 1);
-  postcov_mv_level_ptr(0) = 0;
+  postcov_level_ptr.set_size(nlev + 1);
+  postcov_level_ptr(0) = 0;
   for(arma::uword L = 0; L < nlev; ++L)
-    postcov_mv_level_ptr(L + 1) = postcov_mv_level_ptr(L) + cnt(L);
-  postcov_mv_order.set_size(n);
-  arma::uvec fill = postcov_mv_level_ptr.head(nlev);   // running write cursor per level
-  for(int i = 0; i < (int)n; ++i) postcov_mv_order(fill(level(i))++) = (arma::uword)i;
+    postcov_level_ptr(L + 1) = postcov_level_ptr(L) + cnt(L);
+  postcov_order.set_size(n);
+  arma::uvec fill = postcov_level_ptr.head(nlev);   // running write cursor per level
+  for(int i = 0; i < (int)n; ++i) postcov_order(fill(level(i))++) = (arma::uword)i;
 
   // children adjacency: invert the DAG (for each k and parent-position t, register
   // (k, t) under that parent) — needed for the race-free gather-form back-solve.
@@ -1671,27 +1213,27 @@ void SpIOX::postcov_mv_setup(){
       ct[par(t)].push_back(t);
     }
   }
-  postcov_mv_child_k.set_size(n);
-  postcov_mv_child_t.set_size(n);
+  postcov_child_k.set_size(n);
+  postcov_child_t.set_size(n);
   for(int i = 0; i < (int)n; ++i){
-    postcov_mv_child_k(i) = arma::uvec(ck[i]);
-    postcov_mv_child_t(i) = arma::uvec(ct[i]);
+    postcov_child_k(i) = arma::uvec(ck[i]);
+    postcov_child_t(i) = arma::uvec(ct[i]);
   }
 
   // preallocate dense block storage (overwritten in place by every rebuild) + buffers
-  postcov_mv_L.assign(n, arma::mat(q, q, arma::fill::zeros));
-  postcov_mv_E.assign(n, arma::mat(q, q, arma::fill::zeros));
-  postcov_mv_D.assign(n, arma::mat());
+  postcov_L.assign(n, arma::mat(q, q, arma::fill::zeros));
+  postcov_E.assign(n, arma::mat(q, q, arma::fill::zeros));
+  postcov_D.assign(n, arma::mat());
   for(int i = 0; i < (int)n; ++i)
-    postcov_mv_D[i].set_size(q, daggps[0].dag(i).n_elem);   // col t = d_i^{(t)} (q-vector)
-  postcov_mv_buf.set_size(q, n);
-  postcov_mv_g.set_size(q, n);
+    postcov_D[i].set_size(q, daggps[0].dag(i).n_elem);   // col t = d_i^{(t)} (q-vector)
+  postcov_buf.set_size(q, n);
+  postcov_g.set_size(q, n);
   // per-thread apply scratch (avoids malloc churn / contention in the parallel solve)
   const int nt = std::max(1, num_threads);
-  postcov_mv_acc.assign(nt, arma::vec(q));
-  postcov_mv_u.assign(nt, arma::vec(q));
+  postcov_acc.assign(nt, arma::vec(q));
+  postcov_u.assign(nt, arma::vec(q));
 
-  postcov_mv_setup_done = true;
+  postcov_setup_done = true;
 }
 
 // Multivariate POSTCOV: (re)compute the dense q×q blocks of the factor U.  Per
@@ -1699,13 +1241,13 @@ void SpIOX::postcov_mv_setup(){
 // (shared parents daggps[0].dag(i)), coupled across outcomes by Σ via Q = Σ^{-1}:
 //     R_i^{-1} = Λ_i^{-1} Q Λ_i^{-1}            (Λ_i = diag_j sqrtR_i^{(j)}; no inverse)
 //     K_i = R_i^{-1} + Ω_i,  F_i = K_i^{-1} = L_i L_iᵀ
-//     postcov_mv_L[i] = L_i ;  parent block -E_i D_i^{(t)} stored as
-//     postcov_mv_E[i] = L_iᵀΛ_i^{-1}Q (= L_iᵀR_i^{-1} with cols ·sqrtR) and
-//     postcov_mv_D[i] col t = b_i^{(t)}/sqrtR_i  (the diagonal of D_i^{(t)}).
-// Storage is preallocated by postcov_mv_setup() and overwritten in place (cheap
+//     postcov_L[i] = L_i ;  parent block -E_i D_i^{(t)} stored as
+//     postcov_E[i] = L_iᵀΛ_i^{-1}Q (= L_iᵀR_i^{-1} with cols ·sqrtR) and
+//     postcov_D[i] col t = b_i^{(t)}/sqrtR_i  (the diagonal of D_i^{(t)}).
+// Storage is preallocated by postcov_setup() and overwritten in place (cheap
 // rebuilds); rows are independent so the loop is OpenMP-parallel.
-void SpIOX::build_postcov_mv_factors(){
-  if(!postcov_mv_setup_done) postcov_mv_setup();
+void SpIOX::build_postcov_factors(){
+  if(!postcov_setup_done) postcov_setup();
 
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
@@ -1720,20 +1262,20 @@ void SpIOX::build_postcov_mv_factors(){
     for(int j = 0; j < (int)q; ++j)
       if(!missing_mat(i, j)) K(j, j) += 1.0 / Ddiag(j);
     arma::mat F = arma::inv_sympd(arma::symmatu(K));     // F_i = K_i^{-1} = L_i L_iᵀ
-    postcov_mv_L[i] = arma::chol(arma::symmatu(F), "lower");   // in place (q×q preallocated)
+    postcov_L[i] = arma::chol(arma::symmatu(F), "lower");   // in place (q×q preallocated)
 
     const arma::uvec& par = daggps[0].dag(i);
     const arma::uword mi  = par.n_elem;
     if(mi == 0) continue;
     // Parent-t block -L_i^{-1}G_i^{(t)} = -E_i D_i^{(t)} with E_i location-only, D_i^{(t)} diagonal.
     // E_i = (L_iᵀ R_i^{-1}) Λ_i = L_iᵀ Λ_i^{-1} Q  (scale columns of L_iᵀR_i^{-1} by sqrtR).
-    postcov_mv_E[i] = postcov_mv_L[i].t() * Rinv;        // L_iᵀ R_i^{-1}        (in place, q×q)
-    postcov_mv_E[i].each_row() %= sd.t();                // · Λ_i  ⇒  L_iᵀ Λ_i^{-1} Q
+    postcov_E[i] = postcov_L[i].t() * Rinv;        // L_iᵀ R_i^{-1}        (in place, q×q)
+    postcov_E[i].each_row() %= sd.t();                // · Λ_i  ⇒  L_iᵀ Λ_i^{-1} Q
     for(arma::uword t = 0; t < mi; ++t)                  // d_i^{(t)} = b_i^{(t)} / sqrtR_i
       for(int j = 0; j < (int)q; ++j)
-        postcov_mv_D[i](j, t) = daggps[j].h(i)(t) * inv_sd(j);
+        postcov_D[i](j, t) = daggps[j].h(i)(t) * inv_sd(j);
   }
-  ++postcov_mv_n_builds;
+  ++postcov_n_builds;
 }
 
 // Apply M^{-1} = U^{-1} U^{-ᵀ} to one W-block (r_w / z_w length nq, outcome-major),
@@ -1747,15 +1289,15 @@ void SpIOX::build_postcov_mv_factors(){
 // before any parent reads it.  Each level is its own `omp parallel for`; a single region
 // spanning both passes was measured *slower* — libgomp reuses the team across the repeated
 // dispatches, and the residual parallel ceiling is the DAG's ~120-level critical path.
-void SpIOX::postcov_mv_apply(const double* r_w, double* z_w){
+void SpIOX::postcov_apply(const double* r_w, double* z_w){
   arma::mat Rmat(const_cast<double*>(r_w), n, q, false, true);
-  postcov_mv_buf = Rmat.t();                   // q×n location-major (col i = r_i)
-  arma::mat& s = postcov_mv_buf;
-  arma::mat& g = postcov_mv_g;                  // back-pass: g_i = E_iᵀ s_i (i's parents read it)
-  const int nlev = (int)postcov_mv_level_ptr.n_elem - 1;
+  postcov_buf = Rmat.t();                    // q×n location-major (col i = r_i)
+  arma::mat& s = postcov_buf;
+  arma::mat& g = postcov_g;                  // back-pass: g_i = E_iᵀ s_i (i's parents read it)
+  const int nlev = (int)postcov_level_ptr.n_elem - 1;
 
   for(int L = nlev - 1; L >= 0; --L){          // back-solve Uᵀ s = r
-    const arma::uword lo = postcov_mv_level_ptr(L), hi = postcov_mv_level_ptr(L + 1);
+    const arma::uword lo = postcov_level_ptr(L), hi = postcov_level_ptr(L + 1);
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
@@ -1765,24 +1307,24 @@ void SpIOX::postcov_mv_apply(const double* r_w, double* z_w){
 #else
       const int tid = 0;
 #endif
-      const arma::uword i = postcov_mv_order(idx);
-      arma::vec& acc = postcov_mv_acc[tid];
+      const arma::uword i = postcov_order(idx);
+      arma::vec& acc = postcov_acc[tid];
       acc = s.col(i);                                              // r_i (own slot)
-      const arma::uvec& ck = postcov_mv_child_k(i);
-      const arma::uvec& ct = postcov_mv_child_t(i);
+      const arma::uvec& ck = postcov_child_k(i);
+      const arma::uvec& ct = postcov_child_t(i);
       for(arma::uword c = 0; c < ck.n_elem; ++c){                  // + Σ d_k^{(t)} ⊙ g_k
-        const double* dcol = postcov_mv_D[ck(c)].colptr(ct(c));    //   (= -B_{k,t}ᵀ s_k)
+        const double* dcol = postcov_D[ck(c)].colptr(ct(c));    //   (= -B_{k,t}ᵀ s_k)
         const double* gcol = g.colptr(ck(c));
         for(int r = 0; r < (int)q; ++r) acc(r) += dcol[r] * gcol[r];
       }
-      s.col(i) = postcov_mv_L[i].t() * acc;                        // L_iᵀ
+      s.col(i) = postcov_L[i].t() * acc;                        // L_iᵀ
       if(daggps[0].dag(i).n_elem)                                  // parents will read g_i
-        g.col(i) = postcov_mv_E[i].t() * s.col(i);                 // g_i = E_iᵀ s_i
+        g.col(i) = postcov_E[i].t() * s.col(i);                 // g_i = E_iᵀ s_i
     }
   }
 
   for(int L = 0; L < nlev; ++L){               // forward-solve U z = s
-    const arma::uword lo = postcov_mv_level_ptr(L), hi = postcov_mv_level_ptr(L + 1);
+    const arma::uword lo = postcov_level_ptr(L), hi = postcov_level_ptr(L + 1);
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(num_threads)
 #endif
@@ -1792,26 +1334,27 @@ void SpIOX::postcov_mv_apply(const double* r_w, double* z_w){
 #else
       const int tid = 0;
 #endif
-      const arma::uword i = postcov_mv_order(idx);
-      arma::vec& acc = postcov_mv_acc[tid];
+      const arma::uword i = postcov_order(idx);
+      arma::vec& acc = postcov_acc[tid];
       acc = s.col(i);                                              // s_i (own slot)
       const arma::uvec& par = daggps[0].dag(i);
       if(par.n_elem){
-        arma::vec& u = postcov_mv_u[tid];                          // u = Σ_t d_i^{(t)} ⊙ z_par(t)
+        arma::vec& u = postcov_u[tid];                          // u = Σ_t d_i^{(t)} ⊙ z_par(t)
         u.zeros();
         for(arma::uword t = 0; t < par.n_elem; ++t){
-          const double* dcol = postcov_mv_D[i].colptr(t);
+          const double* dcol = postcov_D[i].colptr(t);
           const double* zcol = s.colptr(par(t));
           for(int r = 0; r < (int)q; ++r) u(r) += dcol[r] * zcol[r];
         }
-        acc += postcov_mv_E[i] * u;                                // one gemv (+E_i u)
+        acc += postcov_E[i] * u;                                // one gemv (+E_i u)
       }
-      s.col(i) = postcov_mv_L[i] * acc;                            // L_i
+      s.col(i) = postcov_L[i] * acc;                            // L_i
     }
   }
 
-  arma::mat Zout = s.t();                       // n×q (outcome-major)
-  std::copy(Zout.memptr(), Zout.memptr() + (size_t)n * q, z_w);
+  // transpose straight into the caller's z_w view (no Zout temp / std::copy)
+  arma::mat Zout(z_w, n, q, false, true);
+  Zout = s.t();                                 // n×q (outcome-major)
 }
 
 // Multivariate VADU: per-location q×q inverse of M_i = Q + diag_j(R_i^{(j)} w_i^{(j)})
@@ -2208,9 +1751,7 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
   if(latent_model == 1){
     // Block latent sampler.  Preconditioner dispatch (all precision-domain joint
     // (B,W) PCG via gibbs_BW_block, or blocked W|B if joint_BW = false):
-    //   manual : PRECOND_JACOBI / POSTERIOR / VADU / POSTCOV / POSTCOV_MV.
-    //   PRECOND_PROBE : two-candidate q-keyed auto-select between POSTCOV and
-    //       POSTCOV_MV (anchor = POSTCOV_MV if q>10 else POSTCOV) — see probe_step.
+    // PRECOND_JACOBI / VADU / POSTCOV; PRECOND_AUTO resolves to VADU.
     int cg_iter = 0;
     PrecondChoice precond_used_this_iter;
 
@@ -2235,14 +1776,9 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
       return iters;
     };
 
-    if(precond_choice == PRECOND_PROBE){
-      // Two-candidate q-keyed probe (see probe_step / spiox.h).  Each sweep is
-      // dispatched through run_sweep, so it honours joint_BW (joint (B,W) vs blocked).
-      precond_used_this_iter = probe_step(cg_iter, run_sweep);
-    } else {
-      precond_used_this_iter = precond_choice;
-      cg_iter = run_sweep(precond_choice, 0);
-    }
+    // AUTO resolves to VADU; otherwise honour the explicit choice.
+    precond_used_this_iter = (precond_choice == PRECOND_AUTO) ? PRECOND_VADU : precond_choice;
+    cg_iter = run_sweep(precond_used_this_iter, 0);
 
     // ASIS interweaving (blocked route only): a non-centred B update holding
     // eta = XB + W fixed, then recover W.  Mirrors the latent_model 2/3 path and
@@ -2262,11 +1798,9 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
     // Non-block latent samplers — they manage B, W, and any inner CG themselves.
     //   latent_model == 2 : single-site Gibbs (w_sequential_singlesite, no PC dispatch).
     //   latent_model == 3 : per-outcome / single-outcome sequential sampler
-    //                       (gibbs_w_sequential_byoutcome).  Honours JACOBI /
-    //                       POSTERIOR / POSTCOV / VADU directly via the precond_choice
-    //                       enum.  PROBE (the default) runs the two-candidate q-keyed
-    //                       probe (probe_step); under sampling=3 POSTCOV_MV collapses
-    //                       to POSTCOV, so the probe just settles on POSTCOV.
+    //                       (gibbs_w_sequential_byoutcome).  Honours JACOBI / VADU
+    //                       directly via precond_choice; AUTO and POSTCOV resolve
+    //                       to VADU (sampling=3's A_j is already per-outcome).
     if(sample_beta){
       tstart = std::chrono::steady_clock::now();
       update_B();
@@ -2278,24 +1812,11 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
       w_sequential_singlesite(theta_has_changed);
     }
     if(latent_model == 3){
-      // Per-outcome sequential sampler.  Honours JACOBI / POSTERIOR / POSTCOV /
-      // VADU directly; PROBE runs the two-candidate probe (probe_step), which
-      // settles on POSTCOV here.  The per-outcome run lambda caps each
-      // outcome's PCG at the requested total-iter budget (a loose but effective
-      // safety cap) and reports the summed CG iters.
+      // Per-outcome sequential sampler.  Honours JACOBI / VADU directly; AUTO (and
+      // POSTCOV, which has no per-outcome cross-coupling) resolve to VADU.
       int cg_iter_seq = 0;
-      PrecondChoice pc_used;
-      if(precond_choice == PRECOND_PROBE){
-        auto run3 = [&](PrecondChoice pc, int cap)->int{
-          int it = 0;
-          gibbs_w_sequential_byoutcome(it, pc, cap);
-          return it;
-        };
-        pc_used = probe_step(cg_iter_seq, run3);
-      } else {
-        pc_used = precond_choice;
-        gibbs_w_sequential_byoutcome(cg_iter_seq, pc_used);
-      }
+      PrecondChoice pc_used = (precond_choice == PRECOND_AUTO) ? PRECOND_VADU : precond_choice;
+      gibbs_w_sequential_byoutcome(cg_iter_seq, pc_used);
       last_cg_iter      = cg_iter_seq;
       last_precond_used = static_cast<int>(pc_used);
     }
@@ -2353,11 +1874,10 @@ void SpIOX::latent_vi(){
   };
   
   int cg_iter = 0;
-  // VI uses the joint BW block sampler (POSTERIOR PC by default; JACOBI is
-  // available via precond_choice override).  No probe phase here — VI runs
-  // many short steps and the per-call probe overhead would dominate.
+  // VI uses the joint BW block sampler (VADU PC by default; JACOBI is available
+  // via precond_choice override).
   const PrecondChoice use_pc =
-      (precond_choice == PRECOND_JACOBI) ? PRECOND_JACOBI : PRECOND_POSTERIOR;
+      (precond_choice == PRECOND_JACOBI) ? PRECOND_JACOBI : PRECOND_VADU;
   gibbs_BW_block(cg_iter, use_pc);
   checkpoint("gibbs_BW_block");
   

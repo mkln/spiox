@@ -106,27 +106,11 @@ public:
   void sample_Y_misaligned(const arma::uvec& theta_changed);
   
   // Preconditioner / W-sampler choices for the block latent model.
-  // PROBE (the default) auto-selects between POSTCOV and POSTCOV_MV (q-keyed).
+  // AUTO (the default) resolves to VADU.
   //
   //   JACOBI    : diagonal of the joint operator (precision form).
   //               O(nq + pq) per apply; nearly free; tends to be a weak PC.
   //
-  //   POSTERIOR : block-diagonal-on-(B,W), per-outcome on the W half.  B half:
-  //               per-outcome exact dense Cholesky of
-  //                 M_B,j = diag(1/B_Var.col(j)) + X^T·diag(invD.col(j))·X
-  //               W half: blkdiag_j(H_A,j^T H_A,j), the per-outcome Vecchia precision
-  //                 factor of A_j = Q_jj·H_j^T H_j + diag(invD.col(j)), built once
-  //                 per chain via local regression on (m+1)x(m+1) sub-blocks of A_j
-  //                 and mirrored as col-major sparse Eigen for the fast double-mult
-  //                 apply.  No cross-outcome coupling.
-  //
-  //   PROBE     : adaptive default.  Two-candidate, q-keyed: the PRIMARY anchor
-  //               (POSTCOV_MV if q>10 else POSTCOV) runs an uncapped probe_burnin
-  //               and its worst-case iter count sets the cap; the SECONDARY (the
-  //               other) is then trialed probe_trial sweeps capped at that, and
-  //               adopted only if it converges within the cap with a lower mean
-  //               than the primary; otherwise the primary is kept.  See the
-  //               probe-state block below.
   //   VADU      : MULTIVARIATE "Vecchia approximation with diagonal update" (Kündig
   //               & Sigrist).  Reuses the per-outcome prior Vecchia factors H_j and
   //               folds the likelihood, coupling outcomes EXACTLY via Q:
@@ -135,24 +119,27 @@ public:
   //               so Apply P^{-1} = H^{-1}M^{-1}H^{-ᵀ} is a SEPARABLE fully-parallel sweep:
   //               per-outcome prior triangular solves around a per-location q×q M_i^{-1}.
   //               Reduces to the scalar 1/(R_j⊙w_j+Q_jj) at Σ diagonal.  Only per-sweep
-  //               build is the n cheap q×q inverses (no FSAI factor, unlike VAPOP).
+  //               build is the n cheap q×q inverses.
+  //
+  //   POSTCOV: ONE block-Vecchia factor of the JOINT posterior covariance (q×q blocks
+  //               couple all outcomes per location); fewest CG iters on confounded /
+  //               high-correlation problems, ~2× costlier per iter than VADU.  See the
+  //               detailed block further down.  sampling=1 only (sampling=3 → VADU).
   enum PrecondChoice {
-    PRECOND_PROBE      = 0,
+    PRECOND_AUTO       = 0,   // resolves to VADU
     PRECOND_JACOBI     = 1,
-    PRECOND_POSTERIOR  = 2,
-    PRECOND_VADU       = 3,
-    PRECOND_POSTCOV    = 4,
-    PRECOND_POSTCOV_MV = 5
+    PRECOND_VADU       = 2,
+    PRECOND_POSTCOV    = 3
   };
-  PrecondChoice precond_choice = PRECOND_PROBE;
+  PrecondChoice precond_choice = PRECOND_AUTO;
 
   // How often the Σ/Ddiag-dependent preconditioner factors are rebuilt during
   // MCMC.  A preconditioner only accelerates CG and never shifts the sampled
   // target, so freezing it at the autostart values ("once") is exact, while
   // rebuilding every sweep ("always") keeps it tracking the drifting operator at
   // extra cost.
-  //   REBUILD_AUTO   : per-PC default — ALWAYS for POSTCOV/POSTCOV_MV (cheap
-  //                    rebuild), ONCE for POSTERIOR (expensive FSAI factor of A_j).
+  //   REBUILD_AUTO   : per-PC default — ALWAYS for POSTCOV (cheap in-place
+  //                    rebuild of the q×q blocks).
   //   REBUILD_ALWAYS : rebuild every sweep regardless of PC.
   //   REBUILD_ONCE   : build once at the autostart values, then freeze.
   // VADU is a special case: its factor always rebuilds (see pc_rebuild_now)
@@ -167,89 +154,15 @@ public:
     // This overrides cg_rebuild = "once" (now the global default) for VADU only.
     if(pc == PRECOND_VADU) return true;
     int mode = cg_rebuild;
-    // POSTCOV and POSTCOV_MV default to ALWAYS: their rebuild is cheap (POSTCOV is
-    // an O(nq) coefficient rescale; POSTCOV_MV overwrites preallocated q×q block
-    // values in place, parallel over locations) and tracking the live Σ/Ddiag
-    // empirically beats freezing at the autostart values.
+    // POSTCOV defaults to ALWAYS: its rebuild is cheap (overwrites preallocated
+    // q×q block values in place, parallel over locations) and tracking the live
+    // Σ/Ddiag empirically beats freezing at the autostart values.
     if(mode == REBUILD_AUTO)
-      mode = (pc == PRECOND_POSTCOV || pc == PRECOND_POSTCOV_MV) ? REBUILD_ALWAYS : REBUILD_ONCE;
+      mode = (pc == PRECOND_POSTCOV) ? REBUILD_ALWAYS : REBUILD_ONCE;
     return (mode == REBUILD_ALWAYS) ? true : (builds_done == 0);
   }
 
-  // Probe state.  Two-candidate q-keyed probe (used by both the sampling=1 block
-  // sampler and the sampling=3 per-outcome sampler via probe_step):
-  //   Phase 0 (burn-in): run the PRIMARY anchor — POSTCOV_MV if q>10 else POSTCOV —
-  //     for probe_burnin sweeps (uncapped) and record its worst-case (max) iters,
-  //     which becomes the iteration cap for the secondary.
-  //   Phase 1 (trial)   : run the SECONDARY (the other of POSTCOV/POSTCOV_MV) for
-  //     probe_trial sweeps, capped at the primary max; disqualified if it hits the
-  //     cap without converging.
-  //   Decision          : adopt the secondary only if it converged within the cap
-  //     with a lower mean than the primary; otherwise keep the primary.
-  // All probe sweeps are real MCMC draws (only the preconditioner differs).
-  int           probe_count         = 0;           // sweeps done (burn-in + trial)
-  int           probe_cap           = 0;           // secondary iter cap = primary max
-  double        probe_primary_sum   = 0.0;         // primary burn-in cumulative iters
-  int           probe_primary_max   = 0;           // primary burn-in worst-case iters
-  double        probe_secondary_sum = 0.0;         // secondary trial cumulative iters
-  bool          probe_secondary_ok  = true;        // secondary converged within the cap?
-  static constexpr int probe_burnin = 10;          // primary burn-in sweeps (probe length)
-  static constexpr int probe_trial  = 5;           // secondary trial sweeps
-  // One probe step: `run(pc, cap)` performs a real W-sampling sweep with PC `pc`
-  // (cap = maxit, 0 = uncapped) and returns its CG iteration count.  Advances the
-  // probe state machine, sets precond_choice when the winner is locked in, fills
-  // cg_iter, and returns the PC actually used this sweep.
-  PrecondChoice probe_step(int& cg_iter,
-                           const std::function<int(PrecondChoice, int)>& run);
-
-  // Per-outcome state for the POSTERIOR PC.  VAPOP = "Vecchia Approximation
-  // of the POsterior Precision": for each outcome j we approximate
-  //   A_j^{-1} ≈ H_A,j^T · H_A,j
-  // where A_j = Q_jj·H_j^T H_j + diag(invD.col(j)) is the conditional
-  // posterior precision of W_j | W_{-j}, Y_j.  H_A,j is built once via local
-  // Vecchia regression on (m+1)x(m+1) sub-blocks of A_j and mirrored as
-  // col-major sparse Eigen for the fast double-mult apply.  Idempotent
-  // build guarded by vapop_n_builds.
-  int vapop_n_builds = 0;
-  std::vector<arma::vec>              vapop_sqrtR;     // size q, each length n
-  std::vector<arma::field<arma::vec>> vapop_h;         // size q, each length n
-  arma::field<arma::umat>             vapop_children;  // length n, each rows = [k, t_of_i_in_parents_of_k]
-  std::vector<Eigen::SparseMatrix<double>> vapop_H_eigen;   // size q (col-major lower)
-  std::vector<Eigen::SparseMatrix<double>> vapop_Ht_eigen;  // size q (col-major upper, = transpose)
-  // How the POSTERIOR W-half preconditioner factor of A_j = Q_jj·HᵀH + D⁻¹ is built:
-  //   0 = matrix-free  : assemble A_j entries on demand via DAG children-merge
-  //                      walk (A_at), local FSAI solve -> bounded-m factor.
-  //   1 = precision    : form P = HᵀH explicitly once (Eigen sparse product),
-  //                      read its entries for the SAME local FSAI solve.
-  // Both methods produce identical bounded-m factors (vapop_H_eigen).  The
-  // local FSAI solve is the factored-sparse-approximate-inverse / Vecchia
-  // inverse-Cholesky factor on the DAG sparsity pattern (see build_vapop_factors).
-  int vapop_build_method = 0;
-  // Build the Vecchia/FSAI factors of A_j (no-op if already built).  Called
-  // once on the first POSTERIOR apply.
-  void build_vapop_factors();
-
-  // Per-outcome state for the POSTCOV PC.  "Latent posterior-conditional"
-  // preconditioner: instead of a Vecchia factor of the posterior PRECISION
-  // (VAPOP), we build a cheap Vecchia factor of the posterior COVARIANCE using
-  // single-datum approximate conditionals
-  //     p(w_i | w_{N_i}, y) ≈ p(w_i | w_{N_i}, y_i)
-  //                         ∝ p(w_i | w_{N_i}) · p(y_i | w_i).
-  // Per outcome j, reusing the PRIOR daggps[j] coefficients b_i = daggps[j].h(i)
-  // and r_i = daggps[j].sqrtR(i)^2, with invDj = 1/Ddiag(j) (0 at missing):
-  //     g_i = Q_jj / (Q_jj + r_i·invDj)         (shrinkage toward data, ∈(0,1])
-  //     f_i = r_i  / (Q_jj + r_i·invDj)          (conditional variance)
-  // The lower-tri factor Ũ_j has rows [1/√f_i at i, -g_i·b_i/√f_i at parents]
-  // so that Ũ_jᵀŨ_j ≈ A_j (the posterior precision), applied as A_j⁻¹ ≈
-  // Ũ_j⁻¹Ũ_j⁻ᵀ by two triangular solves, then mixed across outcomes by R_corr.
-  // Build is O(nq) cheap (just rescales prior coefs), so it rebuilds every sweep.
-  int postcov_pc_n_builds = 0;
-  std::vector<Eigen::SparseMatrix<double>> postcov_U_eigen;   // size q (col-major lower)
-  std::vector<Eigen::SparseMatrix<double>> postcov_Ut_eigen;  // size q (col-major upper, = transpose)
-  // Build the latent posterior-conditional factors Ũ_j (rebuilt every sweep).
-  void build_postcov_factors();
-
-  // Per-location state for the MULTIVARIATE POSTCOV PC ("postcov_mv").  Instead
+  // Per-location state for the MULTIVARIATE POSTCOV PC ("postcov").  Instead
   // of q separate per-outcome factors mixed by a uniform R_corr, this builds a
   // SINGLE block-Vecchia inverse-Cholesky factor U of the JOINT posterior
   // covariance, with q×q blocks coupling all outcomes at a location.  The IOX
@@ -271,13 +184,13 @@ public:
   // so the apply gathers parents/children with a cheap diagonal weighting (O(mq)) and does ONE
   // q×q gemv per location instead of m — per-edge work q²→q, matching VADU's flop order.  Stored
   // as dense blocks (NOT Eigen sparse — BLAS gemv beats a scalar sparse triangular solve, ~2–3×):
-  //     postcov_mv_L[i] = L_i                          (q×q lower)
-  //     postcov_mv_E[i] = L_iᵀ Λ_i^{-1} Q              (q×q;     zeros if root)
-  //     postcov_mv_D[i] = [ d_i^{(1)} | ... ]          (q × m_i; col t = b_i^{(t)}/sqrtR_i; empty if root)
-  // Reduces EXACTLY to POSTCOV when Σ is diagonal (then E_i, D_i^{(t)} are diagonal, so the block
-  // solve decouples per outcome).  Per-rebuild work O(n(q³+m q)) (was O(n(q³+m q²)); rows
-  // independent → OpenMP-parallel), reusing R_i^{-1}=Λ_i^{-1}QΛ_i^{-1} (Q=Σ^{-1} a member, one
-  // q×q SPD inverse per location).
+  //     postcov_L[i] = L_i                          (q×q lower)
+  //     postcov_E[i] = L_iᵀ Λ_i^{-1} Q              (q×q;     zeros if root)
+  //     postcov_D[i] = [ d_i^{(1)} | ... ]          (q × m_i; col t = b_i^{(t)}/sqrtR_i; empty if root)
+  // At diagonal Σ, E_i and D_i^{(t)} are diagonal, so the block solve decouples into q
+  // independent per-outcome solves.  Per-rebuild work O(n(q³+m q)) (rows independent →
+  // OpenMP-parallel), reusing R_i^{-1}=Λ_i^{-1}QΛ_i^{-1} (Q=Σ^{-1} a member, one q×q SPD
+  // inverse per location).
   //
   // Apply M^{-1}=U^{-1}U^{-ᵀ} is a block triangular solve — inherently serial along
   // the DAG.  We parallelise it by LEVEL SCHEDULING: level[i] = 1+max level over
@@ -286,26 +199,31 @@ public:
   // down, gathering from children).  Runs on two q×n buffers (the solution s and the
   // back-pass g_i = E_iᵀ s_i that i's parents read).
   // The level/children structure is DAG-only (θ/Σ/Ddiag-independent) → precomputed
-  // once.  This is the lever postcov lacked: location- (n-) parallelism rather than
-  // the per-outcome q-parallelism, where postcov_mv's far fewer CG iters pays off.
-  int  postcov_mv_n_builds = 0;
-  bool postcov_mv_setup_done = false;             // levels/children/storage precomputed?
-  std::vector<arma::mat> postcov_mv_L;            // size n, each q×q lower-triangular
-  std::vector<arma::mat> postcov_mv_E;            // size n, each q×q (E_i = L_iᵀ Λ_i⁻¹ Q; zeros if root)
-  std::vector<arma::mat> postcov_mv_D;            // size n, each q×m_i (col t = d_i^{(t)}; empty if root)
-  arma::uvec             postcov_mv_order;        // locations sorted by level (stable)
-  arma::uvec             postcov_mv_level_ptr;    // size n_levels+1: level slices into order
-  arma::field<arma::uvec> postcov_mv_child_k;     // per i: children k (i is a parent of k)
-  arma::field<arma::uvec> postcov_mv_child_t;     // per i: position of i in k's parent list
-  arma::mat              postcov_mv_buf;          // reused q×n location-major apply buffer (sol s)
-  arma::mat              postcov_mv_g;            // reused q×n back-pass buffer (g_i = E_iᵀ s_i)
-  std::vector<arma::vec> postcov_mv_acc;          // per-thread scratch, length q
-  std::vector<arma::vec> postcov_mv_u;            // per-thread scratch, length q (forward parent gather)
-  void postcov_mv_setup();                        // one-time levels + children + storage
-  void build_postcov_mv_factors();
-  // Apply the postcov_mv W-half PC to one W-block: z = U^{-1}U^{-ᵀ} r, r_w / z_w
+  // once.  Location- (n-) parallelism (vs VADU's per-outcome q-parallelism), where
+  // postcov's far fewer CG iters on confounded/high-correlation problems pays off.
+  // NB: these stay DOUBLE.  fp32 storage of L_i/E_i was tried and REJECTED — at high
+  // cross-outcome correlation Q=Σ⁻¹ is ill-conditioned, so R_i⁻¹=Λ⁻¹QΛ⁻¹ and hence the
+  // L_i/E_i blocks have large dynamic range; fp32 loses the coupling that makes postcov
+  // work and CG iters BLOW UP (45.8→132 at q=30, corr~0.99) — net much slower despite the
+  // cheaper per-iter apply.  The apply is not bandwidth-bound enough to justify it here.
+  int  postcov_n_builds = 0;
+  bool postcov_setup_done = false;             // levels/children/storage precomputed?
+  std::vector<arma::mat> postcov_L;            // size n, each q×q lower-triangular
+  std::vector<arma::mat> postcov_E;            // size n, each q×q (E_i = L_iᵀ Λ_i⁻¹ Q; zeros if root)
+  std::vector<arma::mat> postcov_D;            // size n, each q×m_i (col t = d_i^{(t)}; empty if root)
+  arma::uvec             postcov_order;        // locations sorted by level (stable)
+  arma::uvec             postcov_level_ptr;    // size n_levels+1: level slices into order
+  arma::field<arma::uvec> postcov_child_k;     // per i: children k (i is a parent of k)
+  arma::field<arma::uvec> postcov_child_t;     // per i: position of i in k's parent list
+  arma::mat              postcov_buf;          // reused q×n location-major apply buffer (sol s)
+  arma::mat              postcov_g;            // reused q×n back-pass buffer (g_i = E_iᵀ s_i)
+  std::vector<arma::vec> postcov_acc;          // per-thread scratch, length q
+  std::vector<arma::vec> postcov_u;            // per-thread scratch, length q (forward parent gather)
+  void postcov_setup();                        // one-time levels + children + storage
+  void build_postcov_factors();
+  // Apply the postcov W-half PC to one W-block: z = U^{-1}U^{-ᵀ} r, r_w / z_w
   // length nq (outcome-major).  Level-scheduled parallel block substitution.
-  void postcov_mv_apply(const double* r_w, double* z_w);
+  void postcov_apply(const double* r_w, double* z_w);
 
   // MULTIVARIATE VADU.  Folds the likelihood diagonal into the per-outcome prior
   // Vecchia factors H_j and couples outcomes EXACTLY (full Q, not the old separable
@@ -321,12 +239,12 @@ public:
 
   // Telemetry: number of CG iterations used in the most-recent W-block update,
   // plus an integer code for which preconditioner / sampler ran
-  // (0 unset / 1 jacobi / 2 posterior / 3 response / 4 vadu).  Read by the
+  // (0 unset / 1 jacobi / 2 vadu / 3 postcov).  Read by the
   // outer MCMC driver and surfaced back to R.
   int last_cg_iter      = 0;
   int last_precond_used = 0;
   // Wall-clock seconds spent on the one-time ("once" mode) preconditioner
-  // factor build (vapop / BW PC factors).  Accumulated the
+  // factor build (BW PC factors).  Accumulated the
   // first time the PC is constructed; 0 thereafter.  Surfaced back to R.
   double pc_build_seconds = 0.0;
   
@@ -339,7 +257,7 @@ public:
   //                               (gibbs_w_block_precision), followed by an ASIS
   //                               non-centred B refresh (update_BW_asis), mirroring
   //                               the latent_model 2/3 samplers.  Honours the same
-  //                               JACOBI / POSTERIOR / VADU / POSTCOV choices.
+  //                               JACOBI / VADU / POSTCOV choices.
   bool joint_BW = true;
   arma::mat W;
   void w_sequential_singlesite(const arma::uvec& theta_changed);
@@ -356,13 +274,12 @@ public:
   void update_BW_asis(int& cg_iter, arma::mat& B, arma::mat& W, bool sampling);
 
   // Joint BW PCG sampler — the only block sampler that survives the cleanup.
-  // PC dispatched on `precond`: PRECOND_JACOBI (diagonal of the joint
-  // precision) or PRECOND_POSTERIOR (block-diagonal-on-(B,W) with cross-
-  // outcome Σ-mix on the W half via VAPOP factors).  `sampling` toggles
-  // between MCMC sampling mode (RHS includes Bhattacharya noise terms) and
-  // posterior-mean mode (deterministic).  `cg_maxit_override` > 0 caps the
-  // PCG iter count (used by the probe phase to budget JACOBI against
-  // POSTERIOR's measured iter count); 0 means use the default cap (n).
+  // PC dispatched on `precond`: PRECOND_JACOBI (diagonal of the joint precision),
+  // PRECOND_VADU, or PRECOND_POSTCOV (each defines a W-half apply that the shared
+  // symmetric block Gauss-Seidel wrapper combines with the exact p×p B-solve).
+  // `sampling` toggles between MCMC sampling mode (RHS includes Bhattacharya noise
+  // terms) and posterior-mean mode (deterministic).  `cg_maxit_override` > 0 caps the
+  // PCG iter count; 0 means use the default cap (n).
   void gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling=true,
                       int cg_maxit_override=0);
 
@@ -370,20 +287,19 @@ public:
   // gibbs_BW_block, used by the blocked route when joint_BW = false).  Holds B
   // fixed (sampled separately by update_B + ASIS), solving the conditional
   // W precision P_WW = Λ_W + diag(invD) via matrix-free PCG.  PC dispatched on
-  // `precond`: PRECOND_JACOBI / PRECOND_POSTERIOR (VAPOP) / PRECOND_VADU — the
-  // same W-half preconditioners as gibbs_BW_block, with no B half.  `sampling`
-  // toggles Bhattacharya noise on the RHS; `cg_maxit_override` > 0 caps the PCG
-  // iters (used by the probe), 0 = default cap (n).
+  // `precond`: PRECOND_JACOBI / PRECOND_VADU / PRECOND_POSTCOV — the same W-half
+  // preconditioners as gibbs_BW_block, with no B half.  `sampling` toggles
+  // Bhattacharya noise on the RHS; `cg_maxit_override` > 0 caps the PCG iters,
+  // 0 = default cap (n).
   void gibbs_w_block_precision(int& cg_iter, PrecondChoice precond,
                                bool sampling=true, int cg_maxit_override=0);
 
-  // Frozen POSTERIOR/VADU preconditioner buffers (built once, "once" mode).
-  // chol_MBj : per-outcome p×p Cholesky of the B-half precision.
+  // Preconditioner buffers (built per the cg_rebuild cadence).
+  // chol_MBj : per-outcome p×p Cholesky of the B-half precision (shared by all
+  //            non-JACOBI PCs via the block Gauss-Seidel wrapper).
   // vadu_dscale: per-outcome sqrt(R_j⊙invD_j + Q_jj) diagonal scale (VADU only).
-  int bw_pc_n_builds = 0;
-  // VADU-specific build counter (kept separate from bw_pc_n_builds, which guards
-  // POSTERIOR's FSAI build): tracks how many times the VADU factors have been
-  // (re)built so cg_rebuild = "once" can freeze them.
+  // vadu_pc_n_builds tracks how many times the VADU factors have been (re)built so
+  // cg_rebuild = "once" can freeze them.
   int vadu_pc_n_builds = 0;
   std::vector<arma::mat> bw_chol_MBj;
   std::vector<arma::vec> bw_vadu_dscale;

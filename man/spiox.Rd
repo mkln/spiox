@@ -57,41 +57,19 @@ spiox(
     (`debug$sampling = 1L`) and the per-outcome sequential sampler
     (`debug$sampling = 3L`). Choices:
     \itemize{
-      \item `"auto"` (default): a VADU-anchored probe. VADU — the robust
-        fallback — runs for a 10-sweep burn-in and its worst-case CG-iteration
-        count becomes a budget. The candidates `"postcov"`, `"posterior"`,
-        and `"response"` are then each trialled for 5 sweeps with their CG
-        iterations capped at that budget, and disqualified if they hit the cap
-        without converging. The winner is the converged candidate with the
-        fewest CG iterations on average that also beats VADU's burn-in mean;
-        if none qualifies, VADU is kept. All probe sweeps are real draws.
-        `"jacobi"` is never auto-selected — choose it explicitly if desired.
+      \item `"auto"` (default): resolves to `"vadu"`.
       \item `"jacobi"`: diagonal of the joint precision operator. Cheap per
-        apply; usually weak. Available only by explicit request (excluded
-        from `"auto"`).
-      \item `"posterior"`: block-diagonal-on-(B,W) preconditioner. Exact
-        dense Cholesky on the B block (per-outcome `p×p`), Σ-mixed
-        Vecchia-precision factors on the W block (per-outcome `H_A,j`
-        sandwiched with the correlation matrix of Σ). Built once per
-        Gibbs sweep; tends to use far fewer CG iters than JACOBI when Σ
-        has substantial off-diagonal cross-outcome structure.
-      \item `"response"`: switches the W update to a covariance-form
-        Bhattacharya block sampler that solves systems with the marginal
-        `C + D` (rather than the precision `C^{-1} + D^{-1}`),
-        preconditioned by a fresh per-outcome Vecchia factor of `C + D`
-        (built with `nugget = Ddiag`). Effective when the nugget is small
-        and the prior dominates.
+        apply; usually weak. Available only by explicit request.
       \item `"vadu"`: Vecchia-approximation-with-diagonal-update
         preconditioner (Kündig & Sigrist). Reuses the prior Vecchia factor
-        and folds the likelihood diagonal into it, so no posterior factor
-        is built per sweep. Same Σ-mix as `"posterior"` on the W block.
-      \item `"postcov"`: latent posterior-conditional preconditioner. Builds
-        a cheap Vecchia factor of the posterior \emph{covariance} from
-        single-datum approximate conditionals
-        `p(w_i | w_{N_i}, y) \approx p(w_i | w_{N_i}, y_i)`, rescaling the
-        prior Vecchia coefficients by a data-shrinkage factor. Applied as two
-        triangular solves around the same Σ-mix as `"posterior"`. O(nq)-cheap
-        to build, so it rebuilds every sweep.
+        and folds the likelihood diagonal into it, coupling outcomes exactly
+        through Σ; no posterior factor is built per sweep. The default.
+      \item `"postcov"`: a single block-Vecchia factor of the \emph{joint}
+        posterior covariance with `q×q` blocks that couple all outcomes at a
+        location through `R_i = Λ_i Σ Λ_i` shrunk by the local datum. Far fewer
+        CG iterations than `"vadu"` on confounded / high-cross-correlation
+        problems, at roughly 2× the per-iteration cost. Block latent sampler
+        (`debug$sampling = 1L`) only; `debug$sampling = 3L` falls back to `"vadu"`.
     }
     Ignored for `debug$sampling != 1L` and for `method = "response"`.
 }}

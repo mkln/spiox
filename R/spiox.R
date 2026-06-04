@@ -55,44 +55,19 @@
 #'       (`debug$sampling = 1L`) and the per-outcome sequential sampler
 #'       (`debug$sampling = 3L`). Choices:
 #'       \itemize{
-#'         \item `"auto"` (default): a two-candidate probe keyed on `q`. The anchor
-#'           is the better default for the regime — `"postcov_mv"` if `q > 10` else
-#'           `"postcov"` — which runs for a 10-sweep burn-in; its worst-case
-#'           CG-iteration count becomes a cap. The other candidate is then trialled
-#'           for 5 sweeps with its CG iterations capped at that, and adopted only if
-#'           it converges within the cap with a lower mean than the anchor; otherwise
-#'           the anchor is kept. All probe sweeps are real draws. `"jacobi"` is never
-#'           auto-selected — choose it explicitly if desired.
+#'         \item `"auto"` (default): resolves to `"vadu"`.
 #'         \item `"jacobi"`: diagonal of the joint precision operator. Cheap per
-#'           apply; usually weak. Available only by explicit request (excluded
-#'           from `"auto"`).
-#'         \item `"posterior"`: block-diagonal-on-(B,W) preconditioner. Exact
-#'           dense Cholesky on the B block (per-outcome `p×p`), Σ-mixed
-#'           Vecchia-precision factors on the W block (per-outcome `H_A,j`
-#'           sandwiched with the correlation matrix of Σ). Built once per
-#'           Gibbs sweep; tends to use far fewer CG iters than JACOBI when Σ
-#'           has substantial off-diagonal cross-outcome structure.
+#'           apply; usually weak. Available only by explicit request.
 #'         \item `"vadu"`: Vecchia-approximation-with-diagonal-update
 #'           preconditioner (Kündig & Sigrist). Reuses the prior Vecchia factor
-#'           and folds the likelihood diagonal into it, so no posterior factor
-#'           is built per sweep. Same Σ-mix as `"posterior"` on the W block.
-#'         \item `"postcov"`: latent posterior-conditional preconditioner. Builds
-#'           a cheap Vecchia factor of the posterior \emph{covariance} from
-#'           single-datum approximate conditionals
-#'           `p(w_i | w_{N_i}, y) \approx p(w_i | w_{N_i}, y_i)`, rescaling the
-#'           prior Vecchia coefficients by a data-shrinkage factor. Applied as two
-#'           triangular solves around the same Σ-mix as `"posterior"`. O(nq)-cheap
-#'           to build, so it rebuilds every sweep.
-#'         \item `"postcov_mv"`: multivariate `"postcov"`. Instead of `q` separate
-#'           per-outcome factors mixed by the prior correlation of Σ, builds a
-#'           single block-Vecchia factor of the \emph{joint} posterior covariance
-#'           with `q×q` blocks that couple all outcomes at a location through
-#'           `R_i = Λ_i Σ Λ_i` shrunk by the local datum. The cross-outcome
-#'           coupling is thus local and data-aware rather than a uniform mix.
-#'           Reduces exactly to `"postcov"` when Σ is diagonal. Build is
-#'           `O(n(q³ + m q²))`, so it defaults to building once (frozen at the
-#'           autostart Σ/Ddiag). Block latent sampler (`debug$sampling = 1L`) only;
-#'           `debug$sampling = 3L` falls back to `"postcov"`.
+#'           and folds the likelihood diagonal into it, coupling outcomes exactly
+#'           through Σ; no posterior factor is built per sweep. The default.
+#'         \item `"postcov"`: a single block-Vecchia factor of the \emph{joint}
+#'           posterior covariance with `q×q` blocks that couple all outcomes at a
+#'           location through `R_i = Λ_i Σ Λ_i` shrunk by the local datum. Far fewer
+#'           CG iterations than `"vadu"` on confounded / high-cross-correlation
+#'           problems, at roughly 2× the per-iteration cost. Block latent sampler
+#'           (`debug$sampling = 1L`) only; `debug$sampling = 3L` falls back to `"vadu"`.
 #'       }
 #'       Ignored for `debug$sampling != 1L` and for `method = "response"`.
 #'   }
@@ -217,12 +192,8 @@ spiox <- function(Y, X, coords, m = 15,
     nu                = 0.5,
     vi_pred_smp       = 0,
     # CG preconditioner choice for the latent MCMC samplers (sampling = 1 and 3).
-    # One of: "auto", "jacobi", "posterior", "vadu", "postcov", "postcov_mv".
-    # "auto" (default) is a two-candidate probe keyed on q: it anchors
-    # on the better default for the regime — postcov_mv if q > 10 else postcov — runs
-    # it for a 10-sweep burn-in, then trials the other capped at the anchor's
-    # worst-case CG iters, switching only if it converges faster.  Ignored for
-    # method = "response" and the single-site sampler (sampling = 2).
+    # One of: "auto", "jacobi", "vadu", "postcov".  "auto" (default) resolves to
+    # "vadu".  Ignored for method = "response" and the single-site sampler (sampling = 2).
     cg_preconditioner = "auto",
     # Block latent sampler (debug$sampling = 1L) only: how B and W are drawn.
     #   TRUE  (default): joint (B, W) PCG sample (gibbs_BW_block); the B-W coupling is
@@ -235,18 +206,12 @@ spiox <- function(Y, X, coords, m = 15,
     # A preconditioner only speeds up CG and never shifts the target, so any cadence
     # is valid; tracking the live Σ/Ddiag ("always") empirically beats freezing.
     #   "always" (default): rebuild every sweep from the live Σ/Ddiag.
-    #   "auto"            : per-PC — "always" for postcov/postcov_mv (cheap rebuild),
-    #                       "once" for posterior (expensive factor).
+    #   "auto"            : per-PC — "always" for postcov (cheap rebuild),
+    #                       "once" otherwise.
     #   "once"            : build once at the autostart values, then freeze (exact).
     # NOTE: "vadu" always rebuilds regardless (its factor is a trivially cheap
-    # dscale/R_corr recompute).
-    cg_rebuild = "always",
-    # How the POSTERIOR W-half FSAI preconditioner factor of A_j is built:
-    #   "matrixfree"/0 = DAG children-walk (default),
-    #   "precision"/1  = assemble HᵀH explicitly then read its entries.
-    # Both produce the identical bounded-m factor; only affects
-    # cg_preconditioner = "posterior".
-    vapop_build_method = "matrixfree"
+    # dscale recompute).
+    cg_rebuild = "always"
   )
   opts <- modifyList(opts_defaults, if (is.null(opts)) list() else opts)
   opts$vi_pred_smp <- as.integer(opts$vi_pred_smp)
@@ -255,21 +220,13 @@ spiox <- function(Y, X, coords, m = 15,
   # Translate opts$cg_preconditioner from string to integer code expected by
   # the C++ side.  Codes (sampling = 1 block sampler and sampling = 3 per-outcome
   # sequential sampler both honour all of these):
-  #   0 = auto       (q-keyed 2-candidate probe: anchor postcov_mv if q>10 else
-  #                   postcov for a 10-sweep burn-in, trial the other capped at the
-  #                   anchor's worst-case iters, switch only if it converges faster)
+  #   0 = auto       (resolves to vadu)
   #   1 = jacobi     (diagonal of the precision operator; manual only)
-  #   2 = posterior  (block-diagonal PC with exact dense B half and Σ-mixed
-  #                   Vecchia-precision W half; per-outcome A_j FSAI for sampling=3)
-  #   3 = vadu       (Vecchia-approx-with-diagonal-update PC; Kündig & Sigrist)
-  #   4 = postcov    (latent posterior-conditional PC — cheap Vecchia factor of the
-  #                   posterior covariance via single-datum approximate conditionals)
-  #   5 = postcov_mv (multivariate postcov — one block-Vecchia factor of the JOINT
-  #                   posterior covariance, q×q blocks coupling all outcomes per
-  #                   location; reduces to postcov at diagonal Sigma. sampling=1 only,
-  #                   sampling=3 falls back to postcov.)
-  cg_pc_codes <- c(auto = 0L, jacobi = 1L, posterior = 2L, vadu = 3L,
-                   postcov = 4L, postcov_mv = 5L)
+  #   2 = vadu       (Vecchia-approx-with-diagonal-update PC; Kündig & Sigrist)
+  #   3 = postcov (multivariate — one block-Vecchia factor of the JOINT posterior
+  #                   covariance, q×q blocks coupling all outcomes per location.
+  #                   sampling=1 only; sampling=3 falls back to vadu.)
+  cg_pc_codes <- c(auto = 0L, jacobi = 1L, vadu = 2L, postcov = 3L)
   cg_pc_key <- if (is.numeric(opts$cg_preconditioner)) {
     as.integer(opts$cg_preconditioner)
   } else {
@@ -284,7 +241,7 @@ spiox <- function(Y, X, coords, m = 15,
   opts$cg_preconditioner_int <- cg_pc_key
 
   # Translate opts$cg_rebuild (preconditioner rebuild cadence) to integer:
-  #   0 = auto (always for vadu/postcov/postcov_mv, once for posterior), 1 = always, 2 = once.
+  #   0 = auto (always for vadu/postcov), 1 = always, 2 = once.
   cg_rebuild_codes <- c(auto = 0L, always = 1L, once = 2L)
   opts$cg_rebuild_int <- if (is.numeric(opts$cg_rebuild)) {
     as.integer(opts$cg_rebuild)
@@ -297,17 +254,6 @@ spiox <- function(Y, X, coords, m = 15,
     code
   }
 
-  vapop_codes <- c(matrixfree = 0L, precision = 1L)
-  opts$vapop_build_method_int <- if (is.numeric(opts$vapop_build_method)) {
-    as.integer(opts$vapop_build_method)
-  } else {
-    code <- vapop_codes[tolower(as.character(opts$vapop_build_method))]
-    if (is.na(code)) {
-      stop("Invalid opts$vapop_build_method: '", opts$vapop_build_method,
-           "'. Use one of: ", paste(names(vapop_codes), collapse = ", "), ".")
-    }
-    code
-  }
 
 
   # Thread management
@@ -491,7 +437,6 @@ spiox <- function(Y, X, coords, m = 15,
       num_threads       = as.integer(opts$num_threads),
       sampling          = as.integer(debug$sampling),
       cg_preconditioner = opts$cg_preconditioner_int,
-      vapop_build_method = opts$vapop_build_method_int,
       joint_BW          = isTRUE(opts$joint_BW),
       cg_rebuild        = opts$cg_rebuild_int
     ),
