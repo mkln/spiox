@@ -23,7 +23,7 @@ public:
   arma::mat X;
   
   // metadata
-  unsigned int n, q, p;
+  unsigned int n, q, p, nq, pq, npq;
   int intercept; // location of intercept in X, if at all
   int num_threads;
   //double spatial_sparsity;
@@ -488,6 +488,10 @@ public:
     n = Y.n_rows;
     q = Y.n_cols;
     p = X.n_cols;
+    
+    nq = n*q;
+    pq = p*q;
+    npq = pq + nq;
     
     // intercept? 
     intercept = -1;

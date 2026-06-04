@@ -265,7 +265,7 @@ void SpIOX::update_BW_asis(int& cg_iter, arma::mat& B, arma::mat& W, bool sampli
   // near-exact.
   arma::vec bbefore = arma::zeros<arma::vec>(B.n_elem);
   arma::vec b = pcg_mf(post_prec_mv, apply_Minv, cg_iter, post_meansample,
-                       bbefore, 1e-6, n, num_threads);
+                       bbefore, 1e-6, pq, num_threads);
 
   B = arma::mat(b.memptr(), p, q);
   W = eta - X * B;
@@ -608,7 +608,7 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
   // budget at 2·max(POSTERIOR iters) for a fair head-to-head comparison.
   const int cg_maxit = (cg_maxit_override > 0)
                        ? cg_maxit_override
-                       : static_cast<int>(n);
+                       : static_cast<int>(npq);
   arma::vec sol = pcg_mf(post_prec_mv, apply_Minv, cg_iter, rhs, x0,
                          5*1e-5, cg_maxit, num_threads);
 
@@ -798,7 +798,7 @@ void SpIOX::gibbs_w_block_precision(int& cg_iter, PrecondChoice precond,
   arma::vec rhs = arma::vectorise(cW + Unorm + Zlik_sc);
 
   arma::vec x0 = arma::zeros<arma::vec>(Nw);
-  const int cg_maxit = (cg_maxit_override > 0) ? cg_maxit_override : static_cast<int>(n);
+  const int cg_maxit = (cg_maxit_override > 0) ? cg_maxit_override : static_cast<int>(nq);
   arma::vec sol = pcg_mf(wprec_mv, apply_Minv, cg_iter, rhs, x0,
                          5*1e-5, cg_maxit, num_threads);
 
@@ -924,7 +924,7 @@ void SpIOX::gibbs_w_block_marginal(int& cg_iter, bool sampling, int cg_maxit_ove
   arma::vec rhs = arma::vectorise(rhs_mat);
   arma::vec x0  = arma::zeros<arma::vec>(n * q);
   const int marg_maxit = (cg_maxit_override > 0) ? cg_maxit_override
-                                                 : static_cast<int>(n);
+                                                 : static_cast<int>(nq);
   arma::vec eta = pcg_mf(M_mv, apply_Minv, cg_iter, rhs, x0,
                          5*1e-5, marg_maxit, num_threads);
 
