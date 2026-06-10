@@ -1874,12 +1874,19 @@ void SpIOX::latent_vi(){
   };
   
   int cg_iter = 0;
-  // VI uses the joint BW block sampler (VADU PC by default; JACOBI is available
-  // via precond_choice override).
+  // VI uses the joint BW block sampler.  Default PC is POSTCOV (the joint
+  // block-Vecchia posterior-covariance preconditioner); VADU / JACOBI stay
+  // selectable via a precond_choice override.
   const PrecondChoice use_pc =
-      (precond_choice == PRECOND_JACOBI) ? PRECOND_JACOBI : PRECOND_VADU;
+      (precond_choice == PRECOND_VADU || precond_choice == PRECOND_JACOBI)
+          ? precond_choice : PRECOND_POSTCOV;
   gibbs_BW_block(cg_iter, use_pc);
   checkpoint("gibbs_BW_block");
+
+  // Surface CG telemetry to the VI driver (mirrors latent_gibbs) so the fit
+  // loop can report CG iters / PC per printed iteration.
+  last_cg_iter      = cg_iter;
+  last_precond_used = static_cast<int>(use_pc);
   
   W_centering();
   checkpoint("W_centering #1");

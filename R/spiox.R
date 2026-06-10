@@ -51,11 +51,13 @@
 #'     \item `tol`: numeric. Convergence tolerance for Variational Inference. Defaults to `1e-2`.
 #'     \item `vi_pred_smp`: integer. Number of predictive samples to draw when using VI. Defaults to 0.
 #'     \item `cg_preconditioner`: character or integer. CG preconditioner for
-#'       the latent MCMC samplers — the joint BW block sampler
-#'       (`debug$sampling = 1L`) and the per-outcome sequential sampler
-#'       (`debug$sampling = 3L`). Choices:
+#'       the latent CG-based fits — the MCMC joint BW block sampler
+#'       (`debug$sampling = 1L`), the MCMC per-outcome sequential sampler
+#'       (`debug$sampling = 3L`), and the latent VI fit (`fit = "vi"`, which
+#'       always uses the joint block sampler). Choices:
 #'       \itemize{
-#'         \item `"auto"` (default): resolves to `"vadu"`.
+#'         \item `"auto"` (default): resolves to `"vadu"` for MCMC and to
+#'           `"postcov"` for the latent VI fit.
 #'         \item `"jacobi"`: diagonal of the joint precision operator. Cheap per
 #'           apply; usually weak. Available only by explicit request.
 #'         \item `"vadu"`: Vecchia-approximation-with-diagonal-update
@@ -69,7 +71,8 @@
 #'           problems, at roughly 2× the per-iteration cost. Block latent sampler
 #'           (`debug$sampling = 1L`) only; `debug$sampling = 3L` falls back to `"vadu"`.
 #'       }
-#'       Ignored for `debug$sampling != 1L` and for `method = "response"`.
+#'       Ignored for the single-site MCMC sampler (`debug$sampling = 2L`) and
+#'       for `method = "response"`.
 #'   }
 #' @param debug Optional named list of MCMC controls, primarily for targeted development and sampling restriction:
 #'   \itemize{
@@ -460,12 +463,13 @@ spiox <- function(Y, X, coords, m = 15,
       Beta_start   = Beta_start,
       W_start      = W_start[dag$order,,drop=F],
       Ddiag_start  = Ddiag_start,
-      matern       = opts$matern, 
+      matern       = opts$matern,
       num_threads  = as.integer(opts$num_threads),
-      print_every  = print_every, 
-      tol          = opts$tol, 
+      print_every  = print_every,
+      tol          = opts$tol,
       max_iter     = iter,
-      vi_pred_smp = opts$vi_pred_smp
+      vi_pred_smp = opts$vi_pred_smp,
+      cg_preconditioner = opts$cg_preconditioner_int
     ),
     
     stop("Unknown method/fit combination.")

@@ -27,6 +27,20 @@ static std::string mcmc_eta_str(std::chrono::steady_clock::time_point t0,
   return os.str();
 }
 
+// Progress suffix for the VI fit.  Like mcmc_eta_str but WITHOUT an ETA: VI runs
+// to convergence, so the total iteration count is not known in advance.
+static std::string vi_progress_str(std::chrono::steady_clock::time_point t0,
+                                   std::chrono::steady_clock::time_point& last_print){
+  auto now = std::chrono::steady_clock::now();
+  double elapsed_s    = std::chrono::duration<double>(now - t0).count();
+  double since_last_s = std::chrono::duration<double>(now - last_print).count();
+  last_print = now;
+  std::ostringstream os;
+  os << std::fixed << std::setprecision(1)
+     << "[elapsed " << elapsed_s << "s | +" << since_last_s << "s]";
+  return os.str();
+}
+
 //[[Rcpp::export]]
 arma::field<arma::sp_mat> spiox_H_list(const arma::mat& coords,
                                        const arma::field<arma::uvec>& custom_dag,
@@ -515,8 +529,18 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
                            int print_every = 0,
                            double tol = 1e-2,
                            int max_iter = 500,
-                           int vi_pred_smp = 0){
-  
+                           int vi_pred_smp = 0,
+                           int cg_preconditioner = 0){
+
+  // cg_preconditioner selector for the VI block (B,W) CG solve:
+  //   0 = auto    (resolves to POSTCOV for the latent VI fit, see latent_vi())
+  //   1 = JACOBI  2 = VADU  3 = POSTCOV
+  // VI always uses the joint block sampler, so every choice is honoured directly
+  // (no sampling=3 per-outcome fallback as in MCMC).
+  if(cg_preconditioner < 0 || cg_preconditioner > 3){
+    Rcpp::stop("cg_preconditioner must be in {0,1,2,3} (auto/jacobi/vadu/postcov).");
+  }
+
   // do min_iter iterations at least
   int nq = Y.n_cols * Y.n_rows;
   int min_iter = 40;
@@ -555,10 +579,16 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
                   Sigma_start,
                   Theta, 
                   not_updating_theta,
-                  Ddiag_start, // Need tau_sq for latent VI 
+                  Ddiag_start, // Need tau_sq for latent VI
                   matern,
                   num_threads, min_iter);
-  
+
+  // Pin a fixed PC if requested; cg_preconditioner = 0 (auto) leaves precond_choice
+  // at AUTO, which latent_vi() resolves to POSTCOV.
+  if(cg_preconditioner > 0){
+    iox_model.precond_choice = static_cast<SpIOX::PrecondChoice>(cg_preconditioner);
+  }
+
   double ll_pre = iox_model.latent_fit_eval();
   
   // storage
@@ -607,8 +637,10 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   bool converged = false;
   bool collecting = false;
   int collect_counter = 0;
-  
+
   int i=0;
+  auto vi_t0 = std::chrono::steady_clock::now();
+  auto vi_last_print = vi_t0;
   while(!stop){
     i ++;
     
@@ -638,11 +670,18 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
     
     double max_rel_change = rel_change.max();
     
-    bool print_condition = (print_every>0);
-    if(print_every > 0 && !collecting){
-      if(i % print_every == 0){
-        Rcpp::Rcout << "Iteration: " << i << endl;
-      }
+    if(print_every > 0 && !collecting && (i % print_every == 0)){
+      const char* pc_name =
+        iox_model.last_precond_used == 1 ? "jacobi"  :
+        iox_model.last_precond_used == 2 ? "vadu"    :
+        iox_model.last_precond_used == 3 ? "postcov" : "n/a";
+      std::ostringstream rc;
+      rc << std::scientific << std::setprecision(2) << max_rel_change;
+      Rcpp::Rcout << "Iteration: " << i
+                  << "  (CG: " << iox_model.last_cg_iter
+                  << " iters, pc=" << pc_name << ")  "
+                  << "max rel change " << rc.str() << "  "
+                  << vi_progress_str(vi_t0, vi_last_print) << endl;
     }
     
     // storing for optimizing trace plots

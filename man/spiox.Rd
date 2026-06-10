@@ -53,11 +53,13 @@ spiox(
   \item `tol`: numeric. Convergence tolerance for Variational Inference. Defaults to `1e-2`.
   \item `vi_pred_smp`: integer. Number of predictive samples to draw when using VI. Defaults to 0.
   \item `cg_preconditioner`: character or integer. CG preconditioner for
-    the latent MCMC samplers — the joint BW block sampler
-    (`debug$sampling = 1L`) and the per-outcome sequential sampler
-    (`debug$sampling = 3L`). Choices:
+    the latent CG-based fits — the MCMC joint BW block sampler
+    (`debug$sampling = 1L`), the MCMC per-outcome sequential sampler
+    (`debug$sampling = 3L`), and the latent VI fit (`fit = "vi"`, which
+    always uses the joint block sampler). Choices:
     \itemize{
-      \item `"auto"` (default): resolves to `"vadu"`.
+      \item `"auto"` (default): resolves to `"vadu"` for MCMC and to
+        `"postcov"` for the latent VI fit.
       \item `"jacobi"`: diagonal of the joint precision operator. Cheap per
         apply; usually weak. Available only by explicit request.
       \item `"vadu"`: Vecchia-approximation-with-diagonal-update
@@ -71,7 +73,8 @@ spiox(
         problems, at roughly 2× the per-iteration cost. Block latent sampler
         (`debug$sampling = 1L`) only; `debug$sampling = 3L` falls back to `"vadu"`.
     }
-    Ignored for `debug$sampling != 1L` and for `method = "response"`.
+    Ignored for the single-site MCMC sampler (`debug$sampling = 2L`) and
+    for `method = "response"`.
 }}
 
 \item{debug}{Optional named list of MCMC controls, primarily for targeted development and sampling restriction:

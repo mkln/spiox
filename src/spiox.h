@@ -126,7 +126,7 @@ public:
   //               high-correlation problems, ~2× costlier per iter than VADU.  See the
   //               detailed block further down.  sampling=1 only (sampling=3 → VADU).
   enum PrecondChoice {
-    PRECOND_AUTO       = 0,   // resolves to VADU
+    PRECOND_AUTO       = 0,   // resolves to VADU (MCMC); POSTCOV in the latent VI fit
     PRECOND_JACOBI     = 1,
     PRECOND_VADU       = 2,
     PRECOND_POSTCOV    = 3
