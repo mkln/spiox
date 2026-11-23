@@ -96,16 +96,16 @@ spiox_response <- function(Y, X, coords, custom_dag, Beta_start, Sigma_start, Th
     .Call(`_spiox_spiox_response`, Y, X, coords, custom_dag, Beta_start, Sigma_start, Theta_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, update_Theta, num_threads)
 }
 
-spiox_latent <- function(Y, X, coords, custom_dag, Beta_start, W_start, Sigma_start, Theta_start, Ddiag_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_Beta = TRUE, sample_Sigma = TRUE, sample_Ddiag = TRUE, update_Theta, num_threads = 1L, sampling = 2L, cg_preconditioner = 0L, joint_BW = TRUE, cg_rebuild = 0L) {
-    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, Beta_start, W_start, Sigma_start, Theta_start, Ddiag_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, sample_Ddiag, update_Theta, num_threads, sampling, cg_preconditioner, joint_BW, cg_rebuild)
+spiox_latent <- function(Y, X, coords, custom_dag, Beta_start, W_start, Sigma_start, Theta_start, Ddiag_start, mcmc = 1000L, print_every = 100L, matern = 1L, dag_opts = 0L, sample_Beta = TRUE, sample_Sigma = TRUE, sample_Ddiag = TRUE, update_Theta, num_threads = 1L, sampling = 2L, cg_preconditioner = 0L, joint_BW = TRUE, cg_rebuild = 0L, cg_energy_tol = 0.15) {
+    .Call(`_spiox_spiox_latent`, Y, X, coords, custom_dag, Beta_start, W_start, Sigma_start, Theta_start, Ddiag_start, mcmc, print_every, matern, dag_opts, sample_Beta, sample_Sigma, sample_Ddiag, update_Theta, num_threads, sampling, cg_preconditioner, joint_BW, cg_rebuild, cg_energy_tol)
 }
 
 spiox_response_vi <- function(Y, X, coords, custom_dag, dag_opts, Theta, Sigma_start, Beta_start, print_every = 0L, matern = 1L, num_threads = 1L) {
     .Call(`_spiox_spiox_response_vi`, Y, X, coords, custom_dag, dag_opts, Theta, Sigma_start, Beta_start, print_every, matern, num_threads)
 }
 
-spiox_latent_vi <- function(Y, X, coords, custom_dag, dag_opts, Theta, Sigma_start, Beta_start, W_start, Ddiag_start, matern = 1L, num_threads = 1L, print_every = 0L, tol = 1e-2, max_iter = 500L, vi_pred_smp = 0L, cg_preconditioner = 0L) {
-    .Call(`_spiox_spiox_latent_vi`, Y, X, coords, custom_dag, dag_opts, Theta, Sigma_start, Beta_start, W_start, Ddiag_start, matern, num_threads, print_every, tol, max_iter, vi_pred_smp, cg_preconditioner)
+spiox_latent_vi <- function(Y, X, coords, custom_dag, dag_opts, Theta, Sigma_start, Beta_start, W_start, Ddiag_start, matern = 1L, num_threads = 1L, print_every = 0L, tol = 1e-2, max_iter = 500L, vi_pred_smp = 0L, cg_preconditioner = 0L, iw_iter = 0L, iw_lr = 0.01, iw_lr_df = 0.03) {
+    .Call(`_spiox_spiox_latent_vi`, Y, X, coords, custom_dag, dag_opts, Theta, Sigma_start, Beta_start, W_start, Ddiag_start, matern, num_threads, print_every, tol, max_iter, vi_pred_smp, cg_preconditioner, iw_iter, iw_lr, iw_lr_df)
 }
 
 spiox_predict <- function(X_new, coords_new, Y, X, coords, dag, B, Sigma, theta, matern = 1L, num_threads = 1L) {

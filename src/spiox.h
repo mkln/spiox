@@ -259,6 +259,8 @@ public:
   //                               the latent_model 2/3 samplers.  Honours the same
   //                               JACOBI / VADU / POSTCOV choices.
   bool joint_BW = true;
+  double cg_energy_tol = 0.15;
+  int cg_energy_delay = 10;
   arma::mat W;
   void w_sequential_singlesite(const arma::uvec& theta_changed);
 
@@ -528,3 +530,5 @@ public:
     timings = arma::zeros(10);
   }
 };
+
+Rcpp::List latent_iwvi(SpIOX& m, int iters, double lr, double lr_df, int print_every, int pred_smp = 0);

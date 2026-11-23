@@ -24,7 +24,9 @@ arma::vec pcg_mf(
     const arma::vec& x0,
     const double tol,
     const int maxit,
-    int num_threads = 1
+    int num_threads = 1,
+    const double energy_tol = 0.0,
+    const int energy_delay = 10
 ){
   const arma::uword n = b.n_elem;
   arma::vec x = (x0.n_elem == n) ? x0 : arma::zeros(n);
@@ -48,6 +50,10 @@ arma::vec pcg_mf(
   apply_Minv(r, z);
   p = z;
   double rz_old = arma::dot(r, z);
+  const bool   use_energy = (energy_tol > 0.0);
+  const double energy_tol2 = energy_tol * energy_tol;
+  const int    delay = std::max(1, energy_delay);
+  std::vector<double> gamma_win(use_energy ? delay : 0, 0.0);
 
   k = 0;
   for(; k < maxit; ++k){
@@ -55,7 +61,7 @@ arma::vec pcg_mf(
     const double denom = arma::dot(p, Ap);
     if(!(denom > 0.0)) break;
     const double alpha = rz_old / denom;
-
+    if(use_energy) gamma_win[k % delay] = alpha * rz_old;    
     double*       xp = x.memptr();
     double*       rp = r.memptr();
     const double* pp = p.memptr();
@@ -68,11 +74,20 @@ arma::vec pcg_mf(
       rp[i] -= alpha * ap[i];
     }
 
+    if(use_energy){
+      // window sum = estimate of ||e_{k-d+1}||_A^2 >= ||e_{k+1}||_A^2 (x is now x_{k+1})
+      if(k + 1 >= delay){
+        double win = 0.0;
+        for(int j = 0; j < delay; ++j) win += gamma_win[j];
+        if(win <= energy_tol2){ ++k; break; }
+      }
+    } else {
+      const double target = std::sqrt(arma::dot(r, r)) / b_l2_safe;
+      if(target <= tol){ ++k; break; }
+    }
+    
     apply_Minv(r, z);
     const double rz_new = arma::dot(r, z);
-
-    const double target = std::sqrt(arma::dot(r, r)) / b_l2_safe;
-    if(target <= tol){ ++k; break; }
     
     const double beta = rz_new / rz_old;
     p = z + beta * p;

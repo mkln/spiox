@@ -31,8 +31,8 @@
 #' @param coords Numeric matrix of spatial coordinates with dimensions `n x 2`.
 #' @param m Integer. Vecchia neighbor size used to construct the DAG. Defaults to 15.
 #' @param method Character. The model formulation: `"response"` or `"latent"`.
-#' @param fit Character. The inference method: `"mcmc"` or `"vi"`.
-#' @param iter Integer. Number of MCMC iterations if `fit="mcmc"`. If `fit="vi"`, this serves as the maximum number of iterations allowed. Defaults to 1000.
+#' @param fit Character. The inference method: `"mcmc"` or `"vi"` or `"iwvi"`.
+#' @param iter Integer. Number of MCMC iterations if `fit="mcmc"`. If `fit="vi"` or `fit="iwvi"`, this serves as the maximum number of iterations allowed. Defaults to 1000.
 #' @param print_every Integer. Print progress every `print_every` iterations. Set to `0` for silent execution.
 #' @param starting Character (`"auto"`) or named list of starting values. If `"auto"`, parameters are initialized internally using `autostart()`. If a list, omitted elements are initialized to standard defaults. 
 #'   \itemize{
@@ -50,6 +50,8 @@
 #'     \item `update_Theta`: integer vector of length 3 indicating which of (`phi`, `nu`, `alpha`) to update via MCMC (1 = update, 0 = fixed). Defaults to `c(0,0,0)` for latent, `c(1,0,1)` for response. \emph{Note: `alpha` is forced to 0 for `method="latent"`}.
 #'     \item `tol`: numeric. Convergence tolerance for Variational Inference. Defaults to `1e-2`.
 #'     \item `vi_pred_smp`: integer. Number of predictive samples to draw when using VI. Defaults to 0.
+#'     \item `iwvi_iter`: integer. Number of IW-VI iterations when `fit = "iwvi"`. Defaults to 600.
+#'     \item `iwvi_lr`, `iwvi_lr_df`: numeric. Adam step sizes for the IW-VI location and df/shape parameters. Defaults to 0.01 and 0.03.
 #'     \item `cg_preconditioner`: character or integer. CG preconditioner for
 #'       the latent CG-based fits — the MCMC joint BW block sampler
 #'       (`debug$sampling = 1L`), the MCMC per-outcome sequential sampler
@@ -119,7 +121,7 @@
 #' @export
 spiox <- function(Y, X, coords, m = 15, 
                   method = c("response", "latent"),
-                  fit = c("mcmc", "vi"),
+                  fit = c("mcmc", "vi", "iwvi"),
                   iter = 1000, print_every = 100, 
                   starting = "auto", opts = NULL, debug = NULL) {
   
@@ -128,6 +130,7 @@ spiox <- function(Y, X, coords, m = 15,
   # ---------------------------------------------------------------------------
   method <- match.arg(method)
   fit    <- match.arg(fit)
+  if (fit == "iwvi" && method != "latent") stop("fit = 'iwvi' is only available for method = 'latent'.")
   
   Y <- as.matrix(Y)
   X <- as.matrix(X)
@@ -194,6 +197,9 @@ spiox <- function(Y, X, coords, m = 15,
     matern            = 1,
     nu                = 0.5,
     vi_pred_smp       = 0,
+    iwvi_iter         = 600,
+    iwvi_lr           = 0.01,
+    iwvi_lr_df        = 0.03,
     # CG preconditioner choice for the latent MCMC samplers (sampling = 1 and 3).
     # One of: "auto", "jacobi", "vadu", "postcov".  "auto" (default) resolves to
     # "vadu".  Ignored for method = "response" and the single-site sampler (sampling = 2).
@@ -214,10 +220,13 @@ spiox <- function(Y, X, coords, m = 15,
     #   "once"            : build once at the autostart values, then freeze (exact).
     # NOTE: "vadu" always rebuilds regardless (its factor is a trivially cheap
     # dscale recompute).
-    cg_rebuild = "always"
+    cg_rebuild = "always",
+    cg_energy_tol = 0.15
   )
   opts <- modifyList(opts_defaults, if (is.null(opts)) list() else opts)
   opts$vi_pred_smp <- as.integer(opts$vi_pred_smp)
+  opts$iwvi_iter <- as.integer(opts$iwvi_iter)
+  if (fit == "iwvi" && opts$iwvi_iter < 1L) stop("opts$iwvi_iter must be >= 1 for fit = 'iwvi'.")
   stopifnot("opts$update_Theta must be length 3" = length(opts$update_Theta) == 3L)
 
   # Translate opts$cg_preconditioner from string to integer code expected by
@@ -343,8 +352,8 @@ spiox <- function(Y, X, coords, m = 15,
     if (all(opts$update_Theta == 0L) && is.null(starting$Theta)) {
       stop("starting$Theta must be supplied when update_Theta = c(0,0,0).")
     }
-    if (fit == "vi" && is.null(starting$Theta)) {
-      stop("starting$Theta (3 x q with rows phi, nu, alpha) must be supplied for fit='vi'.")
+    if (fit %in% c("vi", "iwvi") && is.null(starting$Theta)) {
+      stop("starting$Theta (3 x q with rows phi, nu, alpha) must be supplied for fit='vi' or 'iwvi'.")
     }
     
     Theta <- starting$Theta %||% NULL
@@ -441,7 +450,8 @@ spiox <- function(Y, X, coords, m = 15,
       sampling          = as.integer(debug$sampling),
       cg_preconditioner = opts$cg_preconditioner_int,
       joint_BW          = isTRUE(opts$joint_BW),
-      cg_rebuild        = opts$cg_rebuild_int
+      cg_rebuild        = opts$cg_rebuild_int,
+      cg_energy_tol     = as.numeric(opts$cg_energy_tol)
     ),
 
     "response:vi" = spiox_response_vi(
@@ -455,7 +465,8 @@ spiox <- function(Y, X, coords, m = 15,
       num_threads  = as.integer(opts$num_threads)
     ),
     
-    "latent:vi" = spiox_latent_vi(
+    "latent:vi" = ,
+    "latent:iwvi" = spiox_latent_vi(
       Y[dag$order,,drop=F], X[dag$order,,drop=F], coords[dag$order,,drop=F], 
       dag$dag, dag_opts,
       Theta        = Theta_start, 
@@ -469,7 +480,10 @@ spiox <- function(Y, X, coords, m = 15,
       tol          = opts$tol,
       max_iter     = iter,
       vi_pred_smp = opts$vi_pred_smp,
-      cg_preconditioner = opts$cg_preconditioner_int
+      cg_preconditioner = opts$cg_preconditioner_int,
+      iw_iter      = if (fit == "iwvi") opts$iwvi_iter else 0L,
+      iw_lr        = opts$iwvi_lr,
+      iw_lr_df     = opts$iwvi_lr_df
     ),
     
     stop("Unknown method/fit combination.")
@@ -505,7 +519,9 @@ spiox <- function(Y, X, coords, m = 15,
   } 
   
   # indices of imputed, response:mcmc
-  if ( (method == "response") & (fit == "mcmc") & any(is.na(Y)) ) {
+  if ( any(is.na(Y)) && 
+       ((method == "response" && fit == "mcmc") || 
+        (method == "latent" && fit != "mcmc")) ) {
     ord <- dag$order
     cur <- which(is.na(Y[ord, ]))
     tgt <- as.numeric(which(is.na(Y)))

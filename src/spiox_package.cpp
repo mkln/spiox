@@ -233,7 +233,8 @@ Rcpp::List spiox_latent(const arma::mat& Y,
                           int sampling=2,
                           int cg_preconditioner = 0,
                           bool joint_BW = true,
-                          int cg_rebuild = 0){
+                          int cg_rebuild = 0,
+                          double cg_energy_tol = 0.15){
 
   // cg_preconditioner selector:
   //   0 = auto       (resolves to VADU)
@@ -317,6 +318,10 @@ Rcpp::List spiox_latent(const arma::mat& Y,
     Rcpp::stop("cg_rebuild must be in {0,1,2} (auto/always/once).");
   }
   iox_model.cg_rebuild = cg_rebuild;
+  if(!std::isfinite(cg_energy_tol)){
+    Rcpp::stop("cg_energy_tol must be finite.");
+  }
+  iox_model.cg_energy_tol = cg_energy_tol;
 
   // storage
   arma::cube Beta = arma::zeros(iox_model.p, q, mcmc);
@@ -530,7 +535,8 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
                            double tol = 1e-2,
                            int max_iter = 500,
                            int vi_pred_smp = 0,
-                           int cg_preconditioner = 0){
+                           int cg_preconditioner = 0,
+                           int iw_iter = 0, double iw_lr = 0.01, double iw_lr_df = 0.03){
 
   // cg_preconditioner selector for the VI block (B,W) CG solve:
   //   0 = auto    (resolves to POSTCOV for the latent VI fit, see latent_vi())
@@ -543,7 +549,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
 
   // do min_iter iterations at least
   int nq = Y.n_cols * Y.n_rows;
-  int min_iter = 40;
+  int min_iter = 150;
   // then check maximum relative change. if it's <tol for this time then stop
   int wait_time_before_stop = 5;
   
@@ -618,6 +624,9 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   if(vi_pred_smp < 0){
     Rcpp::stop("vi_pred_smp must be >= 0.");
   } 
+  // fit = "iwvi": predictive samples come from the IW-VI posterior, not the mean-field phase
+  int iw_pred_smp = 0;
+  if(iw_iter > 0){ iw_pred_smp = vi_pred_smp; vi_pred_smp = 0; }
   
   if(vi_pred_smp > 0){
     Beta_post_samples = arma::zeros(p, q, vi_pred_smp);
@@ -726,9 +735,14 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
       }
     } 
     
-    // max_iter is only for the optimization, not for pred samples
     if(!collecting && i >= max_iter){
-      stop = true;
+      if(vi_pred_smp == 0){
+        stop = true;
+      } else {
+        collecting = true;
+        collect_counter = 0;
+        Rcpp::warning("VI did not converge in max_iter iterations; predictive samples collected from the last iterate.");
+      }
     } 
     
     if(collecting){
@@ -741,7 +755,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
         // Draw Ddiag from the inverse Wishart
         arma::vec Ddiag_draw(q);
         for(unsigned int j = 0; j < q; j++){
-          double shape = (iox_model.avail_by_outcome(j).n_elem - 1.0) / 2.0 + 2.0;
+          double shape = iox_model.avail_by_outcome(j).n_elem / 2.0 + 2.0;
           double rate  = 1.0 + 0.5 * iox_model.Ddiag_UQ(j);
           Ddiag_draw(j) = 1.0 / R::rgamma(shape, 1.0 / rate);
         } 
@@ -789,6 +803,16 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   rel_ll_store = rel_ll_store.head(n_trace);
   
   arma::mat Beta_UQ = iox_model.Beta_UQ/(i-1.0-min_iter);
+  for(unsigned int j = 0; j < q; j++){
+    double shape = iox_model.avail_by_outcome(j).n_elem / 2.0 + 2.0;
+    Ddiag(j) = (1.0 + 0.5 * iox_model.Ddiag_UQ(j)) / (shape - 1.0);
+  }
+  
+  Rcpp::List iw;
+  if(iw_iter > 0){
+    iw = latent_iwvi(iox_model, iw_iter, iw_lr, iw_lr_df, print_every, iw_pred_smp);
+    if(iw_pred_smp > 0) Y_missing_samples = Rcpp::as<arma::mat>(iw["Y_missing_samples"]);
+  }
   
   return Rcpp::List::create(
     Rcpp::Named("Beta") = Beta,
@@ -798,6 +822,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
     Rcpp::Named("W") = W,
     Rcpp::Named("Ddiag") = Ddiag,
     Rcpp::Named("Ddiag_UQ") = iox_model.Ddiag_UQ,
+    Rcpp::Named("iw") = iw,
     Rcpp::Named("rel_change") = Rcpp::List::create(
       Rcpp::Named("rel_Beta")  = rel_B_store,
       Rcpp::Named("rel_Sigma") = rel_Sigma_store,
@@ -805,7 +830,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
       Rcpp::Named("rel_Ddiag") = rel_D_store,
       Rcpp::Named("rel_ll") = rel_ll_store
     ),
-    Rcpp::Named("n_iter") = converged ?(i - collect_counter):i,
+    Rcpp::Named("n_iter") = i - collect_counter,
     Rcpp::Named("Y_missing_samples") = Y_missing_samples,
     Rcpp::Named("Y_missing_indices") = iox_model.Y_na_indices + 1,
     Rcpp::Named("markov_blanket") = iox_model.daggps[0].mblanket

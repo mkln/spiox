@@ -259,13 +259,17 @@ void SpIOX::update_BW_asis(int& cg_iter, arma::mat& B, arma::mat& W, bool sampli
   }
   arma::vec post_meansample = arma::vectorise(RHS_mat);
 
-  // ----- PCG solve -----
-  // Cold start (x0 = 0).  See gibbs_BW_block for why warm-starting from the
-  // previous sample biases Bhattacharya draws when the preconditioner is
-  // near-exact.
-  arma::vec bbefore = arma::zeros<arma::vec>(B.n_elem);
-  arma::vec b = pcg_mf(post_prec_mv, apply_Minv, cg_iter, post_meansample,
-                       bbefore, 1e-6, pq, num_threads);
+  arma::mat HX_mat(HX.memptr(), n, p * q, false, true);
+  arma::mat G0 = HX_mat.t() * HX_mat;
+  arma::mat Gm(p * q, p * q);
+  for(unsigned int a = 0; a < q; ++a) for(unsigned int c = 0; c < q; ++c)
+    Gm.submat(a * p, c * p, (a + 1) * p - 1, (c + 1) * p - 1) =
+      Q(a, c) * G0.submat(a * p, c * p, (a + 1) * p - 1, (c + 1) * p - 1);
+  Gm.diag() += 1.0 / arma::vectorise(B_Var);
+  arma::mat Lg = arma::chol(arma::symmatu(Gm), "lower");
+  arma::vec b = arma::solve(arma::trimatu(Lg.t()),
+                            arma::solve(arma::trimatl(Lg), post_meansample));
+  cg_iter = 0;
 
   B = arma::mat(b.memptr(), p, q);
   W = eta - X * B;
@@ -508,7 +512,7 @@ void SpIOX::gibbs_BW_block(int& cg_iter, PrecondChoice precond, bool sampling,
                        ? cg_maxit_override
                        : static_cast<int>(npq);
   arma::vec sol = pcg_mf(post_prec_mv, apply_Minv, cg_iter, rhs, x0,
-                         5*1e-5, cg_maxit, num_threads);
+                         5*1e-5, cg_maxit, num_threads, cg_energy_tol, cg_energy_delay);
 
   // unpack and keep YXB consistent
   // YXB = Y - X B_new = (YXB_old + X B_old) - X B_new
@@ -625,7 +629,7 @@ void SpIOX::gibbs_w_block_precision(int& cg_iter, PrecondChoice precond,
   arma::vec x0 = arma::zeros<arma::vec>(Nw);
   const int cg_maxit = (cg_maxit_override > 0) ? cg_maxit_override : static_cast<int>(nq);
   arma::vec sol = pcg_mf(wprec_mv, apply_Minv, cg_iter, rhs, x0,
-                         5*1e-5, cg_maxit, num_threads);
+                         5*1e-5, cg_maxit, num_threads, cg_energy_tol, cg_energy_delay);
 
   W = arma::mat(sol.memptr(), n, q);
 }
@@ -1443,18 +1447,15 @@ void SpIOX::update_Ddiag_vi(){
     arma::vec ej = E.col(j);
     arma::vec ej_sub = ej(ix);
     
-    if(ej_sub.n_elem > 0){
-      ej_sub -= arma::mean(ej_sub);
-      ETE(j, j) = arma::accu(arma::square(ej_sub)); 
-    }
+    ETE(j, j) = arma::accu(arma::square(ej_sub));
   }
   update_running_means(ETE_ma, ETE);
   
   // Updating each tau_sq
   for(int j=0; j<q; j++){
-    double navail = -1.0 + avail_by_outcome(j).n_elem;
+    double navail = .0 + avail_by_outcome(j).n_elem;
     Ddiag_UQ(j) = ETE_ma(j,j);
-    Ddiag(j) = (b + 0.5 * Ddiag_UQ(j)) / (navail/2 + a - 1);
+    Ddiag(j) = (b + 0.5 * Ddiag_UQ(j)) / (navail/2 + a);
   }
 }
 
@@ -1520,7 +1521,7 @@ void SpIOX::update_Sigma_vi(){
   
   double df_post = q + n;
   Sigma = Sigma_UQ / (df_post - q - 1);  
-  Q = arma::symmatu(arma::inv_sympd(Sigma));
+  Q = arma::symmatu(df_post * arma::inv_sympd(Sigma_UQ));
   Si = arma::chol(Q, "lower");
   S = arma::inv(arma::trimatl(Si));
   
@@ -1639,6 +1640,7 @@ void SpIOX::sample_Y_misaligned(const arma::uvec& theta_changed){
 }
 
 void SpIOX::update_BWSigma_px(){
+  const arma::mat B_old = B, W_old = W, YXB_old = YXB;   // restored if the move is rejected
   arma::mat SA = arma::zeros(q,q);
   arma::mat randnormmat = arma::randn(p+q, q);
   
@@ -1670,10 +1672,21 @@ void SpIOX::update_BWSigma_px(){
     YXB.col(j) = Y.col(j) - X * B.col(j);
   }
   
-  // SA^T Sigma SA is symmetric in theory; arma::symmatu cleans tiny FP
-  // asymmetry that triple matrix products introduce, which would otherwise
-  // trip arma::chol's symmetry check.
-  Sigma = arma::symmatu(SA.t() * Sigma * SA);
+  const arma::mat Sigma_new = arma::symmatu(SA.t() * Sigma * SA);
+  
+  const double nu0 = q;
+  double logdetA, sgnA;
+  arma::log_det(logdetA, sgnA, SA);
+  const double logr = -(nu0 + q) * logdetA
+  - 0.5 * arma::trace(arma::inv_sympd(Sigma_new))
+    + 0.5 * arma::trace(Q);
+    if(!(std::log(R::runif(0.0, 1.0)) < logr)){
+      B = B_old; W = W_old; YXB = YXB_old;
+      return;
+    }
+    
+  Sigma = Sigma_new;
+    
   S = arma::chol(Sigma, "upper");
   Si = arma::inv(arma::trimatu(S));
   Q = Si * Si.t();
@@ -1874,12 +1887,9 @@ void SpIOX::latent_vi(){
   };
   
   int cg_iter = 0;
-  // VI uses the joint BW block sampler.  Default PC is POSTCOV (the joint
-  // block-Vecchia posterior-covariance preconditioner); VADU / JACOBI stay
-  // selectable via a precond_choice override.
+  // VI uses the joint BW block sampler.  Default PC is VADU
   const PrecondChoice use_pc =
-      (precond_choice == PRECOND_VADU || precond_choice == PRECOND_JACOBI)
-          ? precond_choice : PRECOND_POSTCOV;
+    (precond_choice == PRECOND_AUTO) ? PRECOND_VADU : precond_choice;
   gibbs_BW_block(cg_iter, use_pc);
   checkpoint("gibbs_BW_block");
 
@@ -1888,32 +1898,15 @@ void SpIOX::latent_vi(){
   last_cg_iter      = cg_iter;
   last_precond_used = static_cast<int>(use_pc);
   
-  W_centering();
-  checkpoint("W_centering #1");
-  
-  // working V with sampled B and W
   compute_V();
-  checkpoint("compute_V #1");
-  
-  // PX
-  update_BWSigma_px();
-  checkpoint("update_BWSigma_px");
-  
-  W_centering();
-  checkpoint("W_centering #2");
-  
-  compute_V();
-  checkpoint("compute_V #2");
-  
-  // Update E(Sigma) using MC approx of E(quad forms)
   update_Sigma_vi();
   checkpoint("update_Sigma_vi");
   
-  // Update E(Ddiag) using MC approx of E(quad forms)
+  W_centering();
+  
   update_Ddiag_vi(); 
   checkpoint("update_Ddiag_vi");
   
-  // compute covariance in B iteratively
   vi_Beta_UQ();
   checkpoint("vi_Beta_UQ");
   
