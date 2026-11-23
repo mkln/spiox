@@ -21,6 +21,19 @@ void matern_inplace(arma::mat& res,
   
   double pow2_nu1_gammanu_sigmasq = (1-alpha) * sigmasq * pow(2.0, 1.0-nu) / R::gammafn(nu);
   
+  // closed forms at half-integer nu (no Bessel evaluations): 0.5 exponential, 1.5, 2.5
+  const double sp = (1-alpha) * sigmasq;
+  const int half_int = (nu == 0.5) ? 1 : (nu == 1.5) ? 2 : (nu == 2.5) ? 3 : 0;
+  auto matern_kern = [&](double hphi) -> double {
+    switch(half_int){
+    case 1: return sp * exp(-hphi);
+    case 2: return sp * (1.0 + hphi) * exp(-hphi);
+    case 3: return sp * (1.0 + hphi + hphi * hphi / 3.0) * exp(-hphi);
+    default: return pow(hphi, nu) * pow2_nu1_gammanu_sigmasq *
+      R::bessel_k_ex(hphi, nu, 1.0, &bessel_ws[threadid*MAT_NU_MAX]);
+    }
+  };
+  
   if(same){
     for(unsigned int i=0; i<ix.n_rows; i++){
       arma::rowvec cri = coords.row(ix(i));//x.row(i);
@@ -28,8 +41,7 @@ void matern_inplace(arma::mat& res,
         arma::rowvec delta = cri - coords.row(iy(j));//y.row(j);
         double hphi = arma::norm(delta) * phi;
         if(hphi > 0.0){
-          res(i, j) = pow(hphi, nu) * pow2_nu1_gammanu_sigmasq *
-            R::bessel_k_ex(hphi, nu, 1.0, &bessel_ws[threadid*MAT_NU_MAX]);
+          res(i, j) = matern_kern(hphi);
         } else {
           res(i, j) = sigmasq;
         }
@@ -43,8 +55,7 @@ void matern_inplace(arma::mat& res,
         arma::rowvec delta = cri - coords.row(iy(j));//y.row(j);
         double hphi = arma::norm(delta) * phi;
         if(hphi > 0.0){
-          res(i, j) = pow(hphi, nu) * pow2_nu1_gammanu_sigmasq *
-            R::bessel_k_ex(hphi, nu, 1.0, &bessel_ws[threadid*MAT_NU_MAX]);
+          res(i, j) = matern_kern(hphi);
         } else {
           res(i, j) = sigmasq;
         }
