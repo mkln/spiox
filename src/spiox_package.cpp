@@ -619,7 +619,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   arma::cube Beta_post_samples;
   arma::cube W_post_samples;
   arma::mat Ddiag_post_samples;
-  arma::mat Y_missing_samples;
+  arma::mat Y_missing_samples(n_miss, 0);   // n_miss x 0 when no predictive samples are requested
   
   if(vi_pred_smp < 0){
     Rcpp::stop("vi_pred_smp must be >= 0.");
@@ -809,16 +809,24 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   }
   
   Rcpp::List iw;
+  arma::mat Sigma_UQ = iox_model.Sigma_UQ;
   if(iw_iter > 0){
     iw = latent_iwvi(iox_model, iw_iter, iw_lr, iw_lr_df, print_every, iw_pred_smp);
     if(iw_pred_smp > 0) Y_missing_samples = Rcpp::as<arma::mat>(iw["Y_missing_samples"]);
+    // fit = "iwvi": report the IW-VI posterior in the same slots as mean-field VI
+    Beta     = Rcpp::as<arma::mat>(iw["Beta"]);
+    Beta_UQ  = Rcpp::as<arma::mat>(iw["Beta_UQ"]);
+    W        = Rcpp::as<arma::mat>(iw["W"]);
+    Sigma    = Rcpp::as<arma::mat>(iw["Sigma_mean"]);
+    Sigma_UQ = Rcpp::as<arma::mat>(iw["Psi"]);          // IW scale; df in iw$nu (mean-field: n + q)
+    Ddiag    = Rcpp::as<arma::vec>(iw["Ddiag_mean"]);   // q(tau2_j) = IG(iw$alpha_j, iw$beta_j)
   }
   
   return Rcpp::List::create(
     Rcpp::Named("Beta") = Beta,
     Rcpp::Named("Beta_UQ") = Beta_UQ,
     Rcpp::Named("Sigma") = Sigma,
-    Rcpp::Named("Sigma_UQ") = iox_model.Sigma_UQ,
+    Rcpp::Named("Sigma_UQ") = Sigma_UQ,
     Rcpp::Named("W") = W,
     Rcpp::Named("Ddiag") = Ddiag,
     Rcpp::Named("Ddiag_UQ") = iox_model.Ddiag_UQ,

@@ -56,6 +56,7 @@ public:
   void compute_V(); 
   bool upd_theta_metrop();
   arma::uvec upd_theta_metrop_conditional(); // returns uvec with changes to thetaj
+  arma::uvec upd_theta_collapsed(bool sample_beta); // Sigma (and beta_j) integrated out; returns changes to thetaj
   void init_theta_adapt();
   
   // data with with misalignment

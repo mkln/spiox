@@ -65,18 +65,15 @@ void SpIOX::init_theta_adapt(){
   arma::mat theta_metrop_sd = 0.05 * arma::eye(n_theta_par, n_theta_par);
   theta_adapt = RAMAdapt(n_theta_par, theta_metrop_sd, 0.24);
   theta_adapt_active = true;
-  
-  if(q > 2){
-    // conditional update for more than 2 outcomes
-    c_theta_unif_bounds = bounds_all;
-    int c_theta_par = which_theta_elem.n_elem;
-    arma::mat c_theta_metrop_sd = 0.05 * arma::eye(c_theta_par, c_theta_par);
-    c_theta_adapt = std::vector<RAMAdapt>(q);
-    for(int j=0; j<q; j++){
-      c_theta_adapt[j] = RAMAdapt(c_theta_par, c_theta_metrop_sd, 0.24);
-    }
-    // ---  
+
+  c_theta_unif_bounds = bounds_all;
+  int c_theta_par = which_theta_elem.n_elem;
+  arma::mat c_theta_metrop_sd = 0.05 * arma::eye(c_theta_par, c_theta_par);
+  c_theta_adapt = std::vector<RAMAdapt>(q);
+  for(int j=0; j<q; j++){
+    c_theta_adapt[j] = RAMAdapt(c_theta_par, c_theta_metrop_sd, 0.24);
   }
+    
   
 }
 
@@ -655,7 +652,7 @@ bool SpIOX::upd_theta_metrop(){
   
   arma::vec phisig_cur = arma::vectorise( theta.rows(which_theta_elem) );
   
-  Rcpp::RNGScope scope;
+
   arma::vec U_update = arma::randn(phisig_cur.n_elem);
   
   arma::vec phisig_alt = par_huvtransf_back(par_huvtransf_fwd(
@@ -773,7 +770,7 @@ arma::uvec SpIOX::upd_theta_metrop_conditional(){
   
   // we can prepare the proposals beforehand, then only do the strictly sequential part
   
-  Rcpp::RNGScope scope;
+
   arma::mat U_update = arma::randn(which_theta_elem.n_elem, q);
   arma::mat phisig_alt = arma::zeros(which_theta_elem.n_elem, q);
   arma::mat phisig_cur = arma::zeros(which_theta_elem.n_elem, q);
@@ -886,6 +883,145 @@ arma::uvec SpIOX::upd_theta_metrop_conditional(){
   
   return accepteds;
 }
+
+arma::uvec SpIOX::upd_theta_collapsed(bool sample_beta){
+  // Per-outcome RAM Metropolis for theta_j with Sigma ~ IW(I, q) integrated out.
+  // Partitioning Sigma at outcome j: sigma2 = Sigma_{j|-j} ~ IG(q/2, 1/2), c | sigma2 ~ N(0, sigma2 I), and
+  //   response, sample_beta : H_j y_j           = H_j X beta_j + V_-j c + sigma e   (flat prior on beta_j)
+  //   response, B fixed     : H_j (y_j - X b_j) =                V_-j c + sigma e
+  //   latent                : H_j w_j           =                V_-j c + sigma e
+  // (beta_j, c, sigma2) are integrated out of the theta_j target; with sample_beta, beta_j is then drawn
+  // from p(beta_j | theta, B_-j, Y).  
+  const bool use_X = (latent_model == 0) && sample_beta;
+  const int pX = use_X ? (int)p : 0;
+  const int k = pX + (int)q - 1;
+  
+  arma::uvec oneuv = arma::ones<arma::uvec>(1);
+  arma::uvec accepteds = arma::zeros<arma::uvec>(q);
+  
+  // proposals (no Rcpp::RNGScope here: the exported caller holds it, a nested one rewinds the RNG)
+  arma::mat U_update = arma::randn(which_theta_elem.n_elem, q);
+  arma::mat phisig_alt = arma::zeros(which_theta_elem.n_elem, q);
+  arma::mat phisig_cur = arma::zeros(which_theta_elem.n_elem, q);
+  arma::mat theta_alt = theta;
+  for(unsigned int j=0; j<q; j++){
+    c_theta_adapt[j].count_proposal();
+    phisig_cur.col(j) = theta(which_theta_elem, oneuv*j);
+    phisig_alt.col(j) = par_huvtransf_back(par_huvtransf_fwd(
+      phisig_cur.col(j), c_theta_unif_bounds) + 
+        c_theta_adapt[j].paramsd * U_update.col(j), c_theta_unif_bounds);
+    theta_alt(which_theta_elem, oneuv*j) = phisig_alt.col(j); 
+    if(!theta_alt.is_finite()){
+      Rcpp::stop("Some value of theta outside of MCMC search limits.\n");
+    }
+  }
+  
+  // a proposal whose Vecchia factor cannot be built (numerically singular parent blocks) is rejected
+  arma::uvec build_ok = arma::ones<arma::uvec>(q);
+  if(gridded){
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(q)
+#endif
+    for(unsigned int j=0; j<q; j++){
+      try { daggps_alt[j].update_theta(theta_alt.col(j)); } catch (...) { build_ok(j) = 0; }
+    }
+  } else {
+    for(unsigned int j=0; j<q; j++){
+      try { daggps_alt[j].update_theta(theta_alt.col(j)); } catch (...) { build_ok(j) = 0; }
+    }
+  }
+  
+  // Bayesian regression of the whitened outcome j on Z = [H_j X, V_-j]:
+  // Lambda_n = Z^T Z + diag(0_pX, I_{q-1}), a_n = (q + n - pX)/2, b_n = 1/2 + (yt^T yt - m_n^T Lambda_n m_n)/2,
+  // log target = log|H_j| - 1/2 log|Lambda_n| - a_n log b_n (+ const)
+  struct RegStats { arma::vec mn; arma::mat Lc; double an, bn, lp; };
+  auto reg_stats = [&](const DagGP& dg, unsigned int j) -> RegStats {
+    RegStats r;
+    arma::vec tj = (latent_model > 0) ? arma::vec(W.col(j)) : 
+      (use_X ? arma::vec(Y.col(j)) : arma::vec(YXB.col(j)));
+    arma::vec yt = dg.H_times_A(tj);
+    r.an = 0.5 * ((double)q + (double)n - (double)pX);
+    if(k > 0){
+      arma::mat Z(n, k);
+      if(use_X){
+        Z.cols(0, pX - 1) = dg.H_times_A(X);
+      }
+      int c = pX;
+      for(unsigned int jc=0; jc<q; jc++){
+        if(jc != j){
+          Z.col(c++) = V.col(jc);
+        }
+      }
+      arma::mat Ln = Z.t() * Z;
+      for(int i=pX; i<k; i++){
+        Ln(i, i) += 1.0;
+      }
+      r.Lc = arma::chol(arma::symmatu(Ln), "lower");
+      arma::vec w = arma::solve(arma::trimatl(r.Lc), Z.t() * yt);
+      r.mn = arma::solve(arma::trimatu(r.Lc.t()), w);
+      r.bn = 0.5 + 0.5 * (arma::dot(yt, yt) - arma::dot(w, w));
+      r.lp = 0.5 * dg.precision_logdeterminant - arma::accu(arma::log(r.Lc.diag())) - r.an * std::log(r.bn);
+    } else {
+      r.bn = 0.5 + 0.5 * arma::dot(yt, yt);
+      r.lp = 0.5 * dg.precision_logdeterminant - r.an * std::log(r.bn);
+    }
+    return r;
+  };
+  
+  // sequential
+  for(unsigned int j=0; j<q; j++){
+    if(!build_ok(j)){
+      c_theta_adapt[j].update_ratios();
+      if(theta_adapt_active){
+        c_theta_adapt[j].adapt(U_update.col(j), 0.0, theta_mcmc_counter);
+      }
+      theta_mcmc_counter++;
+      continue;
+    }
+    
+    RegStats rs_cur = reg_stats(daggps.at(j), j);
+    RegStats rs_alt = reg_stats(daggps_alt.at(j), j);
+    
+    // priors
+    double logpriors = 0;
+    if(sigmasq_sampling){
+      logpriors += invgamma_logdens(theta_alt(1,j), 2, 1) - invgamma_logdens(theta(1,j), 2, 1);
+    }
+    
+    double jacobian  = calc_jacobian(phisig_alt.col(j), phisig_cur.col(j), c_theta_unif_bounds);
+    double logaccept = rs_alt.lp - rs_cur.lp + jacobian + logpriors;
+    
+    accepteds(j) = do_I_accept(logaccept);
+    
+    if(accepteds(j)){
+      theta.col(j) = theta_alt.col(j);
+      std::swap(daggps.at(j), daggps_alt.at(j));
+    }
+    
+    if(use_X){
+      // beta_j | theta, B_-j, Y with (c, sigma2) integrated out:
+      // sigma2 ~ IG(a_n, b_n), (beta_j, c) | sigma2 ~ N(m_n, sigma2 Lambda_n^-1)
+      const RegStats& rs = accepteds(j) ? rs_alt : rs_cur;
+      double s2 = 1.0 / R::rgamma(rs.an, 1.0 / rs.bn);
+      arma::vec gam = rs.mn + std::sqrt(s2) * 
+        arma::solve(arma::trimatu(rs.Lc.t()), arma::vec(arma::randn(k)));
+      B.col(j) = gam.head(p);
+      YXB.col(j) = Y.col(j) - X * B.col(j);
+    }
+    if(accepteds(j) || use_X){
+      V.col(j) = daggps.at(j).H_times_A((latent_model > 0) ? arma::vec(W.col(j)) : arma::vec(YXB.col(j)));
+    }
+    
+    c_theta_adapt[j].update_ratios();
+    if(theta_adapt_active){
+      c_theta_adapt[j].adapt(U_update.col(j), exp(logaccept), theta_mcmc_counter); 
+    }
+    theta_mcmc_counter++;
+  }
+  
+  return accepteds;
+}
+
 
 void SpIOX::cache_blanket_comps(const arma::uvec& theta_changed){
   // Inner-product structure of H_r and H_s over markov blankets, computed
@@ -1703,7 +1839,11 @@ void SpIOX::response_gibbs(int it, int sample_sigma, bool sample_beta, bool upda
   tstart = std::chrono::steady_clock::now();
   arma::uvec theta_has_changed = arma::zeros<arma::uvec>(q);
   if(update_theta){
-    if(q>2){
+    if(sample_sigma > 0){
+      // Sigma (and beta_j if sample_beta) integrated out of the theta step, then Sigma | theta, B, Y
+      theta_has_changed = upd_theta_collapsed(sample_beta);
+      update_Sigma_iwishart();
+    } else if(q>2){
       theta_has_changed = upd_theta_metrop_conditional(); 
     } else {
       bool block_changed = upd_theta_metrop();
@@ -1752,7 +1892,11 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
   tstart = std::chrono::steady_clock::now();
   arma::uvec theta_has_changed = arma::zeros<arma::uvec>(q);
   if(update_theta){
-    if(q>2){
+    if(sample_sigma > 0){
+      // Sigma integrated out of the theta step (W prior is matrix-t in V = [H_j w_j]), then Sigma | theta, W
+      theta_has_changed = upd_theta_collapsed(false);
+      update_Sigma_iwishart();
+    } else if(q>2){
       theta_has_changed = upd_theta_metrop_conditional();
     } else {
       bool block_changed = upd_theta_metrop();

@@ -197,7 +197,7 @@ inline RAMAdapt::RAMAdapt(int npars, const arma::mat& metropolis_sd, double targ
   
   p = npars;
   alpha_star = target_accept;
-  gamma = 0.5 + 1e-16;
+  gamma = 0.6;
   Ip = arma::eye(p,p);
   g0 = 100;
   S = metropolis_sd * metropolis_sd.t();

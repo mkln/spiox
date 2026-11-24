@@ -189,6 +189,12 @@ Rcpp::List latent_iwvi(SpIOX& m, int iters, double lr, double lr_df, int print_e
   const SpIOX::PrecondChoice use_pc = (m.precond_choice == SpIOX::PRECOND_AUTO) ? 
               SpIOX::PRECOND_VADU : m.precond_choice;
   
+  // running summaries of the exact (B, W) draws over the averaging phase, as latent_vi() keeps for mean-field VI
+  // (W centred into the intercept, as W_centering() does there)
+  arma::mat EB = arma::zeros(m.p, q), EW = arma::zeros(m.n, q);
+  arma::vec bmean = arma::zeros(m.p * q);
+  arma::mat BUQ = arma::zeros(m.p * q, m.p * q);
+  
   arma::vec df_ratio_trace(iters);
   arma::uvec cg_trace(iters);
   auto t0 = std::chrono::steady_clock::now();
@@ -234,7 +240,22 @@ Rcpp::List latent_iwvi(SpIOX& m, int iters, double lr, double lr_df, int print_e
       (am / (1.0 - std::pow(b1, t))) / (arma::sqrt(av / (1.0 - std::pow(b2, t))) + 1e-8);
     lam += step;
     
-    if(t > iters / 2){ lam_bar += lam; n_avg++; }
+    if(t > iters / 2){
+      lam_bar += lam; n_avg++;
+      arma::mat Bd = m.B, Wd = m.W;
+      if(m.intercept != -1){
+        arma::rowvec wm = arma::mean(Wd, 0);
+        Wd.each_row() -= wm;
+        Bd.row(m.intercept) += wm;
+      }
+      const double w = 1.0 / n_avg;
+      EB += w * (Bd - EB);
+      EW += w * (Wd - EW);
+      arma::vec bv = arma::vectorise(Bd);
+      arma::vec dlt = bv - bmean;
+      bmean += w * dlt;
+      BUQ += dlt * arma::trans(bv - bmean);
+    }
     df_ratio_trace(t - 1) = std::exp(lam(kn)) / (n - 1.0);
     cg_trace(t - 1) = cg_iter;
     
@@ -267,6 +288,9 @@ Rcpp::List latent_iwvi(SpIOX& m, int iters, double lr, double lr_df, int print_e
   }
   
   return Rcpp::List::create(
+    Rcpp::Named("Beta") = EB,
+    Rcpp::Named("Beta_UQ") = BUQ / std::max(n_avg - 1.0, 1.0),
+    Rcpp::Named("W") = EW,
     Rcpp::Named("Psi") = f.c * M,
     Rcpp::Named("nu") = f.nu,
     Rcpp::Named("alpha") = f.alpha,
