@@ -297,6 +297,7 @@ Rcpp::List latent_iwvi(SpIOX& m, int iters, double lr, double lr_df, int print_e
     Rcpp::Named("beta") = f.beta,
     Rcpp::Named("Sigma_mean") = M,
     Rcpp::Named("Ddiag_mean") = f.m,
+    Rcpp::Named("Ddiag_UQ") = 2.0 * (f.beta - b0),      // mean-field convention: q(tau2_j) rate = b0 + Ddiag_UQ_j / 2
     Rcpp::Named("df_ratio") = f.c / (n - 1.0),
     Rcpp::Named("df_ratio_trace") = df_ratio_trace,
     Rcpp::Named("cg_iter") = cg_trace,

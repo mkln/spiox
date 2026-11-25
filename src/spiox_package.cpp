@@ -810,16 +810,27 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
   
   Rcpp::List iw;
   arma::mat Sigma_UQ = iox_model.Sigma_UQ;
+  arma::vec Ddiag_UQ = iox_model.Ddiag_UQ;
   if(iw_iter > 0){
-    iw = latent_iwvi(iox_model, iw_iter, iw_lr, iw_lr_df, print_every, iw_pred_smp);
-    if(iw_pred_smp > 0) Y_missing_samples = Rcpp::as<arma::mat>(iw["Y_missing_samples"]);
+    Rcpp::List iwf = latent_iwvi(iox_model, iw_iter, iw_lr, iw_lr_df, print_every, iw_pred_smp);
+    if(iw_pred_smp > 0) Y_missing_samples = Rcpp::as<arma::mat>(iwf["Y_missing_samples"]);
     // fit = "iwvi": report the IW-VI posterior in the same slots as mean-field VI
-    Beta     = Rcpp::as<arma::mat>(iw["Beta"]);
-    Beta_UQ  = Rcpp::as<arma::mat>(iw["Beta_UQ"]);
-    W        = Rcpp::as<arma::mat>(iw["W"]);
-    Sigma    = Rcpp::as<arma::mat>(iw["Sigma_mean"]);
-    Sigma_UQ = Rcpp::as<arma::mat>(iw["Psi"]);          // IW scale; df in iw$nu (mean-field: n + q)
-    Ddiag    = Rcpp::as<arma::vec>(iw["Ddiag_mean"]);   // q(tau2_j) = IG(iw$alpha_j, iw$beta_j)
+    Beta     = Rcpp::as<arma::mat>(iwf["Beta"]);
+    Beta_UQ  = Rcpp::as<arma::mat>(iwf["Beta_UQ"]);
+    W        = Rcpp::as<arma::mat>(iwf["W"]);
+    Sigma    = Rcpp::as<arma::mat>(iwf["Sigma_mean"]);
+    Sigma_UQ = Rcpp::as<arma::mat>(iwf["Psi"]);          // IW scale; df in iw$nu (mean-field: n + q)
+    Ddiag    = Rcpp::as<arma::vec>(iwf["Ddiag_mean"]);   // q(tau2_j) = IG(iw$alpha_j, iw$beta_j)
+    Ddiag_UQ = Rcpp::as<arma::vec>(iwf["Ddiag_UQ"]);     // rate = b0 + Ddiag_UQ/2 as in mean-field VI; shape in iw$alpha
+    iw = Rcpp::List::create(
+      Rcpp::Named("nu") = iwf["nu"],
+      Rcpp::Named("alpha") = iwf["alpha"],
+      Rcpp::Named("beta") = iwf["beta"],
+      Rcpp::Named("df_ratio") = iwf["df_ratio"],
+      Rcpp::Named("df_ratio_trace") = iwf["df_ratio_trace"],
+      Rcpp::Named("cg_iter")        = iwf["cg_iter"],
+      Rcpp::Named("iters")          = iwf["iters"],
+      Rcpp::Named("time")           = iwf["time"]);
   }
   
   return Rcpp::List::create(
@@ -829,7 +840,7 @@ Rcpp::List spiox_latent_vi(const arma::mat& Y,
     Rcpp::Named("Sigma_UQ") = Sigma_UQ,
     Rcpp::Named("W") = W,
     Rcpp::Named("Ddiag") = Ddiag,
-    Rcpp::Named("Ddiag_UQ") = iox_model.Ddiag_UQ,
+    Rcpp::Named("Ddiag_UQ") = Ddiag_UQ,
     Rcpp::Named("iw") = iw,
     Rcpp::Named("rel_change") = Rcpp::List::create(
       Rcpp::Named("rel_Beta")  = rel_B_store,
