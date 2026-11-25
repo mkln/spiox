@@ -348,11 +348,20 @@ Rcpp::List spiox_latent(const arma::mat& Y,
 
     iox_model.latent_gibbs(m, sample_precision, sample_Beta, theta_needs_updating, sample_Ddiag);
 
-    Beta.slice(m) = iox_model.B;
+    
     Sigma.slice(m) = iox_model.Sigma;
     theta.slice(m) = iox_model.theta;
     Ddiag.col(m) = iox_model.Ddiag;
-    W.slice(m) = iox_model.W;
+    
+    // report the level (intercept + mean of W) and mean-zero W; the chain itself stays uncentred
+    arma::mat B_rep = iox_model.B, W_rep = iox_model.W;
+    if(iox_model.intercept != -1){
+      arma::rowvec wm = arma::mean(W_rep, 0);
+      W_rep.each_row() -= wm;
+      B_rep.row(iox_model.intercept) += wm;
+    }
+    Beta.slice(m) = B_rep;
+    W.slice(m) = W_rep;
 
     cg_iters(m) = iox_model.last_cg_iter;
     cg_pcond(m) = iox_model.last_precond_used;

@@ -437,7 +437,7 @@ public:
     
     // intercept? 
     intercept = -1;
-    for(int j=0; j<q; j++){
+    for(int j=0; j<p; j++){
       if(arma::all(X.col(j) == 1.0)){
         intercept = j;
         break;

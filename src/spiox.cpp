@@ -1998,10 +1998,6 @@ void SpIOX::latent_gibbs(int it, int sample_sigma, bool sample_beta, bool update
     update_BWSigma_px();
     timings(2) += time_count(tstart); 
   }
-
-  //Rcpp::Rcout << "W centering " << endl;
-  W_centering(); // move to intercept if we have one
-  compute_V();
   
   //Rcpp::Rcout << "Tausq " << endl;
   if(sample_tausq){
